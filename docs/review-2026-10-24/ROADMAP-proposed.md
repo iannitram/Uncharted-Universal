@@ -33,6 +33,9 @@ Where it stands: Window 1 is mostly built (the play-breaking correctness bugs #3
 | Window 4 quality items (shader preload, bounded save match, preparation cache, graphics menu, Xbox prompts, trophies, aspect ratio, AI testers, FSR 4, stereo) | not started, after 1.0 | #16, #57, #58, #10, #11, #12, #14, #15, #18, #19; graphics options #147, ultrawide #158 |
 | macOS research | not started, after 1.0; superseded for delivery by the 2.0 Mac build | #55 |
 | Shared saves (save-relay) | planned, after 1.0 | #163 (blocked by save-relay's CLI) |
+| Crash help: the game names the crash and where it happened, offers the known fix, and keeps the playthrough log | planned, Window 3 (serves M1-M3) | #165: #168, #169, #170, #175, #176 |
+| Auto-tune: three cards from an on-device benchmark, a dump check, fixes that turn on by location | planned, Window 3 (serves M5) | #166: #171, #172, #173, #174, #177, #178 |
+| Game Mode menu in the game (quit, switch game, saves, trophies, gyro, DualSense) | not started, after 1.0 (with #10) | #167 |
 
 ## Window 1: correctness and reproducible builds (weeks 1–2)
 
@@ -56,6 +59,13 @@ QA lead and renderer/runtime owners: reproduce and resolve U2 streaming (#61), c
 
 Deliverables: per-game/per-revision chapter checklist, 30-minute streaming and save/load soaks, GPU/driver compatibility table, CPU/power and frame-time benchmarks. 60 Hz is the primary correctness target; 30 Hz is a handheld option. Above 60 FPS is not a fork objective (fork #23). Separate high-rate bug reports from supported-rate regressions.
 
+### Window 3 player tools (added 2026-11-01)
+
+These turn every player's run into test evidence and every known crash into a fix the player can apply, so the campaign work above gets better reports and the playthroughs need less hand logging.
+
+- **Crash help (#165).** On each save the runtime writes `where.json` (game, and the chapter as the save names it), and a crash prints one `Crash:` line (#168). The launcher matches that line against `launcher/known_issues.json` (#169, seeded from the open crash issues, #175). It then shows an after-crash screen with the known fix in one click, or a pre-filled report naming the game and chapter (#176). Each run also appends to `playthrough.jsonl` (#170), which is the per-chapter log M1-M3 ask for. Order: #168 and #169 first, then #175 and #176.
+- **Auto-tune (#166).** A hardware probe gates the choices a machine cannot run (#171). A dump check explains a wrong or encrypted dump before the first start (#172). A runtime benchmark mode writes a JSON report (#173). A picker turns the probe and the report into three cards (#174), and the Display page opens on those cards (#177). Fixes that cost frame rate turn on only in the chapters that need them (#178, after #168). Exit: Handheld 30 and Balanced 60 meet M5 on the AMD handheld at 20 W.
+
 ## Window 4: quality and macOS decision (weeks 9–12, conditional)
 
 Performance owner: shader preload (#16), bounded save matching (#57), shared preparation cache (#58), and measured draw/copy thread tuning. Product work reuses existing issues: graphics profiles #10, Xbox prompts #11, persistent trophies #12, aspect ratio #14, automated QA #15, FSR4 #18 and stereo #19. These follow correctness and require platform compatibility checks.
@@ -73,6 +83,10 @@ In window 2, also test the Windows release through a macOS-compatible Wine runti
 ## After 1.0: shared saves (save-relay, #163)
 
 The same saves load on every machine I play on: the AMD handheld and a Strix Halo tablet (SteamOS) and an RTX 3090 Ti desktop (Windows), through [save-relay](https://github.com/iannitram/save-relay), a small library every game port reuses. The launcher pulls before Play and pushes after the game quits; a conflict shows save-relay's prompt (keep the server's or this machine's; the other stays in history); with the server unreachable the game starts on local saves and they upload next time. Work: #163 (Medium; Linux and Windows launchers, a save-relay manifest for this port; blocked by save-relay's CLI). Exit: a save made on one machine loads on the others through Play only (needs-owner-device); launcher tests fake the CLI's JSON for pull, push, conflict and offline. The Android and iOS builds use the same saves later.
+
+## After 1.0: Game Mode menu (#167)
+
+A full-screen in-game menu in the collection's style, driven by the controller, so Game Mode never needs the desktop launcher after setup. It holds Resume, Quit, Switch game, Saves (save-relay status from #163, backup and PS4 save import), Trophies, quick settings (the #166 cards), and Controls with gyro aiming and opt-in DualSense output. It takes over the graphics-menu item (#10). The spec lists an in-game menu as a Won't for 1.0, so this waits, and it is split into issues when it is picked up.
 
 ## 2.0: Android, iOS with controller support, Mac
 

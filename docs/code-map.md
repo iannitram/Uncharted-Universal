@@ -86,6 +86,21 @@ Needs Vulkan, SDL3, fmt, Boost, tsl-robin-map, VMA, xxhash, Zydis, FFmpeg librar
 
 CI: `build.yml` (runs on pushes to `main` and on every pull request; a push straight to `linux` is not built; job `build` in a `debian:trixie` container on ubuntu-latest: install dependencies, `build.sh`, package, upload the AppImage and tarball, and create a release on `main`); it skips doc-only changes. There is no automatic upstream merge any more (`sync-upstream.yml` was removed, 018aa69): the Project Manager merges upstream at day start, and a conflict becomes an `upstream-sync` issue. CI does not run `build.sh --test` or the Python tests.
 
+## Planned (player tools, Window 3)
+
+| Piece | Status | Where | Notes |
+|---|---|---|---|
+| Location and crash line | planned (#168) | `src/runtime_savedata.c`, `src/probe.c`, `CRASH_MARKERS` in `launcher/uncharted_linux.py` | `<saves folder>/where.json` = `{"game","title","subtitle","detail","saved_at"}` from the save param on each save (temp file + rename). The crash line is `Crash: kind=<assert\|fault\|exception> where=<offset or file:line> text=<up to 200 chars>`. Only the save strings the player sees (M9). |
+| Known issues and matcher | planned (#169; entries #175) | `launcher/uncharted_known_issues.py`, `launcher/known_issues.json`, `tests/test_known_issues.py` | `load(path)`, `match(crash_line, game, location, entries)`. Entry: `id`, `signature` (substring), `game` (`u1`/`u2`/`u3`/`any`), `locations`, `summary`, `fixed_in`, `toggle` (`{key, value}`), `issue`. An entry with locations beats one without. |
+| After-crash screen | planned (#176) | `launcher/uncharted_linux.py`, `launcher/uncharted_launcher.py`, `launcher/bbport_launcher_win.py`, `launcher/uncharted_logs.py` | A known issue gets "Turn on <fix> and play again"; an unknown one gets a pre-filled report with the chapter. In Game Mode it shows on the next start. |
+| Playthrough log | planned (#170) | `launcher/uncharted_playthrough.py`, `tests/test_playthrough.py` | `<saves folder>/playthrough.jsonl`, one line per run: `build`, `game`, `chapter`, `preset`, `avg_fps`, `ended`, `at`; `summary()` per game. M1-M3 evidence. |
+| Hardware probe and gates | planned (#171) | `launcher/bbport_vulkan.py`, `tools/gpu_capabilities.c`, the Display pages | Video memory, RTX, shared memory, laptop discrete GPU, refresh rate, CPU instructions. Under 6 GB: no frame generation, nothing above 1080p. |
+| Dump check | planned (#172) | `scripts/dump_check.py` (reuses `sfo()` from `scripts/patches.py`), `tests/test_dump_check.py` | Layout, ELF vs encrypted SELF, CUSA and APP_VER (1.00 expected). Headers only (M9). |
+| Benchmark mode | planned (#173) | `src/runtime_pad.c`, `gpu/shim/`, `run.py` | `BB_BENCHMARK=<seconds>`: fixed camera path, `<saves folder>/benchmark.json` with p50/p95/p99 frame times, `avg_fps`, `vram_peak_mib`, `stalls_over_40ms`, `ended`. |
+| Card picker and cards | planned (#174 picker, #177 page) | `launcher/uncharted_tune.py`, `tests/test_tune.py`; `build_display` in both launchers | `pick(device, bench)` gives `handheld30`, `balanced60`, `max` in the launcher's setting keys; a card under 95% of its target steps its preset down once. |
+| Fixes by location | planned (#178) | `run.py` `fix_defaults()`, `gpu/shim/bbport_toggles.h` | A fix can list chapters; it turns on there and off elsewhere, live where the toggle allows. First: the U2 flicker fix (Nepal) and the #157 fixes. |
+| Game Mode menu | after 1.0 (#167) | `gpu/shim/bbport_overlay.cpp`, `src/runtime_pad.c`, `launcher/` | The full-screen controller menu; takes over #10. |
+
 ## Planned (2.0 pathway, SPEC.md)
 
 | Piece | Status | Where | Notes |
@@ -102,6 +117,7 @@ CI: `build.yml` (runs on pushes to `main` and on every pull request; a push stra
 - macOS: out of scope for 1.0 (research only, #55); a native Apple Silicon build is planned for 2.0 (see Planned), not a Wine or MoltenVK bundle of the Windows build.
 - Android and iOS: planned for 2.0 (see Planned); nothing in the tree targets them yet.
 - Shared saves (#163) must work across Linux (SteamOS) and Windows first; save-relay stores credentials in the platform's own store (Secret Service, Windows Credential Manager, macOS Keychain).
+- Player tools (#165, #166): the Python parts (#169, #170, #172, #174) are platform-neutral. The crash line (#168), the probe (#171) and the benchmark (#173) need both the Linux and the Windows paths (`src/compat_win.c` faults, DXGI or Vulkan memory queries). The after-crash screen and the cards go in both launchers. On macOS (research only) nothing extra is needed until 2.0.
 - Needs a Vulkan GPU; DLSS needs NVIDIA.
 
 ## Open-source pieces

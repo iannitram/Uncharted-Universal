@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-01 Player tools added to the roadmap and code map: crash help (#165), auto-tune (#166), and the Game Mode menu after 1.0 (#167); split into #168-#178.
 - 2026-10-31 Peer added (owner's word): zorde23/Uncharted_Collection_PC (GPL-2.0), a source of fixes to port with credit.
 - 2026-10-31 Licence of the Uncharted port we ported `render_res.py` and `bbport_movie.*` from checked: GPL-2.0 text in its `gow3_pc/LICENSE` since its first commit, README grants "GPL v2 or later" with a credit request; PEERS.md corrected, the files stay.
 - 2026-10-31 SPEC.md issue references updated (#61, #79-#82 were deleted; now #109-#113: #61 to #109, #79 to #110, #80 to #111, #81 to #112, #82 to #113); no Must changed, approval stands (owner's ruling).
