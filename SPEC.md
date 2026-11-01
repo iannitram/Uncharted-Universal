@@ -68,6 +68,7 @@ peer: eladharels/uncharted_android | GPL-2.0 | a second Android port (FEX JIT + 
 peer: bloodborne-native/bloodborne-mac | GPL-2.0 | native Apple Silicon port of the same bbport family: own recompiler and Metal renderer, the route for the 2.0 Mac build
 peer: bloodborne-native/bloodborne-ios | GPL-2.0 | Bloodborne on iPhone with no JIT (recompiled library + Metal, sideloaded): the route and its limits for the 2.0 iOS build
 peer: Ryxm-a/uncharted-ios | GPL-2.0 | an Uncharted iOS scaffold that plans FEX with sideload JIT; watch whether it gets past scaffolding
+peer: zorde23/Uncharted_Collection_PC | GPL-2.0 | independent Windows port of the same collection (SpartanPort line): U3 at 60 FPS in 1080p; port its crash and rendering fixes with credit
 
 ## Platforms
 

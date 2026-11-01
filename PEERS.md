@@ -37,6 +37,7 @@ Measured 2026-10-28 against Supermedo `main` (109 forks, all pushed within 60 da
 | [bloodborne-native/bloodborne-launcher](https://github.com/bloodborne-native/bloodborne-launcher) | GPL-2.0 | A launcher with profiles and settings: a model for #10 |
 | [GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS](https://github.com/GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS) | GPL-2.0 | A sibling port with Linux and Windows builds |
 | [AbdelmoumenDeghbouche/wipeout_pc](https://github.com/AbdelmoumenDeghbouche/wipeout_pc) | GPL-2.0 | A sibling PS4 port |
+| [zorde23/Uncharted_Collection_PC](https://github.com/zorde23/Uncharted_Collection_PC) | GPL-2.0 | An independent Windows port of the same collection, from the God of War III port line (FelipePrado0/SpartanPort): U3 start to end at 60 FPS in 1080p. Watch its releases for crash and rendering fixes to port, with credit (added 2026-10-31) |
 
 ## Findings from the 2026-10-28 survey
 
