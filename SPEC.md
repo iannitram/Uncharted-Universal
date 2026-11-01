@@ -24,9 +24,9 @@ Each Must is checked on the owner's Legion Go (AMD Z1 Extreme, a Phoenix APU, Ra
 
 | # | Must | Done looks like | Check | Issues |
 |---|---|---|---|---|
-| M1 | Uncharted 1 plays start to finish | Every chapter completes, the credits roll, at 30 or 60 Hz with no crash or hang | A playthrough log per chapter (build commit, preset, FPS from `BB_FRAME_STATS=1`, any assertion) | #76, #79 (mesh raycaster copies), #82 |
-| M2 | Uncharted 2 plays start to finish | Same; chapter 21 progresses and the streaming assertion does not stop play | Same log | #61, #62, #77, #81, #82 |
-| M3 | Uncharted 3 plays start to finish | Same; no view-blocking corruption, videos play in step with audio | Same log | #63, #64, #78, #80 |
+| M1 | Uncharted 1 plays start to finish | Every chapter completes, the credits roll, at 30 or 60 Hz with no crash or hang | A playthrough log per chapter (build commit, preset, FPS from `BB_FRAME_STATS=1`, any assertion) | #76, #110 (mesh raycaster copies), #113 |
+| M2 | Uncharted 2 plays start to finish | Same; chapter 21 progresses and the streaming assertion does not stop play | Same log | #109, #62, #77, #112, #113 |
+| M3 | Uncharted 3 plays start to finish | Same; no view-blocking corruption, videos play in step with audio | Same log | #63, #64, #78, #111 |
 | M4 | Saves work | A save made in each game loads after a restart and after switching games | Save, quit, restart, load, per game | #36 (closed: done on `linux`, 7b68786) |
 | M5 | Power and frame rate | 20 W holds; 30 Hz is steady 30 FPS and 60 Hz holds 57-60 FPS, as measured 2026-10-18 | `BB_FRAME_STATS=1` over a 30-minute soak per game | #22 (default rate, open question) |
 | M6 | Every build is verified | `bash build.sh` and the C, Python and GPU tests pass on Linux in CI for each merge to `linux` | `.github/workflows/build.yml` green | #60 open; #68 closed (done on `linux`, 4dd6034) |
