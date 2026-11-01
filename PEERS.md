@@ -2,7 +2,9 @@
 
 The projects doing the same work as this fork: the upstream, its most active forks, and sibling PS4 native ports. I watch these and take what is already done instead of building it twice. The machine-read list is the `peer:` lines in [SPEC.md](SPEC.md#prior-art); this page has the notes. Surveyed 2026-10-28.
 
-**Licences.** Our `LICENSE` is GPL-2.0 and our source files carry `SPDX-License-Identifier: GPL-2.0-or-later`. Every peer below reports GPL-2.0 on GitHub, and the files checked (shadPS4-derived `gpu/shadps4/`, the shim, `src/`) carry `GPL-2.0-or-later` headers, so their code may come in (R41's table: GPL-2.0-or-later into ours, yes). A port keeps the source's copyright header and links the source commit in the PR. Not copyable: GPL-3.0 projects (`Awakenchan/LanternEngine`, `OmgItsEggy/bbport-world-warper`) and repos with no licence (`bc160201983/Uncharted-The-Nathan-Drake-Collection-PC-port`): learn only.
+**Licences.** Our `LICENSE` is GPL-2.0 and our source files carry `SPDX-License-Identifier: GPL-2.0-or-later`. Every peer below reports GPL-2.0 on GitHub, and the files checked (shadPS4-derived `gpu/shadps4/`, the shim, `src/`) carry `GPL-2.0-or-later` headers, so their code may come in (R41's table: GPL-2.0-or-later into ours, yes). A port keeps the source's copyright header and links the source commit in the PR. Not copyable: GPL-3.0 projects (`Awakenchan/LanternEngine`, `OmgItsEggy/bbport-world-warper`) and repos with no licence: learn only.
+
+`bc160201983/Uncharted-The-Nathan-Drake-Collection-PC-port` is not in that last group (checked 2026-10-31). GitHub shows no licence for it because the licence file sits in `gow3_pc/LICENSE` (GPL-2.0 text, present since the first commit, 2026-10-14), not at the repo root; the README's "Credits and license" section says "Licensed under the GNU GPL v2 or later" and invites reuse under the GPL with credit and a link back. Its source files carry no per-file SPDX headers. So `scripts/render_res.py` and `gpu/shim/bbport_movie.*` may stay (GPL-2.0-or-later into ours); keep the credit and link in `README.md` and the file headers.
 
 ## Upstreams
 
