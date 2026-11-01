@@ -1,0 +1,16 @@
+[package]
+name = "uncharted_runtime"
+description = "The host runtime that replaces src/*.c module by module (ADR 0002)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "uncharted_runtime"
+path = "src/lib.rs"
+# A static library linked into the loader while C remains (ADR 0002); rlib for the Rust tests.
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]

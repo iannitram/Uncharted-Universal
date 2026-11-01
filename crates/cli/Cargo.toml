@@ -1,0 +1,15 @@
+[package]
+name = "uncharted_cli"
+description = "uncharted-universal: the command-line face of the launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "uncharted-universal"
+path = "src/main.rs"
+
+[dependencies]
+uncharted_core = { path = "../core" }

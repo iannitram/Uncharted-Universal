@@ -1,0 +1,23 @@
+[package]
+name = "uncharted_core"
+description = "The launcher's engine: dump checks, prepare, patches, saves, Steam shortcuts, build hubs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "uncharted_core"
+path = "src/lib.rs"
+
+[features]
+# `relay` (src/relay.rs, planned, not in the tree yet) links iannitram/save-relay's library;
+# its issue adds the module, the dependency and this feature.
+# `hub` is the build hub on the home network (src/hub.rs, ADR 0004); its issues add the
+# pure-Rust crates it needs (mdns-sd, RustCrypto spake2, chacha20poly1305, sha2).
+hub = []
+
+# Pure Rust and no dependencies yet, so the core builds on Linux, Windows, macOS, Android and iOS.
+# An issue may add a pure-Rust crate when it needs one (say why in the PR).
+[dependencies]

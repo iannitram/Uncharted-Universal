@@ -54,7 +54,7 @@ flowchart TD
 
 | Module | Status | Owns | Replaces | Musts |
 |---|---|---|---|---|
-| `error` | stub | `Error` with stable `code()` and plain message per variant, `NotBuilt`, `Result` | | all |
+| `error` | present | `Error` with stable `code()` and plain message per variant, `NotBuilt`, `Result` | | all |
 | `platform` | stub | `Os` (linux, windows, mac, ios, android), `Vars` (home, data, config from env lookup), `AppDirs` (`<config>/uncharted-universal`, `<data>/uncharted-universal`: installs, backups, logs) | `launcher/bbport_assets.py` paths | M7, M11 |
 | `sfo` | stub | `param.sfo` reader: `parse` to keys (`TITLE_ID`, `APP_VER`, `VERSION`, `TITLE`), never writes | `scripts/patches.py` `sfo()` | M11 |
 | `games` | stub | `Game` (U1, U2, U3), title ids (`CUSA02320`, `CUSA02343`, `CUSA02344`, `CUSA02826`) to game and region, `SUPPORTED` revisions per game, `check_revision` (plain refusal) | `NDC_IDS` in `patches.py` | M11 |
@@ -74,7 +74,7 @@ flowchart TD
 | `savecard` | stub | `SaveCard` (game, slot, picture from the save's `sce_sys/icon0.png`, title and detail from its `param.sfo`, file time, device, build id), `latest`, `side_by_side` | | M10 |
 | `backup` | stub | `backup_saves`, `list`, `prune` (keep 10) | | M19 |
 | `update` | stub | back up, re-prepare, recount saves | `uncharted_launcher.py` update check | M19 |
-| `launch` | stub | `Relay` and `Game` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `run.py` main | M7, M10, M18 |
+| `launch` | stub | `Relay` and `Runner` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `run.py` main | M7, M10, M18 |
 | `logs` | stub | `redact` (no game paths or hex keys in logs), the `Crash:` line, `known_issues.json` matcher, `playthrough.jsonl` | `launcher/uncharted_logs.py`, #168-#170 | M1-M3, M9 |
 | `recipe` | stub | `Target` (linux, windows, mac, ios, android), `Hub` (strix-halo, desktop, mac), `hub_for`, `serves` | | M11 |
 | `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder (a test enforces it) | | M11, M12 |
