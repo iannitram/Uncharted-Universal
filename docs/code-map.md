@@ -1,125 +1,172 @@
-# Code map: uncharted_pc (fork)
+# Code map: Uncharted Universal
 
-- Repo: iannitram/uncharted_pc, a fork of Supermedo/uncharted_pc (C, C++20, Python; GPL-2.0-or-later parts from shadPS4).
-- Kind: a native port (not an emulator) that runs the decrypted PS4 build of Uncharted: The Nathan Drake Collection as an x86-64 image, with the PS4 system libraries reimplemented in C and GNM graphics translated to Vulkan through a vendored shadPS4 renderer. Ships a Python launcher.
-- Integration branch: `linux` (not `main`). Describes commit: 359c888 (2026-10-31). `main` is meant as a copy of upstream (it also holds the two fixes of PRs #43 and #45, so it is 4 commits off upstream and does not fast-forward); it is the branch CI publishes releases from.
-- Upstream: `Supermedo/uncharted_pc` (`upstream/main`). Upstream is 26 commits ahead of `linux` (0.3.10 and 0.3.11, head bbd1b3a, 2026-10-30); a trial merge on 2026-10-31 conflicted in 10 files, so it waits on #164. A second source, `spacepepperoni/uncharted_Linux`, is merged separately (last in #133, 0c68226; 13 commits ahead since). Code goes to either only as a PR I open from an `up*` branch (five open upstream on 2026-10-31); nothing else is posted.
-- No game files, keys or RE output are in the repo; the user supplies a decrypted dump.
-- Naming oddity: many file and variable names use `bbport` / `BB_*` / `bb-probe` because the code started as a Bloodborne port. `patches/Bloodborne.xml` is still Bloodborne's patch database and does not apply to Uncharted.
+The intended shape of the repo for 1.0 (`SPEC.md`, approved 2026-11-01): **one Rust engine, two faces, one Rust runtime, three hubs, five platforms**. The engine (`crates/core`, library `uncharted_core`) checks my dump, prepares each game's install (boot image, linked modules, patches, render size), serves it to my other devices over the home network, writes the Steam shortcut with artwork, and wraps every start in a save-relay pull and push. The runtime (`crates/runtime`, `uncharted_runtime`) is the host side of the port, replacing `src/*.c` module by module (ADR 0002); it hands GNM work to the vendored shadPS4 renderer in `gpu/` (C++, kept) through `gpu/bbgpu.h`. The faces are the Slint launcher (`app/`, ADR 0003) and the `uncharted-universal` command line (`crates/cli`). Android runs the game's x86-64 code through FEXCore (ADR 0005); Mac, iPhone and iPad run a library recompiled on the Mac, drawn with Metal (ADR 0006).
 
-## Layout
+Status per module: **present** (built), **stub** (signatures only; a function not built returns `Err(Error::NotBuilt(..))`), **planned** (not in the tree), **legacy** (today's C or Python, removed when its Rust replacement is present and the game boots). An issue that builds a module moves its status in the same PR. Integration branch: `main` (our work; `upstream-main` is a copy of Supermedo's `main`).
 
-| Path | What it owns |
-|---|---|
-| `src/` | The host runtime in C (about 10.9k lines). `probe.c` is the loader (ELF mapping, import resolution by NID, guest hooks, fault handling, MOVBE emulation); `runtime_*.c` is one file per PS4 library (memory, thread, fiber, mutex/rwlock/sema, file VFS, pad over SDL3, audio, AJM decode (an unsupported codec now returns an error, #56), display, savedata, trophy, rtc, services, content); `cpu_patch.c` and `red_zone.c` are code patching; `compat_win.c` has MinGW POSIX shims; `vulkan_smoke.c`. |
-| `gpu/` | The renderer. `CMakeLists.txt` builds the GPU library and `bb-probe`. `shadps4/` is shadPS4 pinned to one commit (`VENDOR.txt`), with local edits marked `bbport:`; `shim/` is the port's own C++ layer (ImGui settings menu, window, async copy threads, overlay with RAM/VRAM stats, `bbport_toggles.h` runtime A/B switches read from `BB_TOGGLE_FILE` and `BB_TOGGLE2`, `bbport_movie.*` movie frames at a patched render size via `BB_MOVIE_SIZE`, `bbport_write_log.*`, `bbport_nan_guard.h`); `bbgpu.h` is the C ABI; `bbnet/` network glue for private co-op; `dlss_bridge/` optional NVIDIA DLSS bridge; `patches/fsr-vulkan/` patches applied to the FSR submodule; `tools/`; `third_party/` submodules. |
-| `launcher/` | Python/Tk launcher: `uncharted_linux.py` (Linux GUI launcher: game choice, Add to Steam, Deck mode, update check) and `uncharted_launcher.py` (Windows GUI) with `uncharted_*.py` helpers (`art` incl. SteamGridDB library art, `fonts`, `i18n` and `i18n_extra` for the translated texts, `logs` with bug reports pointed at this repo's Issues, `widgets`); the Linux launcher has one Upscaling section, render heights from 540p up, a 45 FPS choice and controller prompts in Steam Deck mode; `bbport_*.py` helpers for Steam, Vulkan, i18n, assets and the older launchers (`bbport_launcher*.py`); `bb-launcher.sh`, desktop entry, icons, covers, fonts. | |
-| `scripts/` | Python prep tools run by the launcher or `run.py`: `prepare.py`, `link_modules.py`, `link_libc.py`, `content_profile.py`, `patches.py`, `pkg.py`, `mods.py`, `cheats.py`, `trophies.py`, `render_720p.py`, `render_res.py` (render resolution above or below 1080p by byte-pattern patch of the display settings, from BilalReloaded's port; see the licence note in `PEERS.md`). |
-| `PIPELINE.md`, `SPEC.md`, `AGENTS.fork.md`, `CHANGELOG.md`, `PEERS.md` | Our pipeline files (stage, 1.0 spec with the 2.0 pathway, short agent rules, decisions log, peer notes behind SPEC's `## Prior art`); upstream owns `README.md` and `docs/ROADMAP.md`. |
-| `install.sh` | One-line Linux installer from the spacepepperoni fork (fetches that fork's latest AppImage; not our release channel). |
-| `run.py`, `run.sh` | `run.py` builds the boot image, sets `BB_*` environment (per-game defaults in `fix_defaults()`), then starts `bb-probe`; `run.sh` is the older Bloodborne-era shell launcher. `BB_PREBUILT=1` is the packaged mode. |
-| `build.sh` | Native build (Linux gcc/cc, or MSYS2 CLANG64 on Windows); `build.sh --test` compiles and runs the C and C++ tests. |
-| `msys2-env.sh`, `shell.nix`, `packaging/default.nix` | Windows toolchain env; Nix shell. |
-| `packaging/` | `linux/` (AppImage, `package.sh`, `AppRun`, desktop file), `windows/` (PyInstaller packaging, resources, DLSS/XeSS fetch scripts, READMEs), `appimage.sh`, `bbport-entry.c`. |
-| `patches/Bloodborne.xml` | Community patch database (Bloodborne only). |
-| `third_party/` | LibAtrac9, Vulkan-Headers submodules. |
-| `tools/` | Dev helpers: frame A/B (`ab.sh`), `soak.sh`, stack and freeze tools, FSR4 capture and optimize scripts (`fsr4cap/`), name importers, `gpu_capabilities.c`. |
-| `tests/` | C/C++ unit tests (`test_runtime.c`, `test_pad.c`, `test_sema.c`, `test_cpu_patch.c`, `test_eop_matcher.c`, shader and motion tests) `test_ajm.c`, and 33 Python `unittest` files (launcher, patches, pkg, mods, trophies, i18n, display, `render_res`, the small-buffers default, logs). |
-| `docs/` | `ARCHITECTURE.md`, `LINUX_BUILD.md`, `BUILDING_LINUX.md`, `ROADMAP.md`, `upscaler.md`, `PKG.md`, `MODS.md`, `resolution.md`, `parallel_gpu.md`, `DEVELOPMENT_LOG.md` (and `.ru.md`), `docs/README.md`, `TEMPORAL_REVIEW_2026-10-01.md`, `keyboard-prompts.md`, `motion_vectors.md`, `DEPTH_ADAPTIVE_TAA.md`, `CHANGES_2026-10-0*.md`, `maps/overview.md` (older, longer index), `code-map.md` (this file), `notes/` (sync notes, e.g. the 2026-10-28 conflict table), `review-2026-10-24/` (code review with its own `CODE_MAP.md`, findings, and our delivery roadmap `ROADMAP-proposed.md`), Russian translations in `ru/`, `history/`. |
-| `Research/` | Background research notes (architecture, upscaling, licensing, similar projects). |
-| `.github/` | `workflows/build.yml` (the only workflow; `sync-upstream.yml` was removed in the 2026-10-28 sync), `ISSUE_TEMPLATE/` (bug report form). |
+## Platforms (R04)
+
+| Device family | 1.0 device | Game code | Renderer | Built on (hub) | Launcher | Save sync in | CI |
+|---|---|---|---|---|---|---|---|
+| Linux / SteamOS | the AMD handheld, the Strix Halo tablet | native x86-64 | shadPS4, Vulkan (RADV) | the Strix Halo tablet; the AMD handheld pulls | Slint app (AppImage), opened by the Steam shortcut | the launcher | `ubuntu-latest`: workspace, GPU library, boot smoke |
+| Windows | the RTX 3090 Ti desktop | native x86-64 | shadPS4, Vulkan | the desktop | Slint app | the launcher | `windows-latest`: workspace, GPU library (CLANG64) |
+| macOS | a Mac with Apple silicon | recompiled library | Metal | the Mac | Slint app (also builds and installs the iOS app) | the launcher | `macos-latest`: workspace; Apple runtime cross-build |
+| iOS / iPadOS | iPhone or iPad + controller | recompiled library (no JIT) | Metal | the Mac, installed by cable | none: the game app | the game app (save-relay C interface) | `macos-latest`: iOS target builds |
+| Android | Adreno device + controller | FEXCore (x86-64 to ARM64) | shadPS4, Vulkan (Turnip) | the Strix Halo tablet | Slint app (Android) | the launcher, inside the same app | `ubuntu-latest`: `aarch64-linux-android` cross-build |
+
+Rules that keep it portable: `crates/core` is pure Rust (no C library, no OpenSSL; the hub's crates are `mdns-sd`, RustCrypto `spake2`, `chacha20poly1305`, `sha2`, behind feature `hub`); no `std::os::*` outside `platform`, `steam` and the runtime's `os` module; every OS rule takes its folders from `platform::Vars`, so Linux, Windows and Mac rules are tested on every runner; tests build temporary folders under `std::env::temp_dir()`. The runtime is the only crate with `unsafe` and FFI, and each `unsafe` block carries a `// SAFETY:` line.
 
 ## How it fits together
 
 ```mermaid
 flowchart TD
-    L["launcher/ (Python, Tk)"] --> S["scripts/ prepare, link_modules, content_profile"]
-    S --> R["run.py / run.sh (boot image, BB_* env)"]
-    R --> P["bb-probe = src/probe.c loader"]
-    P --> RT["src/runtime_*.c (HLE PS4 libraries)"]
-    P --> G["gpu/shim -> gpu/shadps4 (GNM to Vulkan)"]
-    G --> VK["Vulkan, SDL3, FSR / DLSS"]
+    subgraph Faces
+      App["app/: Rust + Slint<br/>Continue, first run, Saves, Settings, Fleet, About"]
+      CLI["crates/cli: uncharted-universal check | prepare | play | steam-add | hub | fleet"]
+    end
+    Steam["Steam Game Mode shortcut + artwork"] --> App
+    App --> Core
+    CLI --> Core
+    subgraph Core["crates/core: uncharted_core"]
+      Dump["dump, sfo, games, pkg"] --> Prepare["prepare: boot image, link_modules, link_libc, content_profile"]
+      Prepare --> Patches["patches, mods, cheats, trophies, render_size"]
+      Launch["launch: pull, run, push"] --> Saves["saves, savecard, backup"]
+      Launch --> RunEnv["run_env: per-game defaults, BB_* env, profile"]
+      Hub["hub, bundle, fleet"] --> Prepare
+      SteamMod["steam, vdf, artwork"]
+      Logs["logs: redact, crash line, known issues"]
+    end
+    Launch -->|"starts"| Runner["uncharted-run (crates/runtime bin)"]
+    subgraph Runtime["crates/runtime: uncharted_runtime"]
+      Loader["loader (from probe.c)"] --> HLE["HLE libraries: memory, thread, fiber, sync, file, pad, audio, ajm, savedata, trophy, ..."]
+      Loader --> Patch["cpu_patch, red_zone"]
+    end
+    Runner --> Runtime
+    HLE -->|"bbgpu.h C ABI"| GPU["gpu/: shadPS4 + shim (C++, kept)"]
+    GPU --> VK["Vulkan, FSR, DLSS"]
+    Runtime -.Apple.-> Metal["apple/: recompiled library + Metal (adopted, ADR 0006)"]
+    Runtime -.Android.-> FEX["android/: FEXCore + Turnip (adopted, ADR 0005)"]
+    Saves --> SR[("iannitram/save-relay")]
+    Hub <-->|"home network only"| Peers[("my other launchers")]
 ```
 
-- The decrypted game image is mapped and executed directly; imports are bound by scoped NID to `runtime_resolve()`, and an unresolved import stops the process rather than stubbing a fake success.
-- Graphics: GNM command streams are translated by the vendored shadPS4 `video_core` and `shader_recompiler`; the port adds TAA, camera-motion, frame-generation inputs and FSR passes as host shaders (`gpu/shadps4/video_core/host_shaders/`, see `docs/upscaler.md`).
-- Runtime knobs are `BB_*` environment variables or `bbport.ini` (frame stats, frame capture, toggles for A/B).
-- Detail: `docs/ARCHITECTURE.md`.
+## Modules: `crates/core` (`uncharted_core`)
 
-## Where our work is
+| Module | Status | Owns | Replaces | Musts |
+|---|---|---|---|---|
+| `error` | stub | `Error` with stable `code()` and plain message per variant, `NotBuilt`, `Result` | | all |
+| `platform` | stub | `Os` (linux, windows, mac, ios, android), `Vars` (home, data, config from env lookup), `AppDirs` (`<config>/uncharted-universal`, `<data>/uncharted-universal`: installs, backups, logs) | `launcher/bbport_assets.py` paths | M7, M11 |
+| `sfo` | stub | `param.sfo` reader: `parse` to keys (`TITLE_ID`, `APP_VER`, `VERSION`, `TITLE`), never writes | `scripts/patches.py` `sfo()` | M11 |
+| `games` | stub | `Game` (U1, U2, U3), title ids (`CUSA02320`, `CUSA02343`, `CUSA02344`, `CUSA02826`) to game and region, `SUPPORTED` revisions per game, `check_revision` (plain refusal) | `NDC_IDS` in `patches.py` | M11 |
+| `pkg` | stub | `.pkg` extractor: entry table, bounded copies, overlap refusal | `scripts/pkg.py` | M11 |
+| `dump` | stub | `DumpReport`, `check` (folder layout, decrypted or not, which games and revisions), the early check before a prepare | `#172` dump check | M11 |
+| `content_profile` | stub | the content profile values per title (`sceAppContentAppParamGetInt`) | `scripts/content_profile.py` | M7 |
+| `link` | stub | `link_modules` and `link_libc`: module and libc import tables for the boot image | `scripts/link_modules.py`, `scripts/link_libc.py` | M7 |
+| `prepare` | stub | `prepare` a game folder into an install: boot image, linked modules, patches, render size; returns `InstallManifest` | `scripts/prepare.py` | M7, M11 |
+| `patches` | stub | third-party patches per executable (`APP_VER` and title decide), parse, apply, list for About | `scripts/patches.py` | M7, M8 |
+| `mods` | stub | mod folder layouts (`dvdroot_ps4`, `app0/...`), overlay list for the runtime's file VFS | `scripts/mods.py` | M7 |
+| `cheats` | stub | cheat file parse and apply | `scripts/cheats.py` | M7 |
+| `trophies` | stub | trophy data read for the runtime | `scripts/trophies.py` | M7 |
+| `render_size` | stub | render-size patches (540p up, 720p Deck mode) by byte pattern | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13 |
+| `run_env` | stub | per-game defaults (`fix_defaults`) and the `BB_*` environment from settings and the device profile | `run.py` | M5, M7 |
+| `profile` | stub | `DeviceProfile` (amd-handheld 20 W 30/60 Hz, strix-halo-tablet, desktop, mac, ios, android), `detect`, `by_id` | Deck mode in `uncharted_linux.py` | M5, M13 |
+| `saves` | stub | savedata root per game per device, what travels, `relay_manifest` for save-relay | | M4, M18 |
+| `savecard` | stub | `SaveCard` (game, slot, picture from the save's `sce_sys/icon0.png`, title and detail from its `param.sfo`, file time, device, build id), `latest`, `side_by_side` | | M10 |
+| `backup` | stub | `backup_saves`, `list`, `prune` (keep 10) | | M19 |
+| `update` | stub | back up, re-prepare, recount saves | `uncharted_launcher.py` update check | M19 |
+| `launch` | stub | `Relay` and `Game` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `run.py` main | M7, M10, M18 |
+| `logs` | stub | `redact` (no game paths or hex keys in logs), the `Crash:` line, `known_issues.json` matcher, `playthrough.jsonl` | `launcher/uncharted_logs.py`, #168-#170 | M1-M3, M9 |
+| `recipe` | stub | `Target` (linux, windows, mac, ios, android), `Hub` (strix-halo, desktop, mac), `hub_for`, `serves` | | M11 |
+| `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder (a test enforces it) | | M11, M12 |
+| `hub` | stub (feature `hub`) | `discover` (mDNS `_uncharted-universal._tcp`, private ranges only), `pair` (six-digit code, SPAKE2), `serve`, `pull` (sealed, resumable), `Transport` trait for loopback tests | | M12 |
+| `fleet` | stub | `DeviceRecord`, `drift` warning | | M12 |
+| `vdf` | stub | Steam binary KeyValues `read`, `write` | `launcher/bbport_steam.py` | M13 |
+| `steam` | stub | `shortcut_app_id`, `Shortcut`, `upsert`, `userdata_roots`, `write_shortcut` (Steam closed, `.bak` kept), `write_artwork` | `launcher/bbport_steam.py`, `uncharted_art.py` | M13 |
+| `artwork` | stub | Steam grid, hero, logo, icon from each game's `sce_sys/pic0.png`, `pic1.png`, `icon0.png`; nothing downloaded | `launcher/uncharted_art.py` (SteamGridDB download dropped) | M13 |
+| `relay` | planned (feature `relay`) | save-relay adapter: links its library, maps outcomes to `launch::Sync` | #163 | M18 |
 
-`git log upstream/main..HEAD` shows 330 commits and `git diff upstream/main...HEAD` is 207 files (+21,593 / -3,025); upstream is 26 commits ahead of `linux` at this snapshot (0.3.11; #164). About 134 of the 330 are ours; the rest come from the spacepepperoni fork's history (about 89 by its maintainer, 56 by one Deck contributor, 10 by Supermedo, the rest scattered). Our commits concentrate on:
+`vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet` and the shape of `savecard` are copied from iannitram/totk-native (MIT) with credit in the file header, once built there.
 
-| Area | Files |
+## Modules: `crates/runtime` (`uncharted_runtime`)
+
+Built as a static library linked into the loader binary while C remains; each Rust module exports the same `extern "C"` symbols as the C file it replaces (header generated by `cbindgen` into `crates/runtime/include/`). Order (ADR 0002): leaves first, loader last. Each step keeps `bash build.sh` and the boot smoke test green.
+
+| Module | Status | Replaces (lines) | Tests from | Order |
+|---|---|---|---|---|
+| `abi` | stub | `src/runtime.h`, `src/runtime.c` (266): the C ABI, NID resolution table (`import_names.inc`), `runtime_resolve` | `test_runtime.c` | 1 |
+| `time`, `rtc` | planned | `runtime_time.c` (29), `runtime_rtc.c` (155) | `test_runtime.c` parts | 2 |
+| `sync` | planned | `runtime_sema.c` (185), `runtime_mutex.c` (263), `runtime_rwlock.c` (162) | `test_sema.c`, `test_sema.py` | 3 |
+| `content`, `display` | planned | `runtime_content.c` (91), `runtime_display.c` (143) | `test_content.c`, `test_display.c` | 4 |
+| `trophy` | planned | `runtime_trophy.c` (327) | | 5 |
+| `savedata` | planned | `runtime_savedata.c` (431) | | 6 |
+| `audio` | planned | `runtime_audio.c` (323), `runtime_speakers.h` | `test_speakers.c` | 7 |
+| `ajm` | planned | `runtime_ajm.c` (707) | `test_ajm.c` | 8 |
+| `file` | planned | `runtime_file.c` (631): VFS, mod overlay | `test_file_mods.c` | 9 |
+| `pad` | planned | `runtime_pad.c` (1235): SDL3 pad, gyro, rumble | `test_pad.c` | 10 |
+| `services`, `kernel` | planned | `runtime_services.c` (678), `runtime_kernel.c` (351) | | 11 |
+| `memory` | planned | `runtime_memory.c` (970): direct and flexible memory, mapping | | 12 |
+| `fiber`, `thread` | planned | `runtime_fiber.c` (363), `runtime_thread.c` (494) | | 13 |
+| `cpu_patch`, `red_zone` | planned | `cpu_patch.c` (591), `red_zone.c` (489) | `test_cpu_patch.c`, `test_red_zone.c` | 14 |
+| `os` | planned | `compat_win.c` (162): the MinGW POSIX shims become `cfg(windows)` code | | 15 |
+| `loader` + bin `uncharted-run` | planned | `probe.c` (1474): ELF mapping, imports by NID, hooks, faults, MOVBE emulation | `test_probe.py`, the boot smoke | 16 |
+| `gpu` (build script) | planned | `build.sh` GPU part: builds `gpu/` with CMake through the `cmake` crate, links `bbgpu` | `test_*.cpp` stay C++ | with 1 |
+
+`src/vulkan_smoke.c` becomes a test in `gpu`'s build. When `loader` is present, `src/` is deleted (M20).
+
+## Faces
+
+| Path | Status | Owns | Replaces | Musts |
+|---|---|---|---|---|
+| `crates/cli` (`uncharted-universal`) | stub | `check`, `prepare`, `play <game>`, `steam-add`, `patches`, `hub serve/pair/pull`, `fleet` | `run.py` command line | M7, M11, M12 |
+| `app/` (`uncharted-app`) | planned | the launcher, Rust + Slint, Linux, Windows, macOS, Android; links `uncharted_core` | `launcher/*.py` | M7, M10-M13, M15, M17 |
+| `app/src/vm/` | planned | view models: `continue_page`, `first_run`, `saves`, `settings` (display cards from auto-tune #174), `fleet`, `about`, `after_crash` (#176) | | M10 |
+| `app/src/input.rs` | planned | `Nav` from gilrs (desktop) and Android key events | | M10 |
+| `app/ui/` | planned | `.slint` pages, controller first; texts in Slint's translation files (from `uncharted_i18n*.py`, `bbport_lang*.py`, seven languages) | `launcher/uncharted_widgets.py`, i18n files | M10 |
+| `docs/design/continue-screen.md` | planned | the Continue screen brief, shared with totk-native, for three games | | M10 |
+
+## Adopted code (stays in its own language)
+
+| Path | Status | From | Owns |
+|---|---|---|---|
+| `gpu/` | present | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS |
+| `android/` | planned | revvv991/uncharted-android (GPL-2.0, credited) | APK project, FEXCore and Mesa/Turnip patches, libadrenotools glue, the `g2-arm64:` renderer changes rebased onto ours |
+| `apple/` | planned | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0, licence read at the issue, credited) | the x86-64 recompiler run on the Mac from my dump, the Metal renderer, the iOS app shell with controller and touch |
+
+## Legacy (removed by M20)
+
+| Path | Removed when |
 |---|---|
-| Docs: `docs/review-2026-10-24/` code review and cross-platform roadmap, `SPEC.md`, `ROADMAP.md`, `LINUX_BUILD.md`, `docs/history/`, `docs/ru/`, `Research/` | most of our changed lines |
-| Launcher texts and per-game defaults: `launcher/uncharted_i18n*.py` (es, pt, fr, de, it, ja), `run.py` `fix_defaults()` with `tests/test_fix_defaults.py`, `scripts/pkg.py` overlap and chunked-copy fixes, `packaging/linux/package.sh` (ships `scripts/patches.py`) and `tests/test_linux_package_scripts.py` | few files |
-| Patch handling: `scripts/patches.py`, `tests/test_patches.py` (per-executable third-party patches, `APP_VER` decides the external version, own-executable-only patches) | few files |
-| Renderer fixes under `gpu/shadps4/` (nested indirect-buffer frame leak; `WAIT_ON_CE_COUNTER` guard and compute ring offset reset from PRs #45 and #43; `WAIT_ON_DE_COUNTER_DIFF` operands as in shadPS4 #5406, #67 / PR #162; texture-cache `CanContain` and stencil-format back-ports, #136 / PR #161) and FSR 3.1 defaults/protected-memory handling | about 300 changed lines |
-| `src/runtime_trophy.c`, `src/runtime_thread.c` (`host_priority` compiled only on Windows, 4dd6034, so Linux `-Werror` builds pass), `src/runtime_ajm.c` with `tests/test_ajm.c` (#56), MXCSR test, `tests/test_eop_matcher.c`, `render_720p` tests | few files |
-| Launcher and defaults from the 2026-10-28 PRs: 540p render height (#126 / PR #135), Uncharted 2 brightness-flicker fix on by default (#123 / PR #148, `tests/test_fix_defaults_small_buffers.py`), the new sync texts translated (#134 / PR #149) | few files |
-
-Two stray commits ("index on ..." and "untracked files on ...") are stash artifacts from an experiment branch; leave them.
-
-## Known gaps (from the tree)
-
-- Upstream sync: 0.3.10 and 0.3.11 are not on `linux`; the merge conflicts in `README.md`, `gpu/patches/fsr-vulkan/README.md`, the buffer cache, `vk_graphics_pipeline.cpp`, `vk_pipeline_serialization.cpp`, `vk_rasterizer.cpp`, `launcher/uncharted_launcher.py`, `run.py` and `src/runtime_thread.c` (#164, taken first).
-- Renderer: `ExpandImage` can copy a stale image over fresh data (#31) and `BUFFER_WBINVL1` is not lowered (#37); the equeue loop can lose a request (#35).
-- No Windows or macOS CI job; CI runs `bash build.sh` only, so no test suite runs there.
-- `.github/workflows/build.yml` still lists the removed `sync-upstream.yml` in `paths-ignore` and keeps its `workflow_call` entry (harmless leftovers).
+| `launcher/` (Python/Tk, about 11k lines), `launcher/bb-launcher.sh` | the Slint app has parity: Continue, first run, Settings, Add to Steam, update |
+| `scripts/*.py`, `run.py`, `run.sh` | every `crates/core` module listed above is present |
+| `src/*.c`, `src/*.h` | `crates/runtime::loader` is present and the game boots |
+| `packaging/windows/` PyInstaller, `packaging/linux/package.sh` | the release workflow builds the Rust app |
+| `tests/*.py`, C tests in `tests/` | their Rust ports are present |
 
 ## Build and test
 
-Linux (per `docs/LINUX_BUILD.md` and `build.yml`; GCC 14+ is required for C++23, Debian trixie is what CI uses):
-
 ```sh
 git submodule update --init --recursive
-bash build.sh              # builds out/bb-probe and the GPU library
-bash build.sh --test       # C and C++ tests
-bash run.sh                # starts the game (BB_PREBUILT=1 for packaged builds)
-bash packaging/linux/package.sh   # AppImage and tarball
+cargo build --workspace                 # core, cli, runtime (builds gpu/ through cmake), app
+cargo test --workspace
+bash build.sh && bash build.sh --test   # the C path, until src/ is gone
 ```
 
-Python tests are `unittest` files in `tests/`, importing the scripts through `tests/paths.py`; no runner command is stated in the repo, so use `python3 -m unittest discover -s tests`.
+CI: `.github/workflows/check.yml` (fmt, clippy, build, test on Linux, Windows, macOS; cross-builds for `aarch64-linux-android`, `aarch64-apple-ios`) and `build.yml` (the Linux package and release from `main`, until the Rust release workflow replaces it).
 
-Needs Vulkan, SDL3, fmt, Boost, tsl-robin-map, VMA, xxhash, Zydis, FFmpeg libraries, protobuf, nlohmann-json, OpenSSL, zlib, miniupnpc and glslang (the exact list is in `build.yml`).
+## Build hubs (ADR 0004)
 
-CI: `build.yml` (runs on pushes to `main` and on every pull request; a push straight to `linux` is not built; job `build` in a `debian:trixie` container on ubuntu-latest: install dependencies, `build.sh`, package, upload the AppImage and tarball, and create a release on `main`); it skips doc-only changes. There is no automatic upstream merge any more (`sync-upstream.yml` was removed, 018aa69): the Project Manager merges upstream at day start, and a conflict becomes an `upstream-sync` issue. CI does not run `build.sh --test` or the Python tests.
+| Hub | Prepares for | Clients |
+|---|---|---|
+| the Strix Halo tablet | linux, android | the AMD handheld, the Android device |
+| the RTX 3090 Ti desktop | windows | itself |
+| the Mac | mac, ios | itself; the iPhone or iPad by cable |
 
-## Planned (player tools, Window 3)
+A bundle holds the prepared install (boot image, linked modules, patches, the game data folder) and the GPU-independent shader translations; a driver pipeline cache travels only between devices with the same GPU and driver. Nothing leaves the home network.
 
-| Piece | Status | Where | Notes |
-|---|---|---|---|
-| Location and crash line | planned (#168) | `src/runtime_savedata.c`, `src/probe.c`, `CRASH_MARKERS` in `launcher/uncharted_linux.py` | `<saves folder>/where.json` = `{"game","title","subtitle","detail","saved_at"}` from the save param on each save (temp file + rename). The crash line is `Crash: kind=<assert\|fault\|exception> where=<offset or file:line> text=<up to 200 chars>`. Only the save strings the player sees (M9). |
-| Known issues and matcher | planned (#169; entries #175) | `launcher/uncharted_known_issues.py`, `launcher/known_issues.json`, `tests/test_known_issues.py` | `load(path)`, `match(crash_line, game, location, entries)`. Entry: `id`, `signature` (substring), `game` (`u1`/`u2`/`u3`/`any`), `locations`, `summary`, `fixed_in`, `toggle` (`{key, value}`), `issue`. An entry with locations beats one without. |
-| After-crash screen | planned (#176) | `launcher/uncharted_linux.py`, `launcher/uncharted_launcher.py`, `launcher/bbport_launcher_win.py`, `launcher/uncharted_logs.py` | A known issue gets "Turn on <fix> and play again"; an unknown one gets a pre-filled report with the chapter. In Game Mode it shows on the next start. |
-| Playthrough log | planned (#170) | `launcher/uncharted_playthrough.py`, `tests/test_playthrough.py` | `<saves folder>/playthrough.jsonl`, one line per run: `build`, `game`, `chapter`, `preset`, `avg_fps`, `ended`, `at`; `summary()` per game. M1-M3 evidence. |
-| Hardware probe and gates | planned (#171) | `launcher/bbport_vulkan.py`, `tools/gpu_capabilities.c`, the Display pages | Video memory, RTX, shared memory, laptop discrete GPU, refresh rate, CPU instructions. Under 6 GB: no frame generation, nothing above 1080p. |
-| Dump check | planned (#172) | `scripts/dump_check.py` (reuses `sfo()` from `scripts/patches.py`), `tests/test_dump_check.py` | Layout, ELF vs encrypted SELF, CUSA and APP_VER (1.00 expected). Headers only (M9). |
-| Benchmark mode | planned (#173) | `src/runtime_pad.c`, `gpu/shim/`, `run.py` | `BB_BENCHMARK=<seconds>`: fixed camera path, `<saves folder>/benchmark.json` with p50/p95/p99 frame times, `avg_fps`, `vram_peak_mib`, `stalls_over_40ms`, `ended`. |
-| Card picker and cards | planned (#174 picker, #177 page) | `launcher/uncharted_tune.py`, `tests/test_tune.py`; `build_display` in both launchers | `pick(device, bench)` gives `handheld30`, `balanced60`, `max` in the launcher's setting keys; a card under 95% of its target steps its preset down once. |
-| Fixes by location | planned (#178) | `run.py` `fix_defaults()`, `gpu/shim/bbport_toggles.h` | A fix can list chapters; it turns on there and off elsewhere, live where the toggle allows. First: the U2 flicker fix (Nepal) and the #157 fixes. |
-| Game Mode menu | after 1.0 (#167) | `gpu/shim/bbport_overlay.cpp`, `src/runtime_pad.c`, `launcher/` | The full-screen controller menu; takes over #10. |
+## Not verified yet
 
-## Planned (2.0 pathway, SPEC.md)
-
-| Piece | Status | Where | Notes |
-|---|---|---|---|
-| Save-relay hook in the launchers | planned (#163, blocked by save-relay's CLI) | `launcher/uncharted_linux.py`, `launcher/uncharted_launcher.py`, `launcher/bbport_launcher_win.py` (the Play paths; the saves folder is `saves_for()` / `default_saves()`, `<game folder>/Saves`), a new save-relay manifest file | Before Play: `save-relay pull <game> --manifest <m> --saves-dir <d> --json`; after the game quits: `save-relay push ... --json`. One JSON line (`{"ok","command","data"|"error"}`). Exit 0 starts the game, including `offline` ("Playing offline: saves will upload next time."); exit 3 is `conflict`: show the prompt from `data.server` / `data.local`, then call again with `--resolve keep-server\|keep-local`; exit 4 (`not_set_up`, `auth_failed`, `credentials`) offers `save-relay setup` (password on stdin, never an argument); any other failure shows `error.message` and offers "Play with local saves". Contract: save-relay `docs/code-map.md` `## API shape`. Linux and Windows first; tests fake the CLI's JSON for pull, push, conflict and offline. |
-| Android target | planned (2.0) | new platform layer beside `src/` and `gpu/` | Route from revvv991/uncharted-android and eladharels/uncharted_android: the game's x86-64 code through FEXCore, the rest native ARM64, Turnip on Adreno; controller input. Uses the same save-relay saves. |
-| Mac target | planned (2.0) | new platform layer; Metal renderer in place of Vulkan | Route from bloodborne-native/bloodborne-mac: native Apple Silicon, a recompiled library built from my own dump, Metal renderer. First step toward iOS. |
-| iOS target | planned (2.0, after Mac) | shares the Mac recompiler and Metal renderer | Route from bloodborne-native/bloodborne-ios: no JIT on iOS, so no FEX; recompiled library built on a Mac, Metal renderer, sideloaded, controller support. Limit: about 2 GiB of address space with a free Apple ID; more needs the paid Apple Developer Program. Ryxm-a/uncharted-ios (FEX with sideload JIT) is watched. |
-
-## Mac / PC / Linux
-
-- Linux x86-64 is the target of this branch and the only platform CI builds. Hardware testing (Steam Deck, handhelds) is manual. R04: a Linux machine must run the game before a sync is merged; CI proves only that it builds, and only for `main` and pull requests, not for plain pushes to `linux`.
-- Windows: built with MSYS2 CLANG64 (`build.sh` branch for MINGW, `packaging/windows/`, `launcher/bbport_launcher_win.py`); the code carries Windows-specific paths in `src/compat_win.c`, `runtime_memory.c` and `runtime_thread.c`. No Windows CI job here.
-- macOS: out of scope for 1.0 (research only, #55); a native Apple Silicon build is planned for 2.0 (see Planned), not a Wine or MoltenVK bundle of the Windows build.
-- Android and iOS: planned for 2.0 (see Planned); nothing in the tree targets them yet.
-- Shared saves (#163) must work across Linux (SteamOS) and Windows first; save-relay stores credentials in the platform's own store (Secret Service, Windows Credential Manager, macOS Keychain).
-- Player tools (#165, #166): the Python parts (#169, #170, #172, #174) are platform-neutral. The crash line (#168), the probe (#171) and the benchmark (#173) need both the Linux and the Windows paths (`src/compat_win.c` faults, DXGI or Vulkan memory queries). The after-crash screen and the cards go in both launchers. On macOS (research only) nothing extra is needed until 2.0.
-- Needs a Vulkan GPU; DLSS needs NVIDIA.
-
-## Open-source pieces
-
-shadPS4 (vendored GNM/Vulkan renderer and shader recompiler, GPL-2.0-or-later, pinned commit in `gpu/VENDOR.txt`, plus shadNet/np parts from shadp2p), FireBurn/FSR-Vulkan (FSR 3.1, submodule, patched), Dear ImGui (in-game menu), xbyak, magic_enum, miniz (submodules), LibAtrac9 (ATRAC9 audio), Vulkan-Headers, Vulkan Memory Allocator, SDL3 (window and input), FFmpeg (MP3 and video), Zydis (x86 decoding for patching), Protobuf, nlohmann-json, OpenSSL, miniupnpc (co-op networking), Tracy hooks in the shim, and optional NVIDIA DLSS/NGX and XeSS (fetched, not committed).
+- Which revision (`APP_VER`) of each game the port supports today; `games::SUPPORTED` is filled from the device runs.
+- Whether a PS4 save's `sce_sys/icon0.png` and `param.sfo` give a useful picture and detail for the save card; fallback: the game's own `icon0.png`.
+- bloodborne-native's recompiler and Metal renderer: how much is Bloodborne-specific, and their licence files (`apple/` issue 8.01).
+- FEXCore performance with our Rust runtime on Android (revvv991 measured the C runtime).
+- mDNS from Game Mode and on Android (multicast lock).
