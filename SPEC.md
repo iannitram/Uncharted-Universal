@@ -40,6 +40,16 @@ Each Must is checked on the owner's Legion Go (AMD Z1 Extreme, a Phoenix APU, Ra
 - Windows and macOS delivery (#54, #55, #65, #39), plain ELF input (#66), the save edge cases from the review (#38, #48-#53, #57), runner caching (#58), full platform CI and release verification (#59), and upstream PR pulls that wait on upstream (#41, #42).
 - Running above 60 FPS (not a goal, #23).
 
+## 2.0 pathway (decided 2026-10-31)
+
+Not part of 1.0, so no Must or Won't changes. In order:
+
+1. **Shared saves first:** the same saves load on the AMD handheld and the Strix Halo tablet (SteamOS) and the RTX 3090 Ti desktop (Windows), through [save-relay](https://github.com/iannitram/save-relay), my own small library that every game port reuses. The launcher pulls before Play and pushes after the game quits. Later the Android and iOS builds use the same saves.
+2. **Then 2.0: Android, iOS (with controller support) and Mac apps.**
+   - Android: the route revvv991/uncharted-android and eladharels/uncharted_android prove: the game's x86-64 code through FEXCore, the rest native ARM64, Turnip on Adreno.
+   - iOS: iOS forbids JIT, so FEX does not carry over. The route bloodborne-native/bloodborne-ios proves for the same bbport family is a recompiled library built on a Mac from my own dump, plus a Metal renderer, sideloaded. Its limit: about 2 GiB of address space with a free Apple ID; the larger-memory entitlements need the paid Apple Developer Program.
+   - Mac: native Apple Silicon on the same recompiler and Metal route (bloodborne-native/bloodborne-mac), and the natural first step toward iOS.
+
 ## Prior art
 
 Notes and the survey's findings: [PEERS.md](PEERS.md).
@@ -54,6 +64,10 @@ peer: revvv991/uncharted-android | GPL-2.0 | low-power GPU ideas (Adreno)
 peer: shadps4-emu/shadPS4 | GPL-2.0 | texture and buffer cache fixes to back-port into gpu/shadps4
 peer: bloodborne-native/bloodborne-runtime | GPL-2.0 | the shim's ancestor: loader and Vulkan layer fixes
 peer: bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings (#10)
+peer: eladharels/uncharted_android | GPL-2.0 | a second Android port (FEX JIT + Turnip): device notes for the 2.0 Android build
+peer: bloodborne-native/bloodborne-mac | GPL-2.0 | native Apple Silicon port of the same bbport family: own recompiler and Metal renderer, the route for the 2.0 Mac build
+peer: bloodborne-native/bloodborne-ios | GPL-2.0 | Bloodborne on iPhone with no JIT (recompiled library + Metal, sideloaded): the route and its limits for the 2.0 iOS build
+peer: Ryxm-a/uncharted-ios | GPL-2.0 | an Uncharted iOS scaffold that plans FEX with sideload JIT; watch whether it gets past scaffolding
 
 ## Platforms
 
