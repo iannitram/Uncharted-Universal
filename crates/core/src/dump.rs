@@ -53,7 +53,7 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
         }
         let mut header = [0; 4];
         let count = File::open(&path)?.read(&mut header)?;
-        if count == 4 && &header == b"SCE\0" {
+        if count == 4 && header == PS4_SELF_MAGIC {
             decrypted = false;
             problems.push(format!(
                 "{} is still an encrypted PS4 SELF; use a decrypted ELF dump.",
@@ -202,7 +202,11 @@ mod tests {
     #[test]
     fn identifies_self_version_missing_data_and_wrong_folder() {
         let self_dir = good("self", "01.00");
-        fs::write(self_dir.0.join("eboot.bin"), b"SCE\0encrypted").unwrap();
+        fs::write(
+            self_dir.0.join("eboot.bin"),
+            [&PS4_SELF_MAGIC[..], b"encrypted"].concat(),
+        )
+        .unwrap();
         assert!(check(&self_dir.0)
             .unwrap()
             .problems
