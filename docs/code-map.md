@@ -35,7 +35,7 @@ flowchart TD
       Prepare --> Hub["hub, bundle, fleet, recipe"]
       SteamMod["steam, vdf, artwork"]
       Logs["logs: redact, crash line, known issues, playthrough"]
-      Tune["tune (planned): hardware report, three cards"] --> RunEnv
+      Tune["tune (stub): hardware report, three cards"] --> RunEnv
       Update["update"] --> Prepare
       Update --> Saves
     end
@@ -89,7 +89,7 @@ flowchart TD
 | `steam` | stub | `shortcut_app_id`, `Shortcut`, `upsert`, `userdata_roots`, `write_shortcut` (Steam closed, `.bak` kept), `write_artwork`; the shortcut opens the launcher's Continue screen (M13) | `launcher/bbport_steam.py`, the file writing of `launcher/uncharted_art.py` | M13, M20 |
 | `artwork` | stub | Steam grid, wide grid, hero, logo, icon from each game's `sce_sys/pic0.png`, `pic1.png`, `icon0.png`; nothing downloaded | `launcher/uncharted_art.py` (`steam_artwork`, `cover`; the SteamGridDB download `steamgriddb_artwork` is dropped) | M13, M20 |
 | `relay` | planned (feature `relay`) | save-relay adapter: links its library, maps outcomes to `launch::Sync` | #163 (reworked for Rust) | M18 |
-| `tune` | planned | the hardware report (read from `uncharted-run --probe`, #171: video memory, RTX, laptop GPU) and the choices it hides; the three cards Handheld 30, Balanced 60, Max quality (#174); reads the benchmark report of #173 | `launcher/bbport_vulkan.py` (Vulkan query); the picker is new | M5, M13, M20 |
+| `tune` | stub | the hardware report (read from `uncharted-run --probe`, #171: video memory, RTX, laptop GPU) and the choices it hides; the three cards Handheld 30, Balanced 60, Max quality (#174); reads the benchmark report of #173 | `launcher/bbport_vulkan.py` (Vulkan query); the picker is new | M5, M13, M20 |
 
 `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `backup`, `update`, `launch` and the shape of `savecard` are copied from iannitram/totk-native (MIT) with credit in the file header, once built there.
 
