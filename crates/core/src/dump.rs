@@ -21,6 +21,9 @@ pub struct FoundGame {
     pub app_ver: Option<String>,
 }
 
+/// First four bytes of a PS4 SELF container (an executable that is not a plain ELF).
+const PS4_SELF_MAGIC: [u8; 4] = [0x4f, 0x15, 0x3d, 0x1d];
+
 /// What `check` found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DumpReport {
@@ -34,7 +37,8 @@ pub struct DumpReport {
     pub problems: Vec<String>,
 }
 
-/// Check a dump folder. A folder with no executable of any game is `Error::BadDump(..)`; a
+/// Check a dump folder. Every problem, even a folder that is no dump at all (no executable of
+/// any game), is one plain sentence in `problems`. A
 /// revision the port does not support is listed in `problems` and left to
 /// `games::check_revision` to refuse at prepare.
 pub fn check(folder: &Path) -> Result<DumpReport> {

@@ -3,12 +3,17 @@
 use crate::error::{Error, Result};
 use std::collections::BTreeMap;
 
+/// `TITLE_ID` ("CUSA02320").
 pub const TITLE_ID: &str = "TITLE_ID";
+/// `APP_VER` ("01.02"): the build that runs; what patches and the revision gate key on.
 pub const APP_VER: &str = "APP_VER";
+/// `VERSION` ("01.00"): the content base version, used only when `APP_VER` is missing.
 pub const VERSION: &str = "VERSION";
+/// `TITLE`: the name shown on the console.
 pub const TITLE: &str = "TITLE";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// One value of a `param.sfo`: an int for format 0x404, else text (trailing NULs stripped).
 pub enum SfoValue {
     Int(u32),
     Text(String),
@@ -29,7 +34,9 @@ impl SfoValue {
     }
 }
 
-/// Parse a bounded PSF header and its key/value entries.
+/// Parse a `param.sfo`. A bad signature is `Error::BadDump("bad SFO signature")`; any offset,
+/// count or length that reaches past the end of `data` is `Error::BadDump("param.sfo is cut short")`.
+/// Every access is bounds-checked.
 pub fn parse(data: &[u8]) -> Result<BTreeMap<String, SfoValue>> {
     if data.get(..4) != Some(b"\0PSF") {
         return Err(Error::BadDump("bad SFO signature".into()));
@@ -101,6 +108,49 @@ pub fn parse(data: &[u8]) -> Result<BTreeMap<String, SfoValue>> {
     Ok(values)
 }
 
+/// The text value of `key`, if it is there and is text.
 pub fn text<'a>(values: &'a BTreeMap<String, SfoValue>, key: &str) -> Option<&'a str> {
     values.get(key).and_then(SfoValue::as_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(key_base: u32, value_base: u32, count: u32) -> Vec<u8> {
+        let mut d = b"\0PSF\x01\x01\0\0".to_vec();
+        for n in [key_base, value_base, count] {
+            d.extend(n.to_le_bytes());
+        }
+        d
+    }
+
+    #[test]
+    fn bad_or_short_input_is_an_error_never_a_panic() {
+        assert_eq!(
+            parse(&[]).unwrap_err(),
+            Error::BadDump("bad SFO signature".into())
+        );
+        let cut = Error::BadDump("param.sfo is cut short".into());
+        for n in 4..20 {
+            assert_eq!(parse(&header(0, 0, 0)[..n]).unwrap_err(), cut);
+        }
+        // entry count too big for the buffer, or big enough to overflow count * 16
+        for count in [1, 0x0fff_ffff, u32::MAX] {
+            assert_eq!(parse(&header(20, 20, count)).unwrap_err(), cut);
+        }
+        // key table and value table past the end
+        let mut d = header(0xffff_ffff, 0xffff_ffff, 1);
+        d.extend([
+            0xff, 0xff, 4, 4, 4, 0, 0, 0, 4, 0, 0, 0, 0xff, 0xff, 0xff, 0xff,
+        ]);
+        assert_eq!(parse(&d).unwrap_err(), cut);
+        // value runs past the end
+        let mut d = header(36, 40, 1);
+        d.extend([
+            0, 0, 4, 2, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0,
+        ]);
+        d.extend(b"A\0");
+        assert_eq!(parse(&d).unwrap_err(), cut);
+    }
 }
