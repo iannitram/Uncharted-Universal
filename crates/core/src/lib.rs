@@ -51,6 +51,7 @@ pub mod saves;
 pub mod sfo;
 pub mod steam;
 pub mod trophies;
+pub mod tune;
 pub mod update;
 pub mod vdf;
 
