@@ -678,6 +678,23 @@ TROPHY_COLORS = {'P': '#9fd0f5', 'G': GOLD, 'S': '#cfd3da', 'B': '#cf8548'}
 RUST, RUST_HI = GOLD, GOLD_HI
 
 
+def mouse_button_name(num, windows):
+    """Return a human-readable name for a mouse button.
+    
+    For Windows: buttons 4 and 5 are Mouse 4 and Mouse 5
+    For Linux X11: buttons 4 and 5 are Wheel Up and Wheel Down, 
+    buttons 8 and 9 are Mouse 4 and Mouse 5
+    """
+    if windows:
+        # Windows platform - keep existing mapping
+        return {1: 'Mouse Left', 2: 'Mouse Middle', 3: 'Mouse Right', 4: 'Mouse 4', 5: 'Mouse 5',
+                8: 'Mouse 4', 9: 'Mouse 5'}.get(num)
+    else:
+        # Linux X11 platform - wheel events are 4 and 5
+        return {1: 'Mouse Left', 2: 'Mouse Middle', 3: 'Mouse Right', 4: 'Wheel Up', 5: 'Wheel Down',
+                8: 'Mouse 4', 9: 'Mouse 5'}.get(num)
+
+
 class Launcher:
     def __init__(self, root, tk, ttk, filedialog, messagebox):
         global UI_LANGUAGE
@@ -1718,9 +1735,8 @@ class Launcher:
         return 'break'
 
     def captured_button(self, event):
-        # 4 and 5 as other toolkits number the side buttons; 8 and 9 as X11 does
-        name = {1: 'Mouse Left', 2: 'Mouse Middle', 3: 'Mouse Right', 4: 'Mouse 4', 5: 'Mouse 5',
-                8: 'Mouse 4', 9: 'Mouse 5'}.get(event.num)
+        # X11: 4 and 5 are the wheel, 8 and 9 the side buttons; Windows: 4 and 5 are the side buttons
+        name = mouse_button_name(event.num, WINDOWS)
         if name:
             self.set_key(*self.capturing, name)
         return 'break'
