@@ -102,13 +102,15 @@ pub fn parse_known_issues(json: &str) -> Result<Vec<KnownIssue>> {
             };
 
             // Parse game field
-            let game = match map.get("game").and_then(|v| v.as_str()) {
-                Some("any") => None,
-                Some(game_str) => match Game::from_key(game_str) {
+            // A missing game or "any" is None; any other value that is not a known game skips the entry.
+            let game = match map.get("game") {
+                None => None,
+                Some(Value::String(game_str)) if game_str == "any" => None,
+                Some(Value::String(game_str)) => match Game::from_key(game_str) {
                     Some(game) => Some(game),
                     None => continue,
                 },
-                None => None,
+                Some(_) => continue,
             };
 
             // Parse locations field
@@ -346,4 +348,19 @@ pub fn health(logs: &Path, free_bytes: u64) -> Result<Vec<String>> {
 /// folder of text files under `out`; returns its path.
 pub fn create_report(logs: &Path, out: &Path, what: &Redact) -> Result<PathBuf> {
     not_built("logs::create_report")
+}
+
+#[cfg(test)]
+mod known_issue_game_tests {
+    use super::*;
+
+    #[test]
+    fn a_game_that_is_not_text_skips_the_entry() {
+        let got = parse_known_issues(
+            r#"[{"id": "n", "signature": "s", "game": 5}, {"id": "ok", "signature": "s"}]"#,
+        )
+        .unwrap();
+        let ids: Vec<&str> = got.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["ok"]);
+    }
 }
