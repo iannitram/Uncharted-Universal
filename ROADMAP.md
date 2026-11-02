@@ -8,7 +8,7 @@ From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD han
 |---|---|
 | M1-M3 playthroughs on the AMD handheld | the correctness and campaign work already open (#31, #35, #37, #60, #62-#64, #109, #111-#113, #164 and the bug issues), crash help (#165: #168-#170, #175; the after-crash screen is 2.07, which replaced closed #176), playthroughs #76-#78; 5.02 |
 | M4 saves work | 3.06 (savedata in Rust), 1.17, 9.02 |
-| M5 power and frame rate | 1.14, 1.15, 1.16, 1.27, auto-tune (#166: #171, #173, #174 and #178 are 1.27, and #172 is 1.05 `dump`; the display cards are 2.06, which replaced closed #177), #22; 5.02 |
+| M5 power and frame rate | 1.14, 1.15, 1.16, 1.27, auto-tune (#166: #171, #173 (the `BB_BENCHMARK` runtime benchmark that the M5 soak reads), #174 and #178 are 1.27, and #172 is 1.05 `dump`; the display cards are 2.06, which replaced closed #177), #22; 5.02 |
 | M6 every build verified | 0.02, 2.10, 3.01, 6.01, 7.02, 8.02 |
 | M7 the launcher starts each game | 1.04-1.15, 1.25, 2.02-2.05 |
 | M8 play-breaking bugs | #31, #35, #37, all in `gpu/` (and #164 first) |

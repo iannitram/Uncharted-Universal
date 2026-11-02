@@ -50,7 +50,8 @@ Device checks are `needs-owner-device`: they need my machines and my dump. IDs M
 
 ## Won'ts (1.0)
 
-- Any game data, keys or firmware in this repo, its releases or its logs, ever.
+- Any game data, keys or firmware in this repo, its releases or its logs, ever. The bundle holds no game data either.
+- A `probe` (the hardware report, `uncharted-run --probe`) on Android or iOS at 1.0. Only desktops and handhelds get one (owner ruling, 2026-11-01).
 - Executable revisions the port does not support.
 - Steam Frame or other devices; Android GPUs other than Adreno (Turnip is the driver; Mali is after 1.0); Android kernels with 16 KB pages (FEXCore needs 4 KB).
 - Rewriting shadPS4 in Rust.
@@ -118,7 +119,7 @@ One Rust engine with a Slint launcher on every device, opening on the Continue s
 
 ## Testing decisions
 
-- Core logic (dump and revision checks, prepare steps, patches, mods, recipes, saves, Steam files) is tested with fake dumps in `cargo test` on Linux, Windows and macOS. The 33 Python test files are the expected results for their Rust ports.
+- Core logic (dump and revision checks, prepare steps, patches, mods, recipes, saves, Steam files) is tested with fake dumps in `cargo test` on Linux, Windows and macOS. The 34 Python test files are the expected results for their Rust ports.
 - Each runtime module's Rust tests replace its C test; the boot smoke test runs in CI on Linux.
 - Launcher pages are tested through their view models (button presses in, page state out), and once headless through Slint's testing backend.
 - Hub pairing, transfer and the fleet view are tested with a fake hub on loopback.
