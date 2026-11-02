@@ -34,11 +34,9 @@ class FixDefaults(unittest.TestCase):
                           'BB_READBACK_SMALL_BUFFERS': '1'})
 
     def test_uncharted_3_keeps_the_copies_off_because_they_cost_94_to_54_fps(self):
-        # Aim blur and the small GPU results are on in U3 since upstream 0.3.11 (they land on the
-        # landing thread, no measurable cost); the raycaster copies stay off.
         self.assertEqual(run.fix_defaults(frozen(), U3),
-                         {'BB_GPU_MERGE': '0', 'BB_TINY_READBACK': '1', 'BB_READBACK_SMALL_BUFFERS': '1',
-                          'BB_SCALAR_COPY64_SYNC': '0', 'BB_SCALAR_COPY64_DEFER': '0', 'BB_TOGGLE2': '12'})
+                         {'BB_GPU_MERGE': '0', 'BB_TINY_READBACK': '0', 'BB_SCALAR_COPY64_SYNC': '0',
+                          'BB_SCALAR_COPY64_DEFER': '0', 'BB_TOGGLE2': '12'})
 
     def test_a_copy_setting_the_player_chose_removes_both_copy_defaults(self):
         got = run.fix_defaults(frozen(BB_SCALAR_COPY64_SYNC='0'), U1)

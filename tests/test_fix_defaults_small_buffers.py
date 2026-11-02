@@ -21,11 +21,9 @@ class SmallBuffers(unittest.TestCase):
     def test_uncharted_2_gets_the_fix(self):
         self.assertEqual(run.fix_defaults(frozen(), U2)[KEY], '1')
 
-    def test_uncharted_3_gets_it_since_upstream_0_3_11(self):
-        self.assertEqual(run.fix_defaults(frozen(), U3)[KEY], '1')
-
-    def test_uncharted_1_does_not(self):
+    def test_uncharted_1_and_3_do_not(self):
         self.assertNotIn(KEY, run.fix_defaults(frozen(), U1))
+        self.assertNotIn(KEY, run.fix_defaults(frozen(), U3))
 
     def test_unknown_executable_gets_nothing(self):
         self.assertEqual(run.fix_defaults(frozen(), 'other.elf'), {})

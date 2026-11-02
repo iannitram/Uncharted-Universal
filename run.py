@@ -52,11 +52,8 @@ def fix_defaults(player_env, exe):
     elif exe == EXECUTABLES['u3']:
         if 'BB_GPU_MERGE' not in player_env:
             result['BB_GPU_MERGE'] = '0'
-        # Upstream 0.3.11: aim blur and weapon textures need these on U3 too (no measurable cost there).
         if 'BB_TINY_READBACK' not in player_env:
-            result['BB_TINY_READBACK'] = '1'
-        if 'BB_READBACK_SMALL_BUFFERS' not in player_env:
-            result['BB_READBACK_SMALL_BUFFERS'] = '1'
+            result['BB_TINY_READBACK'] = '0'
         if 'BB_SCALAR_COPY64_SYNC' not in player_env:
             result['BB_SCALAR_COPY64_SYNC'] = '0'
             result['BB_SCALAR_COPY64_DEFER'] = '0'
@@ -466,7 +463,7 @@ def main():
     # accurate GPU memory (BB_GPU_MERGE=0) unless the player chose otherwise. Uncharted 3 runs the
     # same engine and showed the same floating NPCs (Linux fork), so it does too.
     # Aim and turret blur: the game reads a tiny render result (focus depth) on the CPU, so it is read back
-    # (BB_TINY_READBACK). On for U2 and U3: no measurable cost in U3 (square and chateau fight). U1 unchanged.
+    # (BB_TINY_READBACK). On for U2 only; U3 stays off until measured (issue #191); U1 unchanged.
     all_cheats = env.setdefault('BB_CHEATS_ALL', env.get('BB_CHEATS', ''))
     # Take a copy of the environment once before the loop
     player_env = dict(env)
