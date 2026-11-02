@@ -35,7 +35,7 @@ flowchart TD
       Prepare --> Hub["hub, bundle, fleet, recipe"]
       SteamMod["steam, vdf, artwork"]
       Logs["logs: redact, crash line, known issues, playthrough"]
-      Tune["tune (stub): hardware report, three cards"] --> RunEnv
+      Tune["tune: hardware report reader, choice gates, three cards"] --> RunEnv
       Update["update"] --> Prepare
       Update --> Saves
     end
@@ -89,7 +89,7 @@ flowchart TD
 | `steam` | stub | `shortcut_app_id`, `Shortcut`, `upsert`, `userdata_roots`, `write_shortcut` (Steam closed, `.bak` kept), `write_artwork`; the shortcut opens the launcher's Continue screen (M13) | `launcher/bbport_steam.py`, the file writing of `launcher/uncharted_art.py` | M13, M20 |
 | `artwork` | stub | Steam grid, wide grid, hero, logo, icon from each game's `sce_sys/pic0.png`, `pic1.png`, `icon0.png`; nothing downloaded | `launcher/uncharted_art.py` (`steam_artwork`, `cover`; the SteamGridDB download `steamgriddb_artwork` is dropped) | M13, M20 |
 | `relay` | planned (feature `relay`) | save-relay adapter: links its library, maps outcomes to `launch::Sync` | #163 (reworked for Rust) | M18 |
-| `tune` | stub | the hardware report (read from `uncharted-run --probe`, #171: video memory, RTX, laptop GPU) and the choices it hides; the three cards Handheld 30, Balanced 60, Max quality (#174); reads the benchmark report of #173 | `launcher/bbport_vulkan.py` (Vulkan query); the picker is new | M5, M13, M20 |
+| `tune` | present | parses the hardware report JSON (#171: GPU name/vendor/generation, dedicated/shared memory, selected integrated GPU and hybrid topology, refresh rate, CPU cores/instruction support); gates frame generation and sizes above 1080p below 6 GiB, DLSS on RTX, and warns on integrated selection in a hybrid machine; the three cards Handheld 30, Balanced 60, Max quality (#174). Live `uncharted-run --probe` collection awaits the runtime loader; benchmark report reading awaits #173 | the report consumes the future runtime replacement of `launcher/bbport_vulkan.py`; the picker is new | M5, M13, M20 |
 
 `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `backup`, `update`, `launch` and the shape of `savecard` are copied from iannitram/totk-native (MIT) with credit in the file header, once built there.
 
@@ -115,7 +115,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `cpu_patch`, `red_zone` | planned | `cpu_patch.c` (591), `red_zone.c` (489) | `test_cpu_patch.c`, `test_red_zone.c` | 14 | M20 |
 | `os` | planned | `compat_win.c` (162): the MinGW POSIX shims become `cfg(windows)` code | | 15 | M14, M20 |
 | `loader` + bin `uncharted-run` | planned | `probe.c` (1474): ELF mapping, imports by NID, hooks, faults, MOVBE emulation; the `Crash:` line and forced-fault check (#168) await this port | `test_probe.py`, the boot smoke | 16 | M7, M20 |
-| `probe` (`uncharted-run --probe`) | planned | `tools/gpu_capabilities.c` (the `bb-gpu-capabilities` program that `gpu/CMakeLists.txt` builds): GPU vendor, video memory and display as JSON for `core::tune` (#171); the `BB_BENCHMARK` report (#173) comes from `pad` and the shim | | with 16 | M5, M20 |
+| `probe` (`uncharted-run --probe`) | planned | `tools/gpu_capabilities.c` (the `bb-gpu-capabilities` program that `gpu/CMakeLists.txt` builds): GPU vendor, video memory and display as JSON for `core::tune` (#171; report contract and synthetic gate tests are present there, live collection awaits the loader); the `BB_BENCHMARK` report (#173) comes from `pad` and the shim | | with 16 | M5, M20 |
 | `gpu` (build script) | planned | `build.sh` GPU part: builds `gpu/` with CMake through the `cmake` crate, links `bbgpu` | `test_*.cpp` stay C++ | with 1 | M6 |
 
 `src/vulkan_smoke.c` (62) becomes a test in `gpu`'s build (piece 3.01). When `loader` is present, `src/` is deleted (M20). A bug fixed in C before its module moves is ported with the module.

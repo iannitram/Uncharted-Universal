@@ -249,3 +249,198 @@ fn the_target_differs_per_card() {
     assert!(!got.handheld30.stepped_down);
     assert!(got.balanced60.stepped_down);
 }
+
+/// Synthetic probe output only: no device queries or game bytes. The module name makes
+/// these cases run under `cargo test -p uncharted_core tune`.
+mod tune_probe {
+    use super::*;
+    use serde_json::{json, Value};
+    use uncharted_core::tune::{choices, parse_probe, Generation, HardwareReport};
+
+    const FOUR_GB: &str = r#"{
+        "vendor":"nvidia", "name":"GeForce GTX 1650", "generation":"older",
+        "vram_mib":4096, "shared_memory":false, "integrated_gpu":false,
+        "hybrid_graphics":false, "refresh_hz":144, "cpu_cores":8, "cpu_supported":true
+    }"#;
+    const RTX_3090_TI: &str = r#"{
+        "vendor":"nvidia", "name":"GeForce RTX 3090 Ti", "generation":"rtx30",
+        "vram_mib":24576, "shared_memory":false, "integrated_gpu":false,
+        "hybrid_graphics":false, "refresh_hz":120, "cpu_cores":16, "cpu_supported":true
+    }"#;
+    const RADEON_780M: &str = r#"{
+        "vendor":"amd", "name":"Radeon 780M", "generation":"rdna3",
+        "vram_mib":4096, "shared_memory":true, "integrated_gpu":true,
+        "hybrid_graphics":false, "refresh_hz":60, "cpu_cores":8, "cpu_supported":true
+    }"#;
+    const INTEL_NVIDIA: &str = r#"{
+        "vendor":"intel", "name":"Intel integrated graphics", "generation":"older",
+        "vram_mib":2048, "shared_memory":true, "integrated_gpu":true,
+        "hybrid_graphics":true, "refresh_hz":144, "cpu_cores":12, "cpu_supported":true
+    }"#;
+
+    fn changed(source: &str, key: &str, value: Value) -> String {
+        let mut report: Value = serde_json::from_str(source).unwrap();
+        report[key] = value;
+        report.to_string()
+    }
+
+    fn read(source: &str) -> HardwareReport {
+        parse_probe(source).unwrap()
+    }
+
+    #[test]
+    fn four_gb_hides_frame_generation_and_above_1080p_and_dlss() {
+        let report = read(FOUR_GB);
+        let offered = choices(&report);
+        assert_eq!(report.device.vendor, Vendor::Nvidia);
+        assert_eq!(report.generation, Generation::Older);
+        assert!(!offered.frame_generation);
+        assert!(!offered.above_1080p);
+        assert!(!offered.dlss);
+        assert_eq!(offered.integrated_gpu_warning, None);
+        let presets = cards(&report.device);
+        for card in all(&presets) {
+            assert_eq!(card.frame_generation, "off");
+            assert_ne!(card.anti_aliasing, "dlss");
+        }
+        assert_eq!(presets.max.render_resolution, "1920x1080");
+    }
+
+    #[test]
+    fn rtx_3090_ti_offers_dlss_and_has_memory_for_larger_sizes() {
+        let report = read(RTX_3090_TI);
+        assert_eq!(report.name, "GeForce RTX 3090 Ti");
+        assert_eq!(report.generation, Generation::Rtx30);
+        assert_eq!(report.device.vram_mib, 24576);
+        assert!(!report.device.shared_memory);
+        assert_eq!(report.device.refresh_hz, Some(120));
+        assert_eq!(report.cpu_cores, 16);
+        assert!(report.cpu_supported);
+        let offered = choices(&report);
+        assert!(offered.frame_generation);
+        assert!(offered.above_1080p);
+        assert!(offered.dlss);
+        assert_eq!(offered.integrated_gpu_warning, None);
+        let presets = cards(&report.device);
+        assert_eq!(presets.max.render_resolution, "3840x2160");
+        assert_eq!(presets.max.anti_aliasing, "dlss");
+    }
+
+    #[test]
+    fn radeon_780m_preserves_shared_heap_size_and_has_no_laptop_warning() {
+        let report = read(RADEON_780M);
+        assert_eq!(report.name, "Radeon 780M");
+        assert_eq!(report.generation, Generation::Rdna3);
+        assert!(report.device.shared_memory);
+        assert_eq!(report.device.vram_mib, 4096);
+        let offered = choices(&report);
+        assert!(!offered.frame_generation);
+        assert!(!offered.above_1080p);
+        assert!(!offered.dlss);
+        assert_eq!(offered.integrated_gpu_warning, None);
+        assert_eq!(cards(&report.device).balanced60.upscale_preset, "balanced");
+    }
+
+    #[test]
+    fn intel_nvidia_laptop_gates_the_selected_gpu_and_warns_on_integrated_selection() {
+        let offered = choices(&read(INTEL_NVIDIA));
+        assert!(offered.integrated_gpu_warning.is_some());
+        assert!(!offered.dlss);
+        assert!(!offered.frame_generation);
+        assert!(!offered.above_1080p);
+        // Same topology, but now the discrete adapter and its heap are selected.
+        let discrete = changed(RTX_3090_TI, "hybrid_graphics", json!(true));
+        let offered = choices(&read(&discrete));
+        assert_eq!(offered.integrated_gpu_warning, None);
+        assert!(offered.dlss);
+        assert!(offered.frame_generation);
+        assert!(offered.above_1080p);
+    }
+
+    #[test]
+    fn six_gib_boundary_applies_to_rtx_and_shared_memory_too() {
+        for fixture in [RTX_3090_TI, RADEON_780M] {
+            for memory in [0, 6143, 6144] {
+                let report = read(&changed(fixture, "vram_mib", json!(memory)));
+                let offered = choices(&report);
+                assert_eq!(offered.frame_generation, memory >= 6144);
+                assert_eq!(offered.above_1080p, memory >= 6144);
+                assert_eq!(offered.dlss, report.device.vendor == Vendor::Nvidia);
+                if memory < 6144 {
+                    assert_eq!(cards(&report.device).max.frame_generation, "off");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn generation_is_preserved_without_guessing_from_a_marketing_name() {
+        for (vendor, generation, expected) in [
+            ("amd", "rdna2", Generation::Rdna2),
+            ("amd", "rdna3", Generation::Rdna3),
+            ("amd", "rdna4", Generation::Rdna4),
+            ("nvidia", "rtx20", Generation::Rtx20),
+            ("nvidia", "rtx30", Generation::Rtx30),
+            ("nvidia", "rtx40", Generation::Rtx40),
+            ("nvidia", "rtx50", Generation::Rtx50),
+            ("intel", "intel_arc", Generation::IntelArc),
+            ("other", "unknown", Generation::Unknown),
+        ] {
+            let fixture = changed(FOUR_GB, "vendor", json!(vendor));
+            let fixture = changed(&fixture, "generation", json!(generation));
+            let report = read(&fixture);
+            assert_eq!(report.generation, expected);
+            assert_eq!(report.device.rtx, vendor == "nvidia");
+        }
+        let fixture = changed(RTX_3090_TI, "generation", json!("unknown"));
+        assert!(!choices(&read(&fixture)).dlss);
+    }
+
+    #[test]
+    fn unknown_refresh_and_a_failed_cpu_instruction_check_survive_parsing() {
+        let fixture = changed(FOUR_GB, "refresh_hz", Value::Null);
+        let fixture = changed(&fixture, "cpu_supported", json!(false));
+        let report = read(&fixture);
+        assert_eq!(report.device.refresh_hz, None);
+        assert!(!report.cpu_supported);
+    }
+
+    #[test]
+    fn damaged_or_incomplete_reports_fail_without_echoing_the_input() {
+        for fixture in ["not JSON", "[]", "null", "{}"] {
+            assert!(parse_probe(fixture).is_err());
+        }
+        for (key, value) in [
+            ("vendor", json!("unrecognised")),
+            ("vendor", json!("amd")), // Inconsistent with the RTX generation.
+            ("generation", json!("future_generation")),
+            ("name", json!("  ")),
+            ("vram_mib", json!(-1)),
+            ("vram_mib", json!(4294967296_u64)),
+            ("vram_mib", json!(4096.5)),
+            ("shared_memory", json!("false")),
+            ("integrated_gpu", Value::Null),
+            ("hybrid_graphics", json!(1)),
+            ("refresh_hz", json!(0)),
+            ("refresh_hz", json!("60")),
+            ("cpu_cores", json!(0)),
+            ("cpu_supported", json!("private probe contents")),
+        ] {
+            let error = parse_probe(&changed(RTX_3090_TI, key, value)).unwrap_err();
+            assert_eq!(error.code(), "launch");
+            assert_eq!(
+                error,
+                uncharted_core::Error::Launch("The hardware probe report is damaged".into())
+            );
+        }
+        let mut report: Value = serde_json::from_str(FOUR_GB).unwrap();
+        let keys: Vec<_> = report.as_object().unwrap().keys().cloned().collect();
+        for key in keys {
+            let removed = report.as_object_mut().unwrap().remove(&key).unwrap();
+            assert!(parse_probe(&report.to_string()).is_err(), "missing {key}");
+            report[key] = removed;
+        }
+        report["future_field"] = json!(true);
+        assert!(parse_probe(&report.to_string()).is_ok());
+    }
+}
