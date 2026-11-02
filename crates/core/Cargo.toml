@@ -21,3 +21,4 @@ hub = []
 # Pure Rust and no dependencies yet, so the core builds on Linux, Windows, macOS, Android and iOS.
 # An issue may add a pure-Rust crate when it needs one (say why in the PR).
 [dependencies]
+serde_json = "1"
