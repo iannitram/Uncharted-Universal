@@ -61,5 +61,109 @@ pub struct Cards {
 /// Pick the settings of the three cards for `device`, stepping a card's preset down when
 /// `bench` shows it missed its frame-rate target (30 for `handheld30`, 60 for the others).
 pub fn pick(device: &Device, bench: &Bench) -> Cards {
-    not_built!("tune::pick")
+    let anti_aliasing = if device.rtx { "dlss" } else { "fsr3" };
+
+    // Create base cards with default values
+    let mut handheld30 = Card {
+        frame_rate: "30".to_string(),
+        render_resolution: "1280x720".to_string(),
+        anti_aliasing: anti_aliasing.to_string(),
+        upscale_preset: "quality".to_string(),
+        frame_generation: "off".to_string(),
+        stepped_down: false,
+    };
+
+    let mut balanced60 = Card {
+        frame_rate: "60".to_string(),
+        render_resolution: "1920x1080".to_string(),
+        anti_aliasing: anti_aliasing.to_string(),
+        upscale_preset: if device.shared_memory {
+            "balanced"
+        } else {
+            "quality"
+        }
+        .to_string(),
+        frame_generation: "off".to_string(),
+        stepped_down: false,
+    };
+
+    // Determine max resolution based on VRAM
+    let max_resolution = if !device.shared_memory {
+        if device.vram_mib >= 10240 {
+            "3840x2160"
+        } else if device.vram_mib >= 6144 {
+            "2560x1440"
+        } else {
+            "1920x1080"
+        }
+    } else {
+        "1920x1080"
+    };
+
+    let mut max = Card {
+        frame_rate: "60".to_string(),
+        render_resolution: max_resolution.to_string(),
+        anti_aliasing: anti_aliasing.to_string(),
+        upscale_preset: "quality".to_string(),
+        frame_generation: if device.rtx {
+            "dlss"
+        } else if device.vram_mib >= 6144 && device.refresh_hz.unwrap_or(0) >= 120 {
+            "fsr3"
+        } else {
+            "off"
+        }
+        .to_string(),
+        stepped_down: false,
+    };
+
+    // Handle low memory case
+    let low_memory = device.vram_mib < 6144;
+    if low_memory {
+        handheld30.frame_generation = "off".to_string();
+        balanced60.frame_generation = "off".to_string();
+        max.frame_generation = "off".to_string();
+
+        // Cap resolutions to 1920x1080 for balanced60 and max cards only
+        balanced60.render_resolution = "1920x1080".to_string();
+        max.render_resolution = "1920x1080".to_string();
+    }
+
+    // Process benchmark results and step presets down if needed
+    let step_down_preset = |preset: &str| -> String {
+        const STEPS: [&str; 5] = ["off", "quality", "balanced", "performance", "ultra"];
+        match STEPS.iter().position(|step| *step == preset) {
+            Some(at) => STEPS[(at + 1).min(STEPS.len() - 1)].to_string(),
+            None => preset.to_string(),
+        }
+    };
+
+    // Check handheld30 benchmark
+    if let Some(fps) = bench.handheld30 {
+        if fps < 0.95 * 30.0 {
+            handheld30.upscale_preset = step_down_preset(&handheld30.upscale_preset);
+            handheld30.stepped_down = true;
+        }
+    }
+
+    // Check balanced60 benchmark
+    if let Some(fps) = bench.balanced60 {
+        if fps < 0.95 * 60.0 {
+            balanced60.upscale_preset = step_down_preset(&balanced60.upscale_preset);
+            balanced60.stepped_down = true;
+        }
+    }
+
+    // Check max benchmark
+    if let Some(fps) = bench.max {
+        if fps < 0.95 * 60.0 {
+            max.upscale_preset = step_down_preset(&max.upscale_preset);
+            max.stepped_down = true;
+        }
+    }
+
+    Cards {
+        handheld30,
+        balanced60,
+        max,
+    }
 }
