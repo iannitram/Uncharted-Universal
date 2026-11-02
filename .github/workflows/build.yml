@@ -74,6 +74,16 @@ jobs:
             cd /work
             BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh
           '
+      - name: Extract AppImage tool outside the chroot
+        # The AppImage runtime needs /proc/self/exe, unavailable in this unprivileged chroot.
+        run: |
+          staging=$(mktemp -d "$RUNNER_TEMP/appimagetool.XXXXXX")
+          trap 'rm -rf "$staging"' EXIT
+          curl -fsSL -o "$staging/appimagetool" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x "$staging/appimagetool"
+          (cd "$staging" && ./appimagetool --appimage-extract >/dev/null)
+          sudo rm -rf "$CHROOT/work/out/appimagetool-extracted"
+          sudo cp -a "$staging/squashfs-root" "$CHROOT/work/out/appimagetool-extracted"
       - name: Package
         run: |
           version=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)
@@ -81,7 +91,7 @@ jobs:
           sudo chroot "$CHROOT" bash -euc "
             git config --global --add safe.directory '*'
             cd /work
-            LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh
+            APPIMAGETOOL=/work/out/appimagetool-extracted/AppRun LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh
           "
       - name: Copy dist back to the workspace
         run: |

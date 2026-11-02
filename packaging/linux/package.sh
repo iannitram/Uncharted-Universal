@@ -92,11 +92,12 @@ chmod +x "$appdir/AppRun"
 cp packaging/linux/uncharted-linux.desktop "$appdir/"
 cp launcher/uncharted.png "$appdir/uncharted-linux.png"
 cp launcher/uncharted.png "$appdir/.DirIcon"
-tool=out/appimagetool-1.9.1
-if [[ ! -x $tool ]]; then
+tool=${APPIMAGETOOL:-out/appimagetool-1.9.1}
+if [[ -z ${APPIMAGETOOL:-} && ! -x $tool ]]; then
     curl -fsSL -o "$tool" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
     chmod +x "$tool"
 fi
+[[ -x $tool ]] || { echo "AppImage tool is not executable: $tool" >&2; exit 1; }
 # Extract-and-run: works without FUSE (containers, CI).
 # APPIMAGE_NAME: another file name (a custom build next to the official one).
 appimage=dist/${APPIMAGE_NAME:-Uncharted-x86_64.AppImage}
