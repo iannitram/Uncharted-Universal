@@ -80,5 +80,168 @@ pub const RT2_MIB_PER_1080P: u32 = 150;
 /// variables `BB_GAME_RT_MB`, `BB_GAME_RT2_MB`, `BB_GAME_FREE_MB`, `BB_GAME_MOVIE_MB` and, when
 /// the pool needs it, `BB_DMEM_MB`. A heap variable the player set to digits keeps its value.
 pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
-    not_built!("render_size::game_res_env")
+    // Get BB_GAME_RES from player_env, lowercase it and replace multiplication sign with 'x'
+    let res_text = match player_env.get("BB_GAME_RES") {
+        Some(text) => text.to_lowercase().replace('\u{d7}', "x"),
+        None => return BTreeMap::new(),
+    };
+
+    // Split into width and height
+    let parts: Vec<&str> = res_text.split('x').collect();
+    if parts.len() != 2 {
+        return BTreeMap::new();
+    }
+
+    // Parse width and height as integers
+    let width = match parts[0].parse::<u32>() {
+        Ok(w) => w,
+        Err(_) => return BTreeMap::new(),
+    };
+    let height = match parts[1].parse::<u32>() {
+        Ok(h) => h,
+        Err(_) => return BTreeMap::new(),
+    };
+
+    // Check if the size is within bounds
+    if width < MIN_SIZE.0 || width > MAX_SIZE.0 || height < MIN_SIZE.1 || height > MAX_SIZE.1 {
+        return BTreeMap::new();
+    }
+
+    // Return empty map if it's exactly 1920x1080
+    if width == 1920 && height == 1080 {
+        return BTreeMap::new();
+    }
+
+    // Calculate scale factor
+    let scale = (width as f64 * height as f64) / (1920.0 * 1080.0) - 1.0;
+
+    // Helper function to check if a string is all digits (optionally with leading '-')
+    let is_all_digits = |s: &str| -> bool {
+        let digits = s.strip_prefix('-').unwrap_or(s);
+        !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+    };
+
+    // Helper function to compute heap sizes with rounding to nearest multiple of 64
+    let compute_heap_size = |per_1080p: u32| -> u32 {
+        if scale <= 0.0 {
+            0
+        } else {
+            let value = (scale * per_1080p as f64).trunc() / 64.0;
+            (value.ceil() * 64.0) as u32
+        }
+    };
+
+    // Helper function to compute movie MB
+    let compute_movie_mb = |width: u32, height: u32| -> u32 {
+        // frame_width = ceil(width / 16) * 16
+        let frame_width = width.div_ceil(16) * 16;
+        // frame_height = ceil(height / 64) * 64
+        let frame_height = height.div_ceil(64) * 64;
+        // frame_bytes = frame_width * frame_height * 3 / 2 + 65536
+        let frame_bytes = (frame_width as u64 * frame_height as u64 * 3 / 2) + 65536;
+        // ceil(frame_bytes / 2097152) * 2, where 2097152 = 2^21
+        let mb = frame_bytes.div_ceil(2097152); // Use div_ceil for ceiling division
+        (mb * 2).max(4) as u32
+    };
+
+    // Build the result map
+    let mut result = BTreeMap::new();
+
+    // Always set BB_GAME_RES
+    result.insert("BB_GAME_RES".to_string(), format!("{}x{}", width, height));
+
+    // Handle BB_GAME_RT_MB
+    if let Some(rt_mb) = player_env.get("BB_GAME_RT_MB") {
+        if is_all_digits(rt_mb) {
+            result.insert("BB_GAME_RT_MB".to_string(), rt_mb.clone());
+        } else {
+            result.insert(
+                "BB_GAME_RT_MB".to_string(),
+                compute_heap_size(RT_MIB_PER_1080P).to_string(),
+            );
+        }
+    } else {
+        result.insert(
+            "BB_GAME_RT_MB".to_string(),
+            compute_heap_size(RT_MIB_PER_1080P).to_string(),
+        );
+    }
+
+    // Handle BB_GAME_RT2_MB
+    if let Some(rt2_mb) = player_env.get("BB_GAME_RT2_MB") {
+        if is_all_digits(rt2_mb) {
+            result.insert("BB_GAME_RT2_MB".to_string(), rt2_mb.clone());
+        } else {
+            result.insert(
+                "BB_GAME_RT2_MB".to_string(),
+                compute_heap_size(RT2_MIB_PER_1080P).to_string(),
+            );
+        }
+    } else {
+        result.insert(
+            "BB_GAME_RT2_MB".to_string(),
+            compute_heap_size(RT2_MIB_PER_1080P).to_string(),
+        );
+    }
+
+    // Handle BB_GAME_FREE_MB
+    if let Some(free_mb) = player_env.get("BB_GAME_FREE_MB") {
+        if is_all_digits(free_mb) {
+            result.insert("BB_GAME_FREE_MB".to_string(), free_mb.clone());
+        } else {
+            result.insert("BB_GAME_FREE_MB".to_string(), "0".to_string());
+        }
+    } else {
+        result.insert("BB_GAME_FREE_MB".to_string(), "0".to_string());
+    }
+
+    // Handle BB_GAME_MOVIE_MB
+    if let Some(movie_mb) = player_env.get("BB_GAME_MOVIE_MB") {
+        if is_all_digits(movie_mb) {
+            result.insert("BB_GAME_MOVIE_MB".to_string(), movie_mb.clone());
+        } else {
+            result.insert(
+                "BB_GAME_MOVIE_MB".to_string(),
+                compute_movie_mb(width, height).to_string(),
+            );
+        }
+    } else {
+        result.insert(
+            "BB_GAME_MOVIE_MB".to_string(),
+            compute_movie_mb(width, height).to_string(),
+        );
+    }
+
+    // Calculate pool size and BB_DMEM_MB
+    let rt_mb = result
+        .get("BB_GAME_RT_MB")
+        .unwrap_or(&"0".to_string())
+        .parse::<i64>()
+        .unwrap_or(0);
+    let rt2_mb = result
+        .get("BB_GAME_RT2_MB")
+        .unwrap_or(&"0".to_string())
+        .parse::<i64>()
+        .unwrap_or(0);
+    let free_mb = result
+        .get("BB_GAME_FREE_MB")
+        .unwrap_or(&"0".to_string())
+        .parse::<i64>()
+        .unwrap_or(0);
+
+    let pool = rt_mb + rt2_mb - free_mb;
+
+    if let Some(dmem_mb) = player_env.get("BB_DMEM_MB") {
+        if !dmem_mb.is_empty() {
+            result.insert("BB_DMEM_MB".to_string(), dmem_mb.clone());
+        } else if pool > 0 {
+            let dmem_val = 5056 + pool;
+            result.insert("BB_DMEM_MB".to_string(), dmem_val.min(16384).to_string());
+        }
+    } else if pool > 0 {
+        let dmem_val = 5056 + pool;
+        result.insert("BB_DMEM_MB".to_string(), dmem_val.min(16384).to_string());
+    }
+
+    result
 }
