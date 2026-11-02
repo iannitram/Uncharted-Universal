@@ -8,7 +8,7 @@
 
 ## Rules
 
-- The game builds and reaches its first frame at every step: a boot smoke test runs in CI, and the steps that touch savedata, audio, AJM, memory, threads and the loader also get a device check on the AMD handheld.
+- The game builds and reaches its first frame at every step: a boot smoke test runs in CI, and every step also gets a device check on the AMD handheld, not only the six that touch savedata, audio, AJM, memory, threads and the loader (owner ruling, 2026-11-01; SPEC.md says a device check per step).
 - No behaviour change in a port PR; a bug found while porting is its own issue.
 - Every `unsafe` block has a `// SAFETY:` line.
 

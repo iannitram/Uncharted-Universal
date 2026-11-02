@@ -82,7 +82,7 @@ flowchart TD
 | `launch` | stub | `Relay` and `Runner` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `main` of `run.py` | M7, M10, M18, M20 |
 | `logs` | stub | `redact` (no game paths or hex keys in logs), `crash_line` (reads the `Crash:` line the runtime prints, #168), the known-issues matcher over `crates/core/data/known_issues.json` (#169, seeded by #175), `playthrough.jsonl` (#170), log rotation, health and the report bundle | `launcher/uncharted_logs.py` and `crash_signature()` in `launcher/uncharted_linux.py`; the matcher and the playthrough log are new | M1-M3, M9, M20 |
 | `recipe` | stub | `Target` (linux, windows, mac, ios, android), `Hub` (strix-halo, desktop, mac), `hub_for`, `serves`; `Recipe` and `recipe_for` (the prepare steps per target, including the Mac's recompile and the iOS build and cable install); the per-chapter fix list of #178 | | M11, M15 |
-| `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder's own files (`is_forbidden`, a test enforces it); the prepared game data folder travels as part of the install (ADR 0004, SPEC.md M11) | | M9, M11, M12 |
+| `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder's own files (`is_forbidden`, a test enforces it); game data never travels in the bundle (ruling (d), 2026-11-02); the hub copies the prepared game data folder to the player's own devices over the home network (SPEC.md M11, M12; ADR 0004) | | M9, M11, M12 |
 | `hub` | stub (feature `hub`) | `discover` (mDNS `_uncharted-universal._tcp`, private ranges only), `pair` (six-digit code, SPAKE2), `serve`, `pull` (sealed, resumable), `Transport` trait for loopback tests | | M11, M12 |
 | `fleet` | stub | `DeviceRecord`, `drift` warning | | M12 |
 | `vdf` | stub | Steam binary KeyValues `read`, `write` | `launcher/bbport_steam.py` | M13, M20 |
@@ -169,13 +169,12 @@ CI (M6): `.github/workflows/check.yml` (fmt, clippy, build and test, with and wi
 | the RTX 3090 Ti desktop | windows | itself |
 | the Mac | mac, ios | itself; the iPhone or iPad by cable |
 
-A bundle holds the prepared install (boot image, linked modules, patches, the prepared game data folder) and the GPU-independent shader translations, never the dump's own files, keys or firmware; a driver pipeline cache travels only between devices with the same GPU and driver. Nothing leaves the home network.
+A bundle holds the prepared install (boot image, linked modules, patches) and the GPU-independent shader translations, never game data (ruling (d), 2026-11-02), the dump's own files, keys or firmware. The hub copies the player's prepared game data folder to the player's own devices over the home network (SPEC.md M11, M12; ADR 0004). The owner ruled it in chat on 2026-11-02: "Copy between own devices." Issue #189 builds the copy. A driver pipeline cache travels only between devices with the same GPU and driver. Nothing leaves the home network.
 
 ## Not verified yet
 
 - Which revision (`APP_VER`) of each game the port supports today; `games::SUPPORTED` is filled from the device runs.
 - Which of the four collection title ids is which region or edition (`games::title_region`); the dump check (piece 1.05) fills it from real `param.sfo` files.
-- What of the game data a bundle may carry to a device with no dump (`bundle::is_forbidden`, piece 1.23).
 - Whether a PS4 save's `sce_sys/icon0.png` and `param.sfo` give a useful picture and detail for the save card; fallback: the game's own `icon0.png`.
 - bloodborne-native's recompiler and Metal renderer: how much is Bloodborne-specific, and their licence files (`apple/` issue 8.01).
 - FEXCore performance with our Rust runtime on Android (revvv991 measured the C runtime).

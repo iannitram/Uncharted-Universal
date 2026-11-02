@@ -50,7 +50,8 @@ Device checks are `needs-owner-device`: they need my machines and my dump. IDs M
 
 ## Won'ts (1.0)
 
-- Any game data, keys or firmware in this repo, its releases or its logs, ever.
+- Any game data, keys or firmware in this repo, its releases or its logs, ever. The bundle holds no game data either (ruling (d), 2026-11-02).
+- A `probe` (the hardware report, `uncharted-run --probe`) on Android or iOS at 1.0. Only desktops and handhelds get one (owner ruling, 2026-11-01).
 - Executable revisions the port does not support.
 - Steam Frame or other devices; Android GPUs other than Adreno (Turnip is the driver; Mali is after 1.0); Android kernels with 16 KB pages (FEXCore needs 4 KB).
 - Rewriting shadPS4 in Rust.
@@ -110,7 +111,7 @@ One Rust engine with a Slint launcher on every device, opening on the Continue s
 - **Workspace** (ADR 0001): `crates/core` (`uncharted_core`: dump and revision checks, prepare, patches, mods, cheats, trophies, render size, recipes, saves, profiles, Steam, artwork, save cards, bundles, hubs, fleet, backup, update), `crates/runtime` (`uncharted_runtime`: the host runtime that replaces `src/`), `crates/cli` (`uncharted-universal`), `app/` (`uncharted-app`, Rust + Slint). `gpu/` stays C++ and CMake, built from `crates/runtime`'s build script, behind the existing `bbgpu.h` C ABI.
 - **Moving the runtime** (ADR 0002): strangler order. `crates/runtime` builds as a static library linked with the remaining C; each `runtime_*.c` is replaced by a Rust module exporting the same symbols, its C test becoming a Rust test; the loader (`probe.c`) moves last. A boot smoke test (the game reaches its first frame on a fake image, plus a device check per step on the AMD handheld) gates each step.
 - **Launcher** (ADR 0003): all Rust with a Slint UI, as totk-native ADR 0004: view models in plain Rust, `.slint` only draws; gamepad through gilrs on desktop and key events on Android. The Python launcher stays until the Slint app has parity, then goes. The generic modules (vdf, Steam shortcuts, platform folders, hub, bundle, fleet, save card shape) are copied from totk-native (MIT) with credit.
-- **Build hubs** (ADR 0004): the Strix Halo tablet (Linux handhelds, Android), the RTX 3090 Ti desktop (Windows), the Mac (Mac, iPhone, iPad). mDNS discovery, one-time pairing code (SPAKE2), the stream sealed, home network only. The hub prepares the install (boot image, linked modules, patches, the game data) and the GPU-independent shader translations; a driver pipeline cache ships only between devices with the same GPU and driver.
+- **Build hubs** (ADR 0004): the Strix Halo tablet (Linux handhelds, Android), the RTX 3090 Ti desktop (Windows), the Mac (Mac, iPhone, iPad). mDNS discovery, one-time pairing code (SPAKE2), the stream sealed, home network only. The hub prepares the install (boot image, linked modules, patches) and the GPU-independent shader translations, and the player's prepared game data, which it copies to the player's own devices over the home network and never puts in a bundle; a driver pipeline cache ships only between devices with the same GPU and driver.
 - **Android** (ADR 0005): adopt revvv991/uncharted-android's route and code (GPL-2.0, with credit): the game's x86-64 code through FEXCore, our runtime and shadPS4 native ARM64, Turnip through libadrenotools. Our Rust runtime cross-builds for `aarch64-linux-android`. The Slint launcher pulls the APK and install from the hub.
 - **Apple** (ADR 0006): adopt bloodborne-native's route (GPL-2.0, with credit, licence checked at the issue): a recompiled library built on the Mac from my dump (no JIT, so it also serves iOS), and a Metal renderer. Their code is vendored and stays in its language, like shadPS4. The Mac launcher builds and installs the iOS app over a cable with Xcode signing. Risk: a free Apple ID gives about 2 GiB of address space and re-signs every 7 days; the paid Apple Developer Program lifts both.
 - **Saves:** a save-relay manifest for the collection (#163) naming each game's savedata folder per device; the same savedata layout on every device, so a save moves unchanged.
@@ -118,7 +119,7 @@ One Rust engine with a Slint launcher on every device, opening on the Continue s
 
 ## Testing decisions
 
-- Core logic (dump and revision checks, prepare steps, patches, mods, recipes, saves, Steam files) is tested with fake dumps in `cargo test` on Linux, Windows and macOS. The 33 Python test files are the expected results for their Rust ports.
+- Core logic (dump and revision checks, prepare steps, patches, mods, recipes, saves, Steam files) is tested with fake dumps in `cargo test` on Linux, Windows and macOS. The 34 Python test files are the expected results for their Rust ports.
 - Each runtime module's Rust tests replace its C test; the boot smoke test runs in CI on Linux.
 - Launcher pages are tested through their view models (button presses in, page state out), and once headless through Slint's testing backend.
 - Hub pairing, transfer and the fleet view are tested with a fake hub on loopback.
