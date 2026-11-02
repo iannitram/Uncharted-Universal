@@ -57,10 +57,10 @@ jobs:
             $SUDO rm -rf "$CHROOT"
             $SUDO debootstrap --variant=minbase trixie "$CHROOT" http://deb.debian.org/debian
           fi
+          # No bind mounts or /proc (the runner container is unprivileged): copy the checkout in.
+          $SUDO rm -rf "$CHROOT/work"
           $SUDO mkdir -p "$CHROOT/work"
-          $SUDO mount --bind "$GITHUB_WORKSPACE" "$CHROOT/work"
-          $SUDO mount -t proc proc "$CHROOT/proc"
-          $SUDO mount --bind /dev "$CHROOT/dev"
+          $SUDO cp -a "$GITHUB_WORKSPACE/." "$CHROOT/work/"
       - name: Dependencies
         run: |
           sudo chroot "$CHROOT" bash -euc '
@@ -83,11 +83,12 @@ jobs:
             cd /work
             LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh
           "
-      - name: Hand the build tree back to the runner user
-        if: always()
+      - name: Copy dist back to the workspace
         run: |
-          sudo umount "$CHROOT/dev" "$CHROOT/proc" "$CHROOT/work" || true
+          sudo mkdir -p "$GITHUB_WORKSPACE/dist"
+          sudo cp -a "$CHROOT/work/dist/." "$GITHUB_WORKSPACE/dist/"
           sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
+          sudo rm -rf "$CHROOT/work"
       - uses: actions/upload-artifact@v4
         with:
           name: uncharted-linux
