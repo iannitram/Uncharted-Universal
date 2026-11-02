@@ -58,6 +58,30 @@ pub struct Compiled {
     pub skipped: Vec<String>,
 }
 
+/// One entry of the cheat table: a write to make when the executable has this hash and the
+/// bytes at `offset` are `original`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub cheat: Cheat,
+    pub game: Game,
+    /// Executable SHA-256 (hex) this entry is for.
+    pub sha256: String,
+    pub offset: u64,
+    pub original: Vec<u8>,
+    pub replacement: Vec<u8>,
+}
+
+/// Parse the cheat table text (one entry per line) into entries; bad text is `Error::Trophies`.
+pub fn parse(table: &str) -> Result<Vec<Entry>> {
+    not_built("cheats::parse")
+}
+
+/// Apply compiled cheat writes to an executable image in place (the bytes were checked when
+/// compiling; a write outside `image` is `Error::Trophies`).
+pub fn apply(image: &mut [u8], compiled: &Compiled) -> Result<()> {
+    not_built("cheats::apply")
+}
+
 /// Compile the `enabled` cheats for `executable` (the file's bytes, hashed here).
 pub fn compile(executable: &[u8], enabled: &[Cheat]) -> Result<Compiled> {
     not_built("cheats::compile")

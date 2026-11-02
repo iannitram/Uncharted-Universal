@@ -98,6 +98,26 @@ pub fn to_patches_bin(writes: &[ByteWrite]) -> Vec<u8> {
     not_built!("patches::to_patches_bin")
 }
 
+/// One line of the About page's patch list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AboutEntry {
+    pub key: String,
+    pub name: String,
+    pub author: String,
+    /// Switched on for this dump (selection first, else `enabled_by_default`).
+    pub enabled: bool,
+    /// False when the patch is for another build, or has no literal writes (see [`parse`]).
+    pub available: bool,
+    /// One plain sentence when `available` is false, else empty.
+    pub why_not: String,
+}
+
+/// The patches for About: every parsed patch with its name, author and whether it applies to
+/// this dump, so unavailable ones are listed too.
+pub fn about_list(patches: &[Patch], target: &Target, selection: &Selection) -> Vec<AboutEntry> {
+    not_built!("patches::about_list")
+}
+
 /// The game a patch's `AppElf` belongs to, if any.
 pub fn game_of(patch: &Patch) -> Option<Game> {
     Game::from_executable(&patch.executable)

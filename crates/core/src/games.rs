@@ -4,8 +4,8 @@
 //! NOT KNOWN from the Python: which of the four title ids is which region or edition. Every
 //! script treats the four as one family ("all three games share these title IDs",
 //! `scripts/patches.py`), and the three games are told apart by executable name, not by title
-//! id. `title_region` therefore does not exist yet; the dump check (piece 1.05) fills it from
-//! real `param.sfo` files if the plan still needs it.
+//! id. `title_region` is therefore a stub; the dump check (piece 1.05) fills it from real
+//! `param.sfo` files.
 
 use crate::error::{not_built, Result};
 
@@ -74,12 +74,26 @@ pub fn is_collection_title_id(title_id: &str) -> bool {
     TITLE_IDS.contains(&title_id)
 }
 
-/// The `APP_VER` values the port supports for `game`, newest last. EMPTY until the device runs
-/// fill it (docs/code-map.md, "Not verified yet"). `scripts/cheats.py` carries executable
-/// hashes for 01.00 and 01.02 of all three games and README.md says 1.00, but neither says
-/// the port plays both, so nothing is claimed here.
+/// The `APP_VER` values the port supports per game, newest last: the code map's `SUPPORTED`.
+/// EMPTY until the device runs fill it (docs/code-map.md, "Not verified yet").
+/// `scripts/cheats.py` carries executable hashes for 01.00 and 01.02 of all three games and
+/// README.md says 1.00, but neither says the port plays both, so nothing is claimed here.
+pub const SUPPORTED: [(Game, &[&str]); 3] = [(Game::U1, &[]), (Game::U2, &[]), (Game::U3, &[])];
+
+/// The `APP_VER` values in [`SUPPORTED`] for `game`.
 pub fn supported(game: Game) -> &'static [&'static str] {
-    &[]
+    SUPPORTED
+        .iter()
+        .find(|(g, _)| *g == game)
+        .map_or(&[], |(_, vers)| *vers)
+}
+
+/// The region or edition a collection title id stands for (the code map's "title ids to game
+/// and region"); the value is the region code as `param.sfo` and the dump spell it. Which id
+/// is which is not known yet (see the module docs), so this is a stub; `Error::BadDump` for an
+/// id outside [`TITLE_IDS`].
+pub fn title_region(title_id: &str) -> Result<&'static str> {
+    not_built("games::title_region")
 }
 
 /// The revision gate (SPEC.md M11): `Ok` when `app_ver` is in [`supported`] for `game`,

@@ -2,7 +2,8 @@
 //! (ADR 0002, docs/code-map.md "Modules: crates/runtime"). Built as `rlib` and `staticlib`; the
 //! static library is linked into the C loader until the loader itself is Rust.
 //!
-//! Skeleton (2026-11-01): only [`abi`] exists, and it exports one symbol.
+//! Skeleton (2026-11-01): only [`abi`] exists: one exported symbol, plus stubs for
+//! `runtime_resolve` and the NID table.
 //!
 //! # Planned modules (none are in the tree yet)
 //!
@@ -12,5 +13,8 @@
 //! `cpu_patch` and `red_zone`, `os`, `loader` (and the `uncharted-run` binary). The `gpu`
 //! build script (CMake over `gpu/`, piece 3.01) and the `cbindgen` header come with the
 //! scaffold piece, not here.
+
+// Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.
+#![allow(unused_variables)]
 
 pub mod abi;
