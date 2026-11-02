@@ -67,16 +67,15 @@ flowchart TD
 | `mods` | stub | mod folder layouts (`dvdroot_ps4`, `app0/...`), overlay list for the runtime's file VFS | `scripts/mods.py` | M7 |
 | `cheats` | stub | cheat file parse and apply | `scripts/cheats.py` | M7 |
 | `trophies` | stub | trophy data read for the runtime | `scripts/trophies.py` | M7 |
-| `render_size` | stub | render-size patches (540p up, 720p Deck mode) by byte pattern; `game_res_env` (`BB_GAME_RES` and its heap variables, #139) | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13 |
+| `render_size` | stub | render-size patches (540p up, 720p Deck mode) by byte pattern | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13 |
 | `run_env` | stub | per-game defaults (`fix_defaults`) and the `BB_*` environment from settings and the device profile | `run.py` | M5, M7 |
 | `profile` | stub | `DeviceProfile` (amd-handheld 20 W 30/60 Hz, strix-halo-tablet, desktop, mac, ios, android), `detect`, `by_id` | Deck mode in `uncharted_linux.py` | M5, M13 |
-| `tune` | stub | `pick`: the Handheld 30, Balanced 60 and Max quality cards from a `Device` (hardware probe) and a `Bench` (#174) | | M5 |
 | `saves` | stub | savedata root per game per device, what travels, `relay_manifest` for save-relay | | M4, M18 |
 | `savecard` | stub | `SaveCard` (game, slot, picture from the save's `sce_sys/icon0.png`, title and detail from its `param.sfo`, file time, device, build id), `latest`, `side_by_side` | | M10 |
 | `backup` | stub | `backup_saves`, `list`, `prune` (keep 10) | | M19 |
 | `update` | stub | back up, re-prepare, recount saves | `uncharted_launcher.py` update check | M19 |
 | `launch` | stub | `Relay` and `Runner` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `run.py` main | M7, M10, M18 |
-| `logs` | stub | `redact` (no game paths or hex keys in logs), the `Crash:` line, `known_issues.json` (`parse_known_issues`, `load_known_issues`, `match_known`), `playthrough.jsonl` (one line per run: `record`, `append`, `read`, `summary`) | `launcher/uncharted_logs.py`, #168-#170 | M1-M3, M9 |
+| `logs` | stub | `redact` (no game paths or hex keys in logs), the `Crash:` line, `known_issues.json` matcher, `playthrough.jsonl` | `launcher/uncharted_logs.py`, #168-#170 | M1-M3, M9 |
 | `recipe` | stub | `Target` (linux, windows, mac, ios, android), `Hub` (strix-halo, desktop, mac), `hub_for`, `serves` | | M11 |
 | `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder (a test enforces it) | | M11, M12 |
 | `hub` | stub (feature `hub`) | `discover` (mDNS `_uncharted-universal._tcp`, private ranges only), `pair` (six-digit code, SPAKE2), `serve`, `pull` (sealed, resumable), `Transport` trait for loopback tests | | M12 |
