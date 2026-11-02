@@ -229,17 +229,19 @@ pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, S
         .parse::<i64>()
         .unwrap_or(0);
 
-    let pool = rt_mb + rt2_mb - free_mb;
+    // Player-set heap values can be any digits that parse as i64, so use saturating maths:
+    // an oversized value must clamp to the 16384 cap, not panic on overflow.
+    let pool = rt_mb.saturating_add(rt2_mb).saturating_sub(free_mb);
 
     if let Some(dmem_mb) = player_env.get("BB_DMEM_MB") {
         if !dmem_mb.is_empty() {
             result.insert("BB_DMEM_MB".to_string(), dmem_mb.clone());
         } else if pool > 0 {
-            let dmem_val = 5056 + pool;
+            let dmem_val = 5056i64.saturating_add(pool);
             result.insert("BB_DMEM_MB".to_string(), dmem_val.min(16384).to_string());
         }
     } else if pool > 0 {
-        let dmem_val = 5056 + pool;
+        let dmem_val = 5056i64.saturating_add(pool);
         result.insert("BB_DMEM_MB".to_string(), dmem_val.min(16384).to_string());
     }
 
