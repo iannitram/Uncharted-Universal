@@ -2,13 +2,14 @@
 //! (ADR 0002, docs/code-map.md "Modules: crates/runtime"). Built as `rlib` and `staticlib`; the
 //! static library is linked into the C loader until the loader itself is Rust.
 //!
-//! Skeleton (2026-11-01): only [`abi`] exists: one exported symbol, plus stubs for
-//! `runtime_resolve` and the NID table.
+//! [`abi`] has one exported symbol, plus stubs for `runtime_resolve` and the NID table.
+//! [`savedata`] has the local save-location metadata commit (#168); the guest savedata ABI
+//! and loader are still pending, so no C symbols have moved yet.
 //!
-//! # Planned modules (none are in the tree yet)
+//! # Remaining planned modules
 //!
-//! The list is empty on purpose; each module arrives with its own piece (ROADMAP stage 3),
-//! in this order: `time` and `rtc`, `sync`, `content` and `display`, `trophy`, `savedata`,
+//! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
+//! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, `os`, `loader` (and the `uncharted-run` binary). The `gpu`
 //! build script (CMake over `gpu/`, piece 3.01) and the `cbindgen` header come with the
@@ -18,3 +19,4 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+pub mod savedata;

@@ -14,3 +14,5 @@ path = "src/lib.rs"
 crate-type = ["rlib", "staticlib"]
 
 [dependencies]
+# Escape the three player-visible save strings without ever serializing a guest buffer.
+serde_json = "1"
