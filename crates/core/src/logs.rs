@@ -9,7 +9,8 @@
 use crate::error::{not_built, Result};
 use crate::games::Game;
 use serde_json::Value;
-use std::fs;
+use std::fs::{self, create_dir_all, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// How many launcher logs are kept (`KEEP` in `uncharted_logs.py`): `launcher.log` and
@@ -310,26 +311,219 @@ pub fn record(
     ended: Ended,
     at_unix: u64,
 ) -> PlaythroughRun {
-    not_built!("logs::record")
+    let chapter = if let Some(where_) = where_ {
+        if !where_.subtitle.is_empty() {
+            Some(where_.subtitle.clone())
+        } else if !where_.title.is_empty() {
+            Some(where_.title.clone())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let avg_fps = avg_fps.map(|fps| (fps * 10.0).round() / 10.0);
+
+    PlaythroughRun {
+        build: build.to_string(),
+        game,
+        chapter,
+        preset: preset.to_string(),
+        avg_fps,
+        ended,
+        at_unix,
+    }
 }
 
 /// Append one run as a JSON line (UTF-8, not escaped to ASCII, keys sorted, ending in a
 /// newline) to `<logs>/playthrough.jsonl`, creating the folder.
 pub fn append(logs: &Path, run: &PlaythroughRun) -> Result<()> {
-    not_built("logs::append")
+    create_dir_all(logs).map_err(|e| crate::error::Error::Launch(e.to_string()))?;
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(logs.join(PLAYTHROUGH_FILE))
+        .map_err(|e| crate::error::Error::Launch(e.to_string()))?;
+
+    // Create a JSON object with the run data
+    let json_value = serde_json::json!({
+        "at_unix": run.at_unix,
+        "avg_fps": run.avg_fps,
+        "build": run.build,
+        "chapter": run.chapter,
+        "ended": match run.ended {
+            Ended::Ok => "ok",
+            Ended::Crash => "crash",
+            Ended::Credits => "credits",
+        },
+        "game": run.game.key(),
+        "preset": run.preset,
+    });
+
+    let json_line = serde_json::to_string(&json_value)
+        .map_err(|e| crate::error::Error::Launch(e.to_string()))?;
+
+    // One write call for the whole line, newline included, so a crash cannot leave half a line
+    // (and the next append cannot run on from it).
+    let line = format!("{json_line}\n");
+    file.write_all(line.as_bytes())
+        .map_err(|e| crate::error::Error::Launch(e.to_string()))?;
+
+    Ok(())
 }
 
 /// Every run in `<logs>/playthrough.jsonl`, in file order. A missing file is an empty list; a
 /// line that is not a valid run (garbage, blank, not an object, cut off, unknown `game` or
 /// `ended`) is skipped.
 pub fn read(logs: &Path) -> Vec<PlaythroughRun> {
-    not_built!("logs::read")
+    let path = logs.join(PLAYTHROUGH_FILE);
+
+    // Read the entire file content
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => return vec![], // Missing file returns empty vector
+    };
+
+    let mut runs = Vec::new();
+
+    for line in content.lines() {
+        if line.trim().is_empty() {
+            continue; // Skip blank lines
+        }
+
+        // Parse the JSON line
+        let json_value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(_) => continue, // Skip invalid JSON
+        };
+
+        // Check if it's an object with all required keys
+        let map = match json_value.as_object() {
+            Some(map) => map,
+            None => continue, // Not an object
+        };
+
+        // Validate required keys exist
+        if !map.contains_key("at_unix")
+            || !map.contains_key("avg_fps")
+            || !map.contains_key("build")
+            || !map.contains_key("chapter")
+            || !map.contains_key("ended")
+            || !map.contains_key("game")
+            || !map.contains_key("preset")
+        {
+            continue;
+        }
+
+        // Parse each field
+        let at_unix = match map.get("at_unix").and_then(|v| v.as_u64()) {
+            Some(v) => v,
+            None => continue, // Invalid at_unix
+        };
+
+        let build = match map.get("build").and_then(|v| v.as_str()) {
+            Some(v) => v.to_string(),
+            None => continue, // Invalid build
+        };
+
+        let preset = match map.get("preset").and_then(|v| v.as_str()) {
+            Some(v) => v.to_string(),
+            None => continue, // Invalid preset
+        };
+
+        let chapter = match map.get("chapter") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Null) => None,
+            _ => continue, // Invalid chapter type
+        };
+
+        let avg_fps = match map.get("avg_fps") {
+            Some(Value::Number(n)) => {
+                if let Some(f) = n.as_f64() {
+                    Some(f)
+                } else {
+                    continue; // Invalid fps number
+                }
+            }
+            Some(Value::Null) => None,
+            _ => continue, // Invalid fps type
+        };
+
+        let ended_str = match map.get("ended").and_then(|v| v.as_str()) {
+            Some(v) => v,
+            None => continue, // Invalid ended value
+        };
+
+        let ended = match ended_str {
+            "ok" => Ended::Ok,
+            "crash" => Ended::Crash,
+            "credits" => Ended::Credits,
+            _ => continue, // Invalid ended value
+        };
+
+        let game_key = match map.get("game").and_then(|v| v.as_str()) {
+            Some(v) => v,
+            None => continue, // Invalid game
+        };
+
+        let game = match Game::from_key(game_key) {
+            Some(g) => g,
+            None => continue, // Unknown game
+        };
+
+        runs.push(PlaythroughRun {
+            build,
+            game,
+            chapter,
+            preset,
+            avg_fps,
+            ended,
+            at_unix,
+        });
+    }
+
+    runs
 }
 
 /// Per game: the newest build and chapter and the counts of runs, crashes and credits. A game
 /// with no run is absent. Does not change `runs`.
 pub fn summary(runs: &[PlaythroughRun]) -> std::collections::BTreeMap<Game, GameSummary> {
-    not_built!("logs::summary")
+    use std::collections::BTreeMap;
+
+    let mut result = BTreeMap::new();
+
+    // Walk runs once in order and track the newest build and chapter for each game
+    for run in runs {
+        let game_summary = result.entry(run.game).or_insert_with(|| GameSummary {
+            build: String::new(),
+            chapter: None,
+            runs: 0,
+            crashes: 0,
+            credits: 0,
+        });
+
+        // Count the run
+        game_summary.runs += 1;
+
+        // Count crashes and credits
+        match run.ended {
+            Ended::Crash => game_summary.crashes += 1,
+            Ended::Credits => game_summary.credits += 1,
+            Ended::Ok => (),
+        }
+
+        // Update build to the newest one (last in slice)
+        game_summary.build = run.build.clone();
+
+        // Update chapter only when run.chapter.is_some() and it's not None
+        if let Some(ref chapter) = run.chapter {
+            game_summary.chapter = Some(chapter.clone());
+        }
+    }
+
+    result
 }
 
 /// Rotate `<name>.log` to `<name>.1.log` .. `<name>.<keep-1>.log` in `folder`, dropping the
