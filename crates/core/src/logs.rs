@@ -219,7 +219,11 @@ pub fn append(logs: &Path, run: &PlaythroughRun) -> Result<()> {
     let json_line = serde_json::to_string(&json_value)
         .map_err(|e| crate::error::Error::Launch(e.to_string()))?;
 
-    writeln!(file, "{}", json_line).map_err(|e| crate::error::Error::Launch(e.to_string()))?;
+    // One write call for the whole line, newline included, so a crash cannot leave half a line
+    // (and the next append cannot run on from it).
+    let line = format!("{json_line}\n");
+    file.write_all(line.as_bytes())
+        .map_err(|e| crate::error::Error::Launch(e.to_string()))?;
 
     Ok(())
 }
@@ -369,9 +373,7 @@ pub fn summary(runs: &[PlaythroughRun]) -> std::collections::BTreeMap<Game, Game
 
         // Update chapter only when run.chapter.is_some() and it's not None
         if let Some(ref chapter) = run.chapter {
-            if !chapter.is_empty() {
-                game_summary.chapter = Some(chapter.clone());
-            }
+            game_summary.chapter = Some(chapter.clone());
         }
     }
 
