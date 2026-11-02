@@ -43,7 +43,40 @@ pub fn redact(text: &str, what: &Redact) -> String {
 /// The reason line of a failed run: the last line of `run_log` that starts with `Crash:`
 /// (written by the runtime's fault handler), without the prefix. `None` for a clean log.
 pub fn crash_line(run_log: &str) -> Option<String> {
-    not_built!("logs::crash_line")
+    run_log.lines().rev().find_map(|line| {
+        line.strip_prefix("Crash:")
+            .map(|reason| reason.trim().to_string())
+    })
+}
+
+#[cfg(test)]
+mod crash_line_tests {
+    use super::crash_line;
+
+    #[test]
+    fn accepts_each_runtime_crash_kind() {
+        for reason in [
+            "kind=assert where=fake.rs:42 text=made_up_condition",
+            "kind=fault where=0x1234 text=read access to 0x5678",
+            "kind=exception where=0x1234 text=exception 0xdead",
+        ] {
+            let log = format!("Runtime: started\nCrash: {reason}\r\nRuntime: stopped\n");
+            assert_eq!(crash_line(&log).as_deref(), Some(reason));
+        }
+    }
+
+    #[test]
+    fn returns_only_the_last_prefixed_line() {
+        assert_eq!(crash_line("Runtime: clean exit\n"), None);
+        assert_eq!(
+            crash_line("Fault: read\n  Crash: indented\nmessage Crash: embedded"),
+            None
+        );
+        assert_eq!(
+            crash_line("Crash: first\nCrash: second\n"),
+            Some("second".into())
+        );
+    }
 }
 
 /// The setting a known issue's workaround turns on (`toggle` in `known_issues.json`).

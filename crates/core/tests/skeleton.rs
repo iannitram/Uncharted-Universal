@@ -6,14 +6,14 @@ use uncharted_core::error::{Error, Result};
 use uncharted_core::games::{self, Game};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::recipe::{self, Hub};
-use uncharted_core::{artwork, sfo};
+use uncharted_core::{artwork, cheats};
 
 #[test]
 fn a_stub_returns_not_built_with_a_stable_code() {
-    let err = sfo::parse(&[]).unwrap_err();
-    assert_eq!(err, Error::NotBuilt("sfo::parse"));
+    let err = cheats::parse("").unwrap_err();
+    assert_eq!(err, Error::NotBuilt("cheats::parse"));
     assert_eq!(err.code(), "not_built");
-    assert_eq!(err.to_string(), "not built yet: sfo::parse");
+    assert_eq!(err.to_string(), "not built yet: cheats::parse");
 }
 
 #[test]
