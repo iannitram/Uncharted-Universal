@@ -1735,7 +1735,7 @@ class Launcher:
         return 'break'
 
     def captured_button(self, event):
-        # 4 and 5 as other toolkits number the side buttons; 8 and 9 as X11 does
+        # X11: 4 and 5 are the wheel, 8 and 9 the side buttons; Windows: 4 and 5 are the side buttons
         name = mouse_button_name(event.num, WINDOWS)
         if name:
             self.set_key(*self.capturing, name)
