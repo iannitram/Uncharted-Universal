@@ -462,7 +462,8 @@ def main():
     # of chapter 21) from memory it also writes: merging leaves them on the GPU, so it runs with
     # accurate GPU memory (BB_GPU_MERGE=0) unless the player chose otherwise. Uncharted 3 runs the
     # same engine and showed the same floating NPCs (Linux fork), so it does too.
-    # Its aim and turret blur reads tiny render results back (BB_TINY_READBACK, ~13% elsewhere).
+    # Aim and turret blur: the game reads a tiny render result (focus depth) on the CPU, so it is read back
+    # (BB_TINY_READBACK). On for U2 only; U3 stays off until measured (issue #191); U1 unchanged.
     all_cheats = env.setdefault('BB_CHEATS_ALL', env.get('BB_CHEATS', ''))
     # Take a copy of the environment once before the loop
     player_env = dict(env)

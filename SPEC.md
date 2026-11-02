@@ -46,7 +46,7 @@ Device checks are `needs-owner-device`: they need my machines and my dump. IDs M
 | M17 | ON an Android device with an Adreno GPU, THE LAUNCHER (the Android build of the same app) SHALL install the build pulled from the Strix Halo tablet, and each game SHALL play with a controller | A session per game, no crash | on the device |
 | M18 | ON EVERY DEVICE, THE GAME SHALL pull my saves through save-relay before it starts and push them after it quits, syncing only the save data and settings; the same save SHALL load on all six | A save made on one device loads on each of the others | save-relay manifest tests; the round trip on all devices |
 | M19 | WHEN I update the launcher or the port, THE LAUNCHER SHALL back up my saves first, rebuild, and keep them | Saves intact after an update | core test with a fake build; on one device |
-| M20 | OUR CODE SHALL be Rust: the launcher, the prep tools and the host runtime ship as Rust, and no Python or C of ours ships in 1.0; shadPS4 and the Android and Apple code we adopt stay in their own languages, behind a C ABI | `git ls-files src launcher scripts` holds no shipped source; the game builds and boots at every step of the move | CI; the boot smoke test per step |
+| M20 | OUR CODE SHALL be Rust: the launcher, the prep tools and the host runtime ship as Rust, and no Python or C of ours ships in 1.0; shadPS4 and the Android and Apple code we adopt stay in their own languages, behind a C ABI. The art generator `packaging/windows/make_uncharted_art.py` (upstream's, kept by the 0.3.11 sync) ports to Rust in #190, before 1.0 | `git ls-files src launcher scripts` holds no shipped source; the game builds and boots at every step of the move | CI; the boot smoke test per step |
 
 ## Won'ts (1.0)
 

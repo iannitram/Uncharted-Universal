@@ -373,5 +373,5 @@ They are read in `MakeDeviceInfo` (`gpu/shadps4/video_core/renderer_vulkan/vk_te
 
 When one of them is `0`, the run logs a line starting `Upscaler: debug switch:`. They change only what FSR
 is told about the device, not the game's rendering. The RADV PHOENIX noise they were added for is
-now fixed by patch 0003 (`gpu/patches/fsr-vulkan/0003-ffx_vk-never-pick-a-protected-memory-type.patch`),
+now fixed by patch 0004 (`gpu/patches/fsr-vulkan/0004-ffx_vk-never-pick-a-protected-memory-type.patch`),
 so they are not needed for normal runs and are kept only for troubleshooting.

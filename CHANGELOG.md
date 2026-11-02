@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-02 Upstream sync #164 (PR #186): Supermedo main bbd1b3a (26 commits, 0.3.10 and 0.3.11) merged into `main`; ten conflicts resolved, ours kept where it differs (`run.py` and launcher defaults and texts: Uncharted 3 aim blur and small-buffer readback stay off until measured in #191; the art generator stays until ported in #190).
 - 2026-11-01 Player tools added to the roadmap and code map: crash help (#165), auto-tune (#166), and the Game Mode menu after 1.0 (#167); split into #168-#178.
 - 2026-10-31 Peer added (owner's word): zorde23/Uncharted_Collection_PC (GPL-2.0), a source of fixes to port with credit.
 - 2026-10-31 Licence of the Uncharted port we ported `render_res.py` and `bbport_movie.*` from checked: GPL-2.0 text in its `gow3_pc/LICENSE` since its first commit, README grants "GPL v2 or later" with a credit request; PEERS.md corrected, the files stay.
