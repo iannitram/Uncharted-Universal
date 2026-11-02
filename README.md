@@ -96,6 +96,11 @@ Thanks to Mindro for the shadPS4 Uncharted build that showed which problems to l
 Several fixes also come from BilalReloaded's port: the Uncharted 3 cloth solver barriers, guest memory committed as the game allocates it, the look-at reset and garbage descriptor fixes.
 Performance work on Uncharted 2's draw recording and read-backs is [che2281337](https://github.com/che2281337)'s, and several freeze fixes are from [drakolordx7's community build](https://github.com/drakolordx7/uncharted_pc).
 The render resolution patch (scripts/render_res.py, cutscene movie scaling in gpu/shim/bbport_movie.cpp, the Uncharted 2 aim focus fix) is ported from [BilalReloaded's Uncharted PC port](https://github.com/bc160201983/Uncharted-The-Nathan-Drake-Collection-PC-port) (GPL-2.0-or-later).
+Many of the 0.3.10 fixes were found and made by drakolordx7 in the
+[community build](https://github.com/drakolordx7/uncharted_pc), and the FSR 3 frame generation
+memory leak fix is from Mevlock, the NVIDIA crash fix above 55 FPS (large compute
+workgroups) from Umar-Qayyum-dev.
+Most 0.3.11 fixes come from Mevlock's [dev builds](https://github.com/Mevlock/uncharted_pc-dev).
 
 Also used: [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) and the AMD FidelityFX SDK (FSR),
 FSR 4 assets from [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX), the
