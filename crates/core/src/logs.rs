@@ -1,7 +1,7 @@
 //! The launcher's own log, bug reports and crash help (SPEC.md M1-M3, M9; issues #168-#170).
 //! `redact` keeps game paths, user names and hex keys out of every log and report; the `Crash:`
 //! line and the `known_issues.json` matcher turn a failed run into a plain sentence; the
-//! playthrough log records chapters for the M1-M3 checks. Replaces `launcher/uncharted_logs.py`
+//! playthrough log records one line per run for the M1-M3 checks. Replaces `launcher/uncharted_logs.py`
 //! (rotation, summaries, `private`, `health`, the report) and #168-#170.
 //!
 //! Path strings are `/`-separated or native as the OS gave them; a log never holds a dump path.
@@ -43,47 +43,145 @@ pub fn crash_line(run_log: &str) -> Option<String> {
     not_built!("logs::crash_line")
 }
 
-/// One entry of `known_issues.json`.
+/// The setting a known issue's workaround turns on (`toggle` in `known_issues.json`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toggle {
+    pub key: String,
+    pub value: String,
+}
+
+/// One entry of `known_issues.json` (#169).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownIssue {
     pub id: String,
-    /// Which game it concerns; `None` for all.
+    /// The text to find in the `Crash:` line (case-sensitive).
+    pub signature: String,
+    /// Which game it concerns; `None` for all (`"any"` or no `game` key in the file).
     pub game: Option<Game>,
-    /// The text to find in the `Crash:` line.
-    pub contains: String,
+    /// Where in the game it happens; empty means anywhere. Each is matched case-insensitively
+    /// as a substring of the player's location.
+    pub locations: Vec<String>,
     /// The plain sentence for the player.
-    pub message: String,
+    pub summary: String,
+    /// The build that fixed it, if any.
+    pub fixed_in: Option<String>,
+    /// The setting that works around it, if any.
+    pub toggle: Option<Toggle>,
+    /// The link to the issue; empty when the file has none.
+    pub issue: String,
 }
 
-/// Parse `known_issues.json` (a list of objects with `id`, optional `game`, `contains`,
-/// `message`). Bad JSON is `Error::Launch("known_issues.json is damaged")`.
+/// Parse the text of `known_issues.json`: a list of objects with `id`, `signature`, optional
+/// `game` (`"u1"`, `"u2"`, `"u3"` or `"any"`), `locations`, `summary`, `fixed_in`, `toggle`
+/// (`{"key", "value"}`) and `issue`. An entry that is not an object, lacks a non-empty `id` or
+/// `signature`, or names an unknown `game` is skipped. Text that is not JSON, or JSON that is
+/// not a list, is `Error::Launch("known_issues.json is damaged")`.
 pub fn parse_known_issues(json: &str) -> Result<Vec<KnownIssue>> {
     not_built("logs::parse_known_issues")
 }
 
-/// The known issues that match a `Crash:` line for `game`, in file order.
+/// Read and parse a `known_issues.json`; a missing, unreadable or damaged file is an empty
+/// list (crash help must never break the launcher).
+pub fn load_known_issues(path: &Path) -> Vec<KnownIssue> {
+    not_built!("logs::load_known_issues")
+}
+
+/// The known issue that explains a `Crash:` line for `game` at `location`, or `None`. An issue
+/// matches when its `signature` is in `crash_line`, its `game` is `None` or equals `game`, and
+/// it has no `locations` or one of them is in `location` (case-insensitive; no location given
+/// counts as ""). An empty `crash_line` matches nothing. An issue with locations beats one
+/// without; otherwise the first in list order wins.
 pub fn match_known<'a>(
     issues: &'a [KnownIssue],
     game: Game,
+    location: Option<&str>,
     crash_line: &str,
-) -> Vec<&'a KnownIssue> {
+) -> Option<&'a KnownIssue> {
     not_built!("logs::match_known")
 }
 
-/// One line of `playthrough.jsonl` (#170): a chapter reached, a crash, a save.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PlaythroughEvent {
-    pub game: Game,
-    /// Seconds since the Unix epoch.
-    pub at_unix: u64,
-    /// "chapter", "crash", "save", "credits".
-    pub kind: String,
-    pub detail: String,
+/// The file `append` and `read` use inside the logs folder.
+pub const PLAYTHROUGH_FILE: &str = "playthrough.jsonl";
+
+/// How a run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// The player quit; no crash and no credits.
+    Ok,
+    /// The run crashed.
+    Crash,
+    /// The credits rolled (the M1-M3 evidence that a game plays start to finish).
+    Credits,
 }
 
-/// Append one event as a JSON line to `<logs>/playthrough.jsonl`.
-pub fn append_playthrough(logs: &Path, event: &PlaythroughEvent) -> Result<()> {
-    not_built("logs::append_playthrough")
+/// Where the game was when the run ended (the runtime's `where.json`, #168); an empty text
+/// means the file had none.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Where {
+    pub title: String,
+    pub subtitle: String,
+}
+
+/// One line of `playthrough.jsonl` (#170): one game run. In the file its keys are `build`,
+/// `game` (`Game::key`), `chapter`, `preset`, `avg_fps`, `ended` (`"ok"`, `"crash"`,
+/// `"credits"`) and `at_unix`, sorted, one JSON object per line.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlaythroughRun {
+    pub build: String,
+    pub game: Game,
+    /// The chapter reached: the subtitle, else the title, else `None`.
+    pub chapter: Option<String>,
+    pub preset: String,
+    /// Average frames per second, rounded to one decimal; `None` when not measured.
+    pub avg_fps: Option<f64>,
+    pub ended: Ended,
+    /// Seconds since the Unix epoch.
+    pub at_unix: u64,
+}
+
+/// What the log says about one game (`summary`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameSummary {
+    /// The build of the newest run (the last in the list).
+    pub build: String,
+    /// The chapter of the newest run that has one; `None` when no run has.
+    pub chapter: Option<String>,
+    pub runs: usize,
+    pub crashes: usize,
+    pub credits: usize,
+}
+
+/// Build a [`PlaythroughRun`]: `chapter` from `where_` (subtitle, else title, else `None`),
+/// `avg_fps` rounded to one decimal.
+pub fn record(
+    build: &str,
+    game: Game,
+    where_: Option<&Where>,
+    preset: &str,
+    avg_fps: Option<f64>,
+    ended: Ended,
+    at_unix: u64,
+) -> PlaythroughRun {
+    not_built!("logs::record")
+}
+
+/// Append one run as a JSON line (UTF-8, not escaped to ASCII, keys sorted, ending in a
+/// newline) to `<logs>/playthrough.jsonl`, creating the folder.
+pub fn append(logs: &Path, run: &PlaythroughRun) -> Result<()> {
+    not_built("logs::append")
+}
+
+/// Every run in `<logs>/playthrough.jsonl`, in file order. A missing file is an empty list; a
+/// line that is not a valid run (garbage, blank, not an object, cut off, unknown `game` or
+/// `ended`) is skipped.
+pub fn read(logs: &Path) -> Vec<PlaythroughRun> {
+    not_built!("logs::read")
+}
+
+/// Per game: the newest build and chapter and the counts of runs, crashes and credits. A game
+/// with no run is absent. Does not change `runs`.
+pub fn summary(runs: &[PlaythroughRun]) -> std::collections::BTreeMap<Game, GameSummary> {
+    not_built!("logs::summary")
 }
 
 /// Rotate `<name>.log` to `<name>.1.log` .. `<name>.<keep-1>.log` in `folder`, dropping the

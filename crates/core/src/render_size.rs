@@ -7,6 +7,7 @@
 use crate::error::{not_built, Result};
 use crate::games::Game;
 use crate::patches::ByteWrite;
+use std::collections::BTreeMap;
 
 /// The PS4's output size.
 pub const OUTPUT_SIZE: (u32, u32) = (1920, 1080);
@@ -65,4 +66,19 @@ pub fn patch_image(image: &[u8], game: Game, size: (u32, u32)) -> Result<Patched
 /// `Error::RenderSize("expected 1 to 3 video setting sites, found <n>")`.
 pub fn deck_720p_writes(elf: &[u8]) -> Result<Vec<ByteWrite>> {
     not_built("render_size::deck_720p_writes")
+}
+
+/// Extra render-target memory a game needs per extra 1080p worth of pixels, in MiB (`RT_MIB_PER_1080P`,
+/// `RT2_MIB_PER_1080P` in `run.py`; docs/resolution.md).
+pub const RT_MIB_PER_1080P: u32 = 300;
+pub const RT2_MIB_PER_1080P: u32 = 150;
+
+/// The variables for the game's own render size (`BB_GAME_RES`, `game_res` in `run.py`, #139).
+/// Reads `BB_GAME_RES` ("WxH", case-insensitive, `x` or the multiplication sign) from
+/// `player_env`. Returns nothing when it is missing, not a size, outside `MIN_SIZE` ..
+/// `MAX_SIZE`, or 1920x1080. Otherwise returns `BB_GAME_RES` as "<w>x<h>" and the heap
+/// variables `BB_GAME_RT_MB`, `BB_GAME_RT2_MB`, `BB_GAME_FREE_MB`, `BB_GAME_MOVIE_MB` and, when
+/// the pool needs it, `BB_DMEM_MB`. A heap variable the player set to digits keeps its value.
+pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    not_built!("render_size::game_res_env")
 }
