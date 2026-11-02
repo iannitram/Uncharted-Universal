@@ -1,0 +1,68 @@
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    # A public repo: GitHub-hosted runners only. The Rust workspace is built and tested on
+    # Linux, Windows and macOS on every push; the C and GPU build stays in build.yml.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
+
+  android:
+    # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
+    # linker, so no NDK is installed yet; when the runtime links C (piece 3.01) this job gets it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - run: cargo build -p uncharted_runtime --target aarch64-linux-android
+
+  ios:
+    # The runtime checks for iOS (ROADMAP 8.02); `check` because nothing links an iOS binary yet.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - run: cargo check --target aarch64-apple-ios -p uncharted_runtime

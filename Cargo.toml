@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/runtime", "crates/cli"]
+# app/ (the Slint launcher, `uncharted-app`) joins the workspace when it is scaffolded
+# (docs/code-map.md, piece 2.03).
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/iannitram/Uncharted-Universal"

@@ -32,3 +32,6 @@ launcher/art/
 # Matched on the EP9000- / CUSA- title folder names rather than a fixed path,
 # so any dump the launcher or BB_GAME_DIR points at is covered.
 /EP[0-9A-Z]*-CUSA[0-9A-Z]*_*/
+
+# Rust
+/target
