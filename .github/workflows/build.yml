@@ -34,7 +34,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # Self-hosted Linux runner (R29): this repo is private.
+    runs-on: [self-hosted, linux]
     # Debian 13: glibc 2.41, no newer than SteamOS 3.7+, and an SDL3 package.
     container: debian:trixie
     steps:
@@ -57,7 +58,7 @@ jobs:
       - name: Build
         run: |
           git config --global --add safe.directory '*'
-          BB_JOBS=3 bash build.sh
+          BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh
       - name: Package
         run: |
           version=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)
