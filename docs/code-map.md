@@ -68,10 +68,10 @@ flowchart TD
 | `content_profile` | stub | the content profile values per title (`sceAppContentAppParamGetInt`) | `scripts/content_profile.py` | M7, M20 |
 | `link` | stub | `link_modules` and `link_libc`: module and libc import tables for the boot image | `scripts/link_modules.py`, `scripts/link_libc.py` | M7, M20 |
 | `prepare` | stub | `prepare` a game folder into an install: boot image, linked modules, patches, render size; returns `InstallManifest` | `scripts/prepare.py` | M7, M11, M20 |
-| `patches` | stub | third-party patches per executable (`APP_VER` and title decide): `parse`, `applicable`, `select`, `compile` to the patch image, `about_list` for About | `scripts/patches.py` | M7, M20 |
+| `patches` | stub | third-party patches per executable (`APP_VER` and title decide): `parse`, `applicable`, `select`, `compile` to the patch image, `about_list` for About | `scripts/patches.py` | M7, M8, M20 |
 | `mods` | stub | mod folder layouts (`dvdroot_ps4`, `app0/...`), overlay list for the runtime's file VFS | `scripts/mods.py` | M7, M20 |
 | `cheats` | stub | cheat table `parse`, `compile` against the executable's hash, `apply` | `scripts/cheats.py` | M7, M20 |
-| `trophies` | stub | the `.trp` reader and unlock log, read for the runtime (showing trophies in the launcher is after 1.0, #12) | `scripts/trophies.py` | M20 |
+| `trophies` | stub | the `.trp` reader and unlock log, read for the runtime (showing trophies in the launcher is after 1.0, #12) | `scripts/trophies.py` | M7, M20 |
 | `render_size` | stub | render-size patches (540p up, 720p Deck mode) by byte pattern | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13, M20 |
 | `run_env` | stub | per-game defaults (`fix_defaults`) and the `BB_*` environment from settings and the device profile | `run.py` | M5, M7, M20 |
 | `profile` | stub | `DeviceProfile` (amd-handheld 20 W 30/60 Hz, strix-halo-tablet, desktop, mac, ios, android), `builtin`, `detect`, `by_id` | Deck mode in `launcher/uncharted_linux.py` | M5, M13, M20 |
