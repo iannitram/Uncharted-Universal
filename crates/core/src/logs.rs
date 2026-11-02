@@ -9,7 +9,7 @@
 use crate::error::{not_built, Result};
 use crate::games::Game;
 use serde_json::Value;
-use std::fs::{create_dir_all, OpenOptions};
+use std::fs::{self, create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -80,13 +80,110 @@ pub struct KnownIssue {
 /// `signature`, or names an unknown `game` is skipped. Text that is not JSON, or JSON that is
 /// not a list, is `Error::Launch("known_issues.json is damaged")`.
 pub fn parse_known_issues(json: &str) -> Result<Vec<KnownIssue>> {
-    not_built("logs::parse_known_issues")
+    let parsed: Value = serde_json::from_str(json)
+        .map_err(|_| crate::error::Error::Launch("known_issues.json is damaged".to_string()))?;
+
+    let array = parsed
+        .as_array()
+        .ok_or_else(|| crate::error::Error::Launch("known_issues.json is damaged".to_string()))?;
+
+    let mut result = Vec::new();
+
+    for value in array {
+        if let Value::Object(map) = value {
+            // Check for required fields
+            let id = match map.get("id").and_then(|v| v.as_str()) {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => continue,
+            };
+
+            let signature = match map.get("signature").and_then(|v| v.as_str()) {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => continue,
+            };
+
+            // Parse game field
+            // A missing game or "any" is None; any other value that is not a known game skips the entry.
+            let game = match map.get("game") {
+                None => None,
+                Some(Value::String(game_str)) if game_str == "any" => None,
+                Some(Value::String(game_str)) => match Game::from_key(game_str) {
+                    Some(game) => Some(game),
+                    None => continue,
+                },
+                Some(_) => continue,
+            };
+
+            // Parse locations field
+            let locations = match map.get("locations") {
+                Some(Value::Array(arr)) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect(),
+                _ => Vec::new(),
+            };
+
+            // Parse other fields with defaults
+            let summary = map
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let fixed_in = map
+                .get("fixed_in")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let toggle = match map.get("toggle") {
+                Some(Value::Object(toggle_map)) => {
+                    let key = toggle_map
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let value = toggle_map
+                        .get("value")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    if let (Some(key), Some(value)) = (key, value) {
+                        Some(Toggle { key, value })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+
+            let issue = map
+                .get("issue")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            result.push(KnownIssue {
+                id,
+                signature,
+                game,
+                locations,
+                summary,
+                fixed_in,
+                toggle,
+                issue,
+            });
+        }
+    }
+
+    Ok(result)
 }
 
 /// Read and parse a `known_issues.json`; a missing, unreadable or damaged file is an empty
 /// list (crash help must never break the launcher).
 pub fn load_known_issues(path: &Path) -> Vec<KnownIssue> {
-    not_built!("logs::load_known_issues")
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => return Vec::new(),
+    };
+
+    parse_known_issues(&content).unwrap_or_default()
 }
 
 /// The known issue that explains a `Crash:` line for `game` at `location`, or `None`. An issue
@@ -100,7 +197,56 @@ pub fn match_known<'a>(
     location: Option<&str>,
     crash_line: &str,
 ) -> Option<&'a KnownIssue> {
-    not_built!("logs::match_known")
+    if crash_line.is_empty() {
+        return None;
+    }
+
+    let location_lower = location.unwrap_or("").to_lowercase();
+
+    let mut best_match: Option<&'a KnownIssue> = None;
+    let mut best_has_locations = false;
+
+    for issue in issues {
+        // Check signature match (case-sensitive substring)
+        if !crash_line.contains(&issue.signature) {
+            continue;
+        }
+
+        // Check game match
+        if let Some(issue_game) = issue.game {
+            if issue_game != game {
+                continue;
+            }
+        }
+
+        // Check location match
+        let location_match = if issue.locations.is_empty() {
+            // No locations specified, so it matches anywhere
+            true
+        } else {
+            // Check if any of the issue's locations match the current location
+            issue
+                .locations
+                .iter()
+                .any(|loc| location_lower.contains(&loc.to_lowercase()))
+        };
+
+        if !location_match {
+            continue;
+        }
+
+        // This is a valid match - check if it's better than our current best
+        let has_locations = !issue.locations.is_empty();
+
+        // If we don't have a match yet, or this one has locations and the current doesn't,
+        // or they're both without locations and this is first in order
+        if best_match.is_none() || (has_locations && !best_has_locations) {
+            best_match = Some(issue);
+            best_has_locations = has_locations;
+        }
+    }
+
+    best_match
 }
 
 /// The file `append` and `read` use inside the logs folder.
@@ -396,4 +542,19 @@ pub fn health(logs: &Path, free_bytes: u64) -> Result<Vec<String>> {
 /// folder of text files under `out`; returns its path.
 pub fn create_report(logs: &Path, out: &Path, what: &Redact) -> Result<PathBuf> {
     not_built("logs::create_report")
+}
+
+#[cfg(test)]
+mod known_issue_game_tests {
+    use super::*;
+
+    #[test]
+    fn a_game_that_is_not_text_skips_the_entry() {
+        let got = parse_known_issues(
+            r#"[{"id": "n", "signature": "s", "game": 5}, {"id": "ok", "signature": "s"}]"#,
+        )
+        .unwrap();
+        let ids: Vec<&str> = got.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["ok"]);
+    }
 }
