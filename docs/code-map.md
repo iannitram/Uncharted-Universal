@@ -64,7 +64,7 @@ flowchart TD
 | `sfo` | stub | `param.sfo` reader: `parse` to keys (`TITLE_ID`, `APP_VER`, `VERSION`, `TITLE`), never writes | `scripts/prepare.py` `sfo()` | M11, M20 |
 | `games` | stub | `Game` (U1, U2, U3) with its key, name and executable (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`); the four collection title ids (`CUSA02320`, `CUSA02343`, `CUSA02344`, `CUSA02826`), one family shared by all three games, so a game is told by its executable; `title_region` (which id is which region: not known yet); `SUPPORTED` revisions per game; `check_revision` (plain refusal) | `NDC_IDS`, `NDC_ELFS` in `scripts/patches.py`; `EXECUTABLES` in `run.py` | M11, M20 |
 | `pkg` | stub | `.pkg` extractor: entry table, bounded copies, overlap refusal | `scripts/pkg.py` | M11, M20 |
-| `dump` | stub | `DumpReport`, `check` (folder layout, decrypted or not, which games and revisions), the early check before a prepare | new (#172; its Python brief is dropped, it is written in Rust) | M9, M11 |
+| `dump` | present | `DumpReport`, `check` (folder layout, decrypted or not, which games and revisions), the early check before a prepare | new (#172; its Python brief is dropped, it is written in Rust) | M9, M11 |
 | `content_profile` | stub | the content profile values per title (`sceAppContentAppParamGetInt`) | `scripts/content_profile.py` | M7, M20 |
 | `link` | stub | `link_modules` and `link_libc`: module and libc import tables for the boot image | `scripts/link_modules.py`, `scripts/link_libc.py` | M7, M20 |
 | `prepare` | stub | `prepare` a game folder into an install: boot image, linked modules, patches, render size; returns `InstallManifest` | `scripts/prepare.py` | M7, M11, M20 |
