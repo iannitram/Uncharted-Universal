@@ -12,13 +12,50 @@ concurrency:
 
 jobs:
   rust:
-    # A public repo: GitHub-hosted runners only. The Rust workspace is built and tested on
-    # Linux, Windows and macOS on every push; the C and GPU build stays in build.yml.
+    # A private repo: CI runs on our own self-hosted runners (R29). The Rust workspace is built and
+    # tested on Linux and Windows on every push; macOS is in rust-macos (dispatch only).
+    # The C and GPU build stays in build.yml.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+        include:
+          - os: linux
+            runner: [self-hosted, linux]
+          - os: windows
+            runner: [self-hosted, windows]
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install build tools
+        # The self-hosted Linux runner image has no C toolchain; Rust build scripts need `cc` to link.
+        if: matrix.os == 'linux'
+        run: SUDO=$(command -v sudo || true); $SUDO apt-get -o DPkg::Lock::Timeout=300 update && $SUDO apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends build-essential curl ca-certificates
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Self-hosted runners share the host CARGO_HOME; restoring ~/.cargo/bin would replace the rustup proxies.
+          cache-bin: false
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo build --workspace
+      - run: cargo test --workspace
+      - run: cargo test --workspace --all-features
+
+  rust-macos:
+    # macOS is dispatch-only: it bills at 10x on GitHub-hosted runners. It moves to
+    # [self-hosted, macos] when the Mac mini runner is online (R29).
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,6 +65,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
+          # Self-hosted runners share the host CARGO_HOME; restoring ~/.cargo/bin would replace the rustup proxies.
           cache-bin: false
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -38,22 +76,31 @@ jobs:
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
-    # linker, so no NDK is installed yet; when the runtime links C (piece 3.01) this job gets it.
-    runs-on: ubuntu-latest
+    # target linker, so no NDK is installed yet; host build scripts (serde_json's) still need the
+    # runner's `cc`. When the runtime links C (piece 3.01) this job gets the NDK.
+    runs-on: [self-hosted, linux]
+    env:
+      CARGO_BUILD_JOBS: 2
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
+      - name: Install build tools
+        # The self-hosted Linux runner image has no C toolchain; host build scripts need `cc` to link.
+        run: SUDO=$(command -v sudo || true); $SUDO apt-get -o DPkg::Lock::Timeout=300 update && $SUDO apt-get -o DPkg::Lock::Timeout=300 install -y --no-install-recommends build-essential curl ca-certificates
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
+          # Self-hosted runners share the host CARGO_HOME; restoring ~/.cargo/bin would replace the rustup proxies.
           cache-bin: false
       - run: cargo build -p uncharted_runtime --target aarch64-linux-android
 
   ios:
     # The runtime checks for iOS (ROADMAP 8.02); `check` because nothing links an iOS binary yet.
+    # Dispatch-only (macOS bills at 10x); moves to [self-hosted, macos] when the Mac mini runner is online (R29).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,5 +111,6 @@ jobs:
           targets: aarch64-apple-ios
       - uses: Swatinem/rust-cache@v2
         with:
+          # Self-hosted runners share the host CARGO_HOME; restoring ~/.cargo/bin would replace the rustup proxies.
           cache-bin: false
       - run: cargo check --target aarch64-apple-ios -p uncharted_runtime
