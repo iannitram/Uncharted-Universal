@@ -44,7 +44,7 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
-VERSION = '0.3.11'
+VERSION = '0.3.13'
 RELEASES_API = 'https://api.github.com/repos/Supermedo/uncharted_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/Supermedo/uncharted_pc/releases/latest'
 if not WINDOWS:  # Linux fork: its own releases (the Linux builds), tagged v<upstream>-linux.<n>
@@ -209,6 +209,13 @@ FIXES = {
         'removes the Nepal darkening and black weapons there, at about 1 FPS. It costs Uncharted 3 much more, '
         'so Automatic leaves Uncharted 1 and 3 off.',
         {'on': {'BB_READBACK_SMALL_BUFFERS': '1'}, 'off': {'BB_READBACK_SMALL_BUFFERS': '0'}}),
+    'fix_small_gate': (
+        'Sinking characters fix',
+        'Stops characters sinking into the ground, floating or twitching in Uncharted 3. '
+        'Automatic: the lighter part of the fix in Uncharted 3. On is the full fix, for when '
+        'characters still sink; it costs more FPS in heavy scenes.',
+        {'on': {'BB_READBACK_SMALL_GATE': '1', 'BB_COPY64_EOP_READBACK': '1'},
+         'off': {'BB_READBACK_SMALL_GATE': '0', 'BB_COPY64_EOP_READBACK': '0'}}),
     'fix_vram': (
         'Small video memory mode',
         'Keeps 4-8 GB graphics cards inside their video memory. Automatic: on for cards up to 8 GB.',

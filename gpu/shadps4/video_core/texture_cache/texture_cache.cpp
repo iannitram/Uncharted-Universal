@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <cstdlib>
 #include <xxhash.h>
 
@@ -68,7 +69,25 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
     critical_gc_memory = static_cast<u64>(
         std::max<u64>(std::min(device_local_memory - min_vacancy_critical, min_spacing_critical),
                       DEFAULT_CRITICAL_GC_MEMORY));
+    // bbport (from the Bloodborne port): below 8 GB the pressure mark was 40% of the budget
+    // (2.5 GB on an 8 GB laptop card), under what the game holds outside textures: such cards
+    // were under pressure all session, evicting textures unused for 5 s and uploading them
+    // again. 60% (BB_GC_PRESSURE_PERCENT) leaves the textures of an area room first.
+    if (device_local_memory < TARGET_GC_THRESHOLD) {
+        static const s64 percent = [] {
+            const char* env = std::getenv("BB_GC_PRESSURE_PERCENT");
+            return std::clamp<s64>(env ? std::strtoll(env, nullptr, 10) : 60, 10, 75);
+        }();
+        pressure_gc_memory = std::max<u64>(pressure_gc_memory,
+                                           static_cast<u64>(device_local_memory / 100 * percent));
+    }
     trigger_gc_memory = static_cast<u64>((device_local_memory - mem_threshold) / 2);
+    // bbport: the marks in the log, so a player's log tells where eviction starts on that card.
+    std::printf("Texture cache: VRAM budget %lld MiB; marks: collect %llu, pressure %llu, critical %llu MiB\n",
+                static_cast<long long>(device_local_memory >> 20),
+                static_cast<unsigned long long>(trigger_gc_memory >> 20),
+                static_cast<unsigned long long>(pressure_gc_memory >> 20),
+                static_cast<unsigned long long>(critical_gc_memory >> 20));
 }
 
 TextureCache::~TextureCache() = default;
@@ -302,8 +321,8 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
-        // insert() may have grown slot_images and moved every image: `cache_image` would then
-        // point at freed storage, so look it up again.
+        // bbport: insert grows the slot vector when it is full and moves every image to new
+        // storage, so cache_image may point at freed memory now: look both images up again.
         auto& old_image = slot_images[cache_image_id];
 
         // Inherit image usage
@@ -699,7 +718,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
             view_mip = -1;
             view_slice = -1;
 
-            const auto& merged_info = image_id ? slot_images[image_id].info : info;
+            // bbport: a copy, not a reference into slot_images: ResolveOverlap can insert an
+            // image (ExpandImage, ResolveDepthOverlap) and that moves every image when it grows.
+            const ImageInfo merged_info = image_id ? slot_images[image_id].info : info;
             auto [overlap_image_id, overlap_view_mip, overlap_view_slice] =
                 ResolveOverlap(merged_info, desc.type, cache_id, image_id, desc.needs_native);
             if (overlap_image_id) {
@@ -894,8 +915,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
         }
         Image& stencil_image = slot_images[stencil_id];
         TouchImage(stencil_image);
-        // insert() above may have grown slot_images and moved every image, leaving `image`
-        // pointing at freed storage: look the depth image up again.
+        // bbport: the insert above can move every image, so image is looked up again.
         stencil_image.AssociateDepth(image_id, slot_images[image_id].image_uid);
     }
 

@@ -30,6 +30,12 @@ namespace Vulkan {
 
 std::mutex Scheduler::submit_mutex;
 
+static thread_local bool on_recorder_thread = false;
+
+bool Scheduler::OnRecorderThread() {
+    return on_recorder_thread;
+}
+
 extern void (*g_gpu_stall_report)();
 extern void (*g_gpu_checkpoint_report)();
 bool (*g_draw_pipe_busy)() = nullptr;
@@ -243,7 +249,8 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
     return chunk;
 }
 
-void Scheduler::SignalAfterHostCopies(std::function<void()> signal, u64 landing_seq) {
+void Scheduler::SignalAfterHostCopies(std::function<void()> signal, u64 landing_seq,
+                                      bool off_recorder) {
     if (!IsRecordingDeferred()) {
         WaitHostCopies();
         if (VideoCore::LandingGate::Active()) {
@@ -255,16 +262,21 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal, u64 landing_
     }
     BbCopy::FlushBatch();
     deferred_signals_issued.fetch_add(1, std::memory_order_relaxed);
-    Record([signal = std::move(signal), done = deferred_signals_done,
-            landing_seq](vk::CommandBuffer) mutable {
-        BbCopy::AfterCopies([signal = std::move(signal), done = std::move(done), landing_seq] {
+    Record([signal = std::move(signal), done = deferred_signals_done, landing_seq,
+            off_recorder](vk::CommandBuffer) mutable {
+        BbCopy::AfterCopies([signal = std::move(signal), done = std::move(done), landing_seq,
+                             off_recorder] {
             auto fire = [signal = std::move(signal), done = std::move(done)] {
                 signal();
                 done->fetch_add(1, std::memory_order_release);
             };
             // A signal behind deferred raycaster copies waits for them on the landing thread:
             // this thread must not block (submissions wait for the copy threads).
-            VideoCore::LandingGate::Run(landing_seq, std::move(fire));
+            if (off_recorder) {
+                VideoCore::LandingGate::Post(landing_seq, std::move(fire));
+            } else {
+                VideoCore::LandingGate::Run(landing_seq, std::move(fire));
+            }
         });
     });
     KickRecording(true);
@@ -349,15 +361,9 @@ void Scheduler::SyncRecording() {
     recorder_idle_cv.wait(lk, [this] { return recorder_queue.empty() && !recorder_busy; });
 }
 
-static thread_local bool t_on_recorder_thread = false;
-
-bool Scheduler::OnRecorderThread() {
-    return t_on_recorder_thread;
-}
-
 void Scheduler::RecorderThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("bb:VkRecorder");
-    t_on_recorder_thread = true;
+    on_recorder_thread = true;
     while (true) {
         // Spin briefly before sleeping: the next chunk usually follows within microseconds,
         // and a sleeping recorder costs the GPU thread a wake-up syscall per kick. With few
