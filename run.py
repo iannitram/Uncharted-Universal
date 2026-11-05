@@ -396,9 +396,9 @@ def main():
     env.setdefault('BB_VELOCITY_PS', 'f4b18264')
     env.setdefault('BB_UPSCALE_BEFORE_CS', 'aec539f0')
     env.setdefault('BB_HUDLESS_PS', '484cdbf5')
-    # Full-screen passes that rebuild positions from the jittered scene depth get the upscaler's
-    # jitter too: the sun shadow pass (without it its shadows flickered under FSR and TAA).
-    env.setdefault('BB_JITTER_PS', 'f614041e')
+    # These passes need the scene's jitter too: sun shadow reconstruction, U1 boat details,
+    # and U3 London bar surfaces drawn against secondary scene depth (otherwise they flicker).
+    env.setdefault('BB_JITTER_PS', 'f614041e,b2a42acf,1a08df2d')
     if not env.get('BB_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['BB_FSR411_DIR'] = str(data / 'fsr4_411')
 
@@ -475,6 +475,17 @@ def main():
                 env.pop(key, None)
         # Apply the per-game defaults
         env.update(fix_defaults(player_env, exe))
+        # U3 characters sinking into the ground, floating or twitching (#727, #745, #751; fix from
+        # drakolordx7's community build): the raycaster copy's results are read back at the end-of-pipe
+        # label (Cartagena square 88 -> 66 FPS uncapped). The full fix also makes the label wait for
+        # every small result (BB_READBACK_SMALL_GATE=1, launcher On: 53 FPS), so it is left to the player.
+        if 'BB_COPY64_EOP_READBACK' not in player_env:
+            if exe == EXECUTABLES['u3']:
+                env['BB_COPY64_EOP_READBACK'] = '1'
+            else:
+                env.pop('BB_COPY64_EOP_READBACK', None)
+        if 'BB_READBACK_SMALL_GATE' not in player_env:
+            env.pop('BB_READBACK_SMALL_GATE', None)
         game, file = locate(env, exe)
         if not game:
             fail('Set BB_GAME_DIR to the game folder (the one with eboot.bin).')
