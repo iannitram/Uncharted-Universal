@@ -322,6 +322,10 @@ fn create_staging_file(parent: &Path) -> Result<(PathBuf, File)> {
 }
 
 /// Extract every unencrypted named game file under `out`.
+///
+/// Every named entry is checked up front: one unsafe name (traversal, absolute, drive, UNC,
+/// reserved) refuses the whole package with an error before any output folder or file is
+/// written. Encrypted entries with safe names are still skipped and counted.
 pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
     let info = analyse(source)?;
     let mut report = Report::default();
@@ -333,9 +337,7 @@ pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
         let Some(name) = entry.name.as_deref() else {
             continue;
         };
-        let Ok(relative) = safe_relative(name) else {
-            continue;
-        };
+        let relative = safe_relative(name)?;
         if entry.flags & FLAG_ENCRYPTED != 0 {
             report.skipped_encrypted = report
                 .skipped_encrypted
@@ -705,6 +707,25 @@ mod tests {
         };
         let error = analyse(&sparse).unwrap_err();
         assert_eq!(error, pkg("package names table is too large"));
+    }
+
+    #[test]
+    fn refuses_unsafe_entry_names_before_writing_anything() {
+        // extract used to skip unsafe names silently and return Ok. No existing test asserted that
+        // skip; rejects_delta_and_unsafe_paths_and_skips_encrypted_entries only calls safe_relative.
+        // Each package also holds a safe file, which must not be written when the package is refused.
+        for bad in ["../x", "/x", "C:\\x", "\\\\server\\share\\x"] {
+            let src = fixture(&[("ok.bin", b"fine", 0), (bad, b"evil", 0)], 0x1a);
+            let out = temp_path();
+            fs::create_dir_all(&out).unwrap();
+            assert!(extract(&src, &out).is_err(), "{bad}");
+            assert_eq!(fs::read_dir(&out).unwrap().count(), 0, "{bad}");
+            fs::remove_dir_all(out).unwrap();
+        }
+        let src = fixture(&[("ok.bin", b"fine", 0), ("../x", b"evil", 0)], 0x1a);
+        let out = temp_path();
+        assert!(extract(&src, &out).is_err());
+        assert!(!out.exists());
     }
 
     #[test]
