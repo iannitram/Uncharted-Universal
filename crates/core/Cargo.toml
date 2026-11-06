@@ -18,7 +18,7 @@ path = "src/lib.rs"
 # pure-Rust crates it needs (mdns-sd, RustCrypto spake2, chacha20poly1305, sha2).
 hub = []
 
-# Pure Rust and no dependencies yet, so the core builds on Linux, Windows, macOS, Android and iOS.
-# An issue may add a pure-Rust crate when it needs one (say why in the PR).
+# Core dependencies are pure Rust and add no native libraries or platform SDK requirements.
 [dependencies]
 serde_json = "1"
+roxmltree = { version = "=0.21.1", default-features = false, features = ["std"] }

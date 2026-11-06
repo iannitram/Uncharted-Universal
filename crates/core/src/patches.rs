@@ -5,13 +5,13 @@
 //! keyed by title id, executable (`AppElf`) and `APP_VER`, and never applied to another build.
 //!
 //! Only literal writes are supported (`bytes`, `bytes16/32/64`, `float32/64`, `utf8`,
-//! `utf16`); a pattern ("mask") patch is skipped whole, never half-applied. The small XML
-//! reader below accepts the XML constructs used by third-party patch files and puts explicit
-//! bounds on input size, nesting and element count.
+//! `utf16`); a pattern ("mask") patch is skipped whole, never half-applied. XML is parsed by
+//! `roxmltree` 0.21.1 (MIT option), with DTD and external-entity resolution disabled and bounds
+//! on input size, node count and nesting depth.
 
 use crate::error::{Error, Result};
 use crate::games::Game;
-use std::collections::BTreeMap;
+use roxmltree::{Document, Node, ParsingOptions};
 
 /// Patch addresses are PS4 virtual addresses with the executable at this base.
 pub const EBOOT_BASE: u64 = 0x40_0000;
@@ -20,7 +20,7 @@ pub const PATCHES_MAGIC: [u8; 8] = *b"BBPATCH2";
 
 const MAX_XML_BYTES: usize = 8 * 1024 * 1024;
 const MAX_XML_DEPTH: usize = 64;
-const MAX_XML_ELEMENTS: usize = 100_000;
+const MAX_XML_NODES: u32 = 100_000;
 /// `apply_patches` in `src/probe.c` reads a fixed 4096-byte entry buffer.
 const MAX_PATCH_WRITE_BYTES: usize = 4096;
 
@@ -66,348 +66,46 @@ pub struct Selection {
     pub disabled: Vec<String>,
 }
 
-#[derive(Debug)]
-struct Element {
-    name: String,
-    attrs: BTreeMap<String, String>,
-    text: String,
-    children: Vec<Element>,
-}
-
-impl Element {
-    fn descendants_named<'a>(&'a self, name: &'a str, out: &mut Vec<&'a Element>) {
-        if self.name == name {
-            out.push(self);
-        }
-        for child in &self.children {
-            child.descendants_named(name, out);
-        }
-    }
-}
-
-struct XmlReader<'a> {
-    input: &'a str,
-    pos: usize,
-    elements: usize,
-}
-
-impl<'a> XmlReader<'a> {
-    fn new(input: &'a str) -> Result<Self> {
-        if input.len() > MAX_XML_BYTES {
-            return Err(patch_error("XML patch file exceeds the 8 MiB limit"));
-        }
-        if !input.chars().all(is_xml10_char) {
-            return Err(patch_error("XML contains a character forbidden by XML 1.0"));
-        }
-        Ok(Self {
-            input,
-            pos: 0,
-            elements: 0,
-        })
-    }
-
-    fn parse(mut self) -> Result<Element> {
-        let mut stack: Vec<Element> = Vec::new();
-        let mut root = None;
-        while self.pos < self.input.len() {
-            if self.rest().starts_with("<!--") {
-                self.skip_until("<!--", "-->", "unterminated XML comment")?;
-            } else if self.rest().starts_with("<?") {
-                self.skip_until("<?", "?>", "unterminated XML processing instruction")?;
-            } else if self.rest().starts_with("<![CDATA[") {
-                let content_start = self.pos + "<![CDATA[".len();
-                let tail = self.input[content_start..]
-                    .find("]]>")
-                    .ok_or_else(|| patch_error("unterminated XML CDATA section"))?;
-                let content_end = content_start + tail;
-                if let Some(parent) = stack.last_mut() {
-                    parent
-                        .text
-                        .push_str(&self.input[content_start..content_end]);
-                } else if !self.input[content_start..content_end].trim().is_empty() {
-                    return Err(patch_error("text outside the XML root element"));
-                }
-                self.pos = content_end + 3;
-            } else if self.rest().starts_with("<!") {
-                return Err(patch_error(
-                    "XML declarations other than comments and CDATA are not supported",
-                ));
-            } else if self.rest().starts_with("</") {
-                self.parse_close(&mut stack, &mut root)?;
-            } else if self.rest().starts_with('<') {
-                self.parse_open(&mut stack, &mut root)?;
-            } else {
-                let end = self
-                    .rest()
-                    .find('<')
-                    .map_or(self.input.len(), |n| self.pos + n);
-                let text = decode_entities(&self.input[self.pos..end])?;
-                if let Some(parent) = stack.last_mut() {
-                    parent.text.push_str(&text);
-                } else if !text.trim().is_empty() {
-                    return Err(patch_error("text outside the XML root element"));
-                }
-                self.pos = end;
-            }
-        }
-        if !stack.is_empty() {
-            return Err(patch_error("unclosed XML element"));
-        }
-        root.ok_or_else(|| patch_error("XML document has no root element"))
-    }
-
-    fn rest(&self) -> &'a str {
-        &self.input[self.pos..]
-    }
-
-    fn skip_space(&mut self) {
-        while let Some(ch) = self.rest().chars().next() {
-            if !ch.is_ascii_whitespace() {
-                break;
-            }
-            self.pos += ch.len_utf8();
-        }
-    }
-
-    fn skip_until(&mut self, opening: &str, closing: &str, message: &str) -> Result<()> {
-        self.pos += opening.len();
-        let close_at = self.input[self.pos..]
-            .find(closing)
-            .map(|n| self.pos + n)
-            .ok_or_else(|| patch_error(message))?;
-        self.pos = close_at + closing.len();
-        Ok(())
-    }
-
-    fn parse_open(&mut self, stack: &mut Vec<Element>, root: &mut Option<Element>) -> Result<()> {
-        self.pos += 1; // '<'
-        let name = self.parse_name()?;
-        self.elements += 1;
-        if self.elements > MAX_XML_ELEMENTS {
-            return Err(patch_error("XML patch file has too many elements"));
-        }
-        let mut attrs = BTreeMap::new();
-        let mut empty = false;
-        loop {
-            self.skip_space();
-            if self.rest().starts_with(">") {
-                self.pos += 1;
-                break;
-            }
-            if self.rest().starts_with("/>") {
-                self.pos += 2;
-                empty = true;
-                break;
-            }
-            if self.pos >= self.input.len() {
-                return Err(patch_error("unterminated XML start tag"));
-            }
-            let key = self.parse_name()?;
-            self.skip_space();
-            if !self.rest().starts_with('=') {
-                return Err(patch_error("XML attribute is missing '='"));
-            }
-            self.pos += 1;
-            self.skip_space();
-            let quote = self
-                .rest()
-                .chars()
-                .next()
-                .ok_or_else(|| patch_error("missing XML attribute value"))?;
-            if quote != '\'' && quote != '"' {
-                return Err(patch_error("XML attribute value must be quoted"));
-            }
-            self.pos += quote.len_utf8();
-            let value_start = self.pos;
-            let value_end = self
-                .rest()
-                .find(quote)
-                .map(|n| self.pos + n)
-                .ok_or_else(|| patch_error("unterminated XML attribute value"))?;
-            let value = decode_attribute_value(&self.input[value_start..value_end])?;
-            self.pos = value_end + quote.len_utf8();
-            if attrs.insert(key, value).is_some() {
-                return Err(patch_error("duplicate XML attribute"));
-            }
-        }
-        if stack.len() >= MAX_XML_DEPTH {
-            return Err(patch_error("XML patch file is nested too deeply"));
-        }
-        let element = Element {
-            name,
-            attrs,
-            text: String::new(),
-            children: Vec::new(),
-        };
-        if empty {
-            Self::attach(element, stack, root)?;
-        } else {
-            stack.push(element);
-        }
-        Ok(())
-    }
-
-    fn parse_close(&mut self, stack: &mut Vec<Element>, root: &mut Option<Element>) -> Result<()> {
-        self.pos += 2;
-        let name = self.parse_name()?;
-        self.skip_space();
-        if !self.rest().starts_with('>') {
-            return Err(patch_error("malformed XML end tag"));
-        }
-        self.pos += 1;
-        let element = stack
-            .pop()
-            .ok_or_else(|| patch_error("unexpected XML end tag"))?;
-        if element.name != name {
-            return Err(patch_error("XML start and end tags do not match"));
-        }
-        Self::attach(element, stack, root)
-    }
-
-    fn attach(element: Element, stack: &mut [Element], root: &mut Option<Element>) -> Result<()> {
-        if let Some(parent) = stack.last_mut() {
-            parent.children.push(element);
-            Ok(())
-        } else if root.is_none() {
-            *root = Some(element);
-            Ok(())
-        } else {
-            Err(patch_error("XML document has multiple root elements"))
-        }
-    }
-
-    fn parse_name(&mut self) -> Result<String> {
-        let n = self
-            .rest()
-            .find(|ch: char| {
-                ch.is_ascii_whitespace() || matches!(ch, '/' | '>' | '=' | '<' | '\'' | '"' | '?')
-            })
-            .unwrap_or_else(|| self.rest().len());
-        if n == 0 {
-            return Err(patch_error("expected XML name"));
-        }
-        let name = self.rest()[..n].to_owned();
-        if !name
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == ':')
-        {
-            return Err(patch_error("invalid XML name"));
-        }
-        self.pos += n;
-        Ok(name)
-    }
-}
-
-fn is_xml10_char(ch: char) -> bool {
-    matches!(ch, '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
-}
-
-fn xml_char(value: u32) -> Result<char> {
-    char::from_u32(value)
-        .filter(|ch| is_xml10_char(*ch))
-        .ok_or_else(|| patch_error("invalid XML character entity"))
-}
-
-/// A numeric character reference: plain digits only (no sign), then an XML 1.0 character.
-fn numeric_entity(digits: &str, radix: u32) -> Result<char> {
-    if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
-        return Err(patch_error("invalid XML character entity"));
-    }
-    let value = u32::from_str_radix(digits, radix)
-        .map_err(|_| patch_error("invalid XML character entity"))?;
-    xml_char(value)
-}
-
-fn decode_attribute_value(text: &str) -> Result<String> {
-    let mut out = String::with_capacity(text.len());
-    let mut pos = 0;
-    while pos < text.len() {
-        let rest = &text[pos..];
-        let ch = rest.chars().next().expect("position is before end");
-        if ch == '&' {
-            let end = rest
-                .find(';')
-                .ok_or_else(|| patch_error("unterminated XML entity"))?;
-            let after_entity = end + 1;
-            out.push_str(&decode_entities(&rest[..after_entity])?);
-            pos += after_entity;
-        } else if ch == '\r' {
-            // XML end-of-line handling folds CRLF (and lone CR) to LF before attribute
-            // whitespace normalization. Therefore a raw CRLF pair contributes one space.
-            pos += if rest.starts_with("\r\n") {
-                2
-            } else {
-                ch.len_utf8()
-            };
-            out.push(' ');
-        } else if matches!(ch, '\n' | '\t') {
-            out.push(' ');
-            pos += ch.len_utf8();
-        } else {
-            out.push(ch);
-            pos += ch.len_utf8();
-        }
-    }
-    Ok(out)
-}
-
-fn decode_entities(text: &str) -> Result<String> {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(i) = rest.find('&') {
-        out.push_str(&rest[..i]);
-        rest = &rest[i + 1..];
-        let end = rest
-            .find(';')
-            .ok_or_else(|| patch_error("unterminated XML entity"))?;
-        let entity = &rest[..end];
-        let ch = match entity {
-            "amp" => '&',
-            "lt" => '<',
-            "gt" => '>',
-            "apos" => '\'',
-            "quot" => '"',
-            _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-                numeric_entity(&entity[2..], 16)?
-            }
-            _ if entity.starts_with('#') => numeric_entity(&entity[1..], 10)?,
-            _ => return Err(patch_error("unknown XML entity")),
-        };
-        out.push(ch);
-        rest = &rest[end + 1..];
-    }
-    out.push_str(rest);
-    Ok(out)
-}
-
 /// Parse one patch XML file (`file_name` forms the keys). Bad XML is `Error::Patch(..)`; a
 /// patch with an unsupported line type is kept with `writes` empty and a note, so About can
 /// list it as unavailable.
 pub fn parse(file_name: &str, xml: &str) -> Result<Vec<Patch>> {
-    let root = XmlReader::new(xml)?.parse()?;
-    let mut id_nodes = Vec::new();
-    root.descendants_named("ID", &mut id_nodes);
-    let title_ids = id_nodes
-        .iter()
-        .map(|node| node.text.trim().to_owned())
+    if xml.len() > MAX_XML_BYTES {
+        return Err(patch_error("XML patch file exceeds the 8 MiB limit"));
+    }
+    validate_xml_character_references(xml)?;
+    let options = ParsingOptions {
+        allow_dtd: false,
+        nodes_limit: MAX_XML_NODES,
+        entity_resolver: None,
+    };
+    let document = Document::parse_with_options(xml, options)
+        .map_err(|error| patch_error(error.to_string()))?;
+    let root = document.root_element();
+    check_xml_depth(root)?;
+
+    let title_ids = root
+        .descendants()
+        .filter(|node| node.has_tag_name("ID"))
+        .filter_map(|node| node.text())
+        .map(str::trim)
         .filter(|id| !id.is_empty())
+        .map(str::to_owned)
         .collect::<Vec<_>>();
-    let mut metadata = Vec::new();
-    root.descendants_named("Metadata", &mut metadata);
+    let metadata = root
+        .descendants()
+        .filter(|node| node.has_tag_name("Metadata"))
+        .collect::<Vec<_>>();
     let mut patches = Vec::with_capacity(metadata.len());
     for meta in metadata {
         let name = meta
-            .attrs
-            .get("Name")
-            .cloned()
-            .ok_or_else(|| patch_error("patch metadata is missing Name"))?;
+            .attribute("Name")
+            .ok_or_else(|| patch_error("patch metadata is missing Name"))?
+            .to_owned();
         let key = format!("{file_name}/{name}");
-        let mut lines = Vec::new();
-        meta.descendants_named("Line", &mut lines);
-        let mut writes = Vec::with_capacity(lines.len());
+        let mut writes = Vec::new();
         let mut unavailable = None;
-        for line in lines {
+        for line in meta.descendants().filter(|node| node.has_tag_name("Line")) {
             match encode_line(line) {
                 Ok(write) => writes.push(write),
                 Err(message) => {
@@ -421,18 +119,11 @@ pub fn parse(file_name: &str, xml: &str) -> Result<Vec<Patch>> {
             patches.push(Patch {
                 key,
                 name,
-                author: meta.attrs.get("Author").cloned().unwrap_or_default(),
-                note: append_unavailable(
-                    meta.attrs.get("Note").map(String::as_str).unwrap_or(""),
-                    &reason,
-                ),
+                author: meta.attribute("Author").unwrap_or_default().to_owned(),
+                note: append_unavailable(meta.attribute("Note").unwrap_or_default(), &reason),
                 title_ids: title_ids.clone(),
-                executable: meta
-                    .attrs
-                    .get("AppElf")
-                    .cloned()
-                    .unwrap_or_else(|| "eboot.bin".to_owned()),
-                app_ver: meta.attrs.get("AppVer").cloned().unwrap_or_default(),
+                executable: meta.attribute("AppElf").unwrap_or("eboot.bin").to_owned(),
+                app_ver: meta.attribute("AppVer").unwrap_or_default().to_owned(),
                 enabled_by_default: attr_true(meta, "isEnabled"),
                 writes,
             });
@@ -440,21 +131,91 @@ pub fn parse(file_name: &str, xml: &str) -> Result<Vec<Patch>> {
             patches.push(Patch {
                 key,
                 name,
-                author: meta.attrs.get("Author").cloned().unwrap_or_default(),
-                note: meta.attrs.get("Note").cloned().unwrap_or_default(),
+                author: meta.attribute("Author").unwrap_or_default().to_owned(),
+                note: meta.attribute("Note").unwrap_or_default().to_owned(),
                 title_ids: title_ids.clone(),
-                executable: meta
-                    .attrs
-                    .get("AppElf")
-                    .cloned()
-                    .unwrap_or_else(|| "eboot.bin".to_owned()),
-                app_ver: meta.attrs.get("AppVer").cloned().unwrap_or_default(),
+                executable: meta.attribute("AppElf").unwrap_or("eboot.bin").to_owned(),
+                app_ver: meta.attribute("AppVer").unwrap_or_default().to_owned(),
                 enabled_by_default: attr_true(meta, "isEnabled"),
                 writes,
             });
         }
     }
     Ok(patches)
+}
+
+/// `roxmltree` normalizes attribute values and validates XML grammar. It replaces invalid Unicode
+/// scalar references (including surrogates and values above U+10FFFF) with U+FFFD, so this focused
+/// pass rejects numeric references outside XML 1.0 Char before the parser sees them. It skips
+/// contexts where `&#...;` is ordinary comment/CDATA/PI text.
+fn validate_xml_character_references(xml: &str) -> Result<()> {
+    let mut pos = 0;
+    while pos < xml.len() {
+        let rest = &xml[pos..];
+        let skip = if rest.starts_with("<!--") {
+            Some(("<!--", "-->"))
+        } else if rest.starts_with("<![CDATA[") {
+            Some(("<![CDATA[", "]]>"))
+        } else if rest.starts_with("<?") {
+            Some(("<?", "?>"))
+        } else {
+            None
+        };
+        if let Some((opening, closing)) = skip {
+            let after_opening = pos + opening.len();
+            let end = xml[after_opening..]
+                .find(closing)
+                .map(|offset| after_opening + offset + closing.len())
+                .ok_or_else(|| {
+                    patch_error("unterminated XML comment, CDATA or processing instruction")
+                })?;
+            pos = end;
+            continue;
+        }
+        if let Some(reference) = rest.strip_prefix("&#") {
+            let end = reference
+                .find(';')
+                .ok_or_else(|| patch_error("unterminated XML character reference"))?;
+            let digits = &reference[..end];
+            let (number, radix) = if let Some(hex) = digits.strip_prefix('x') {
+                (hex, 16)
+            } else {
+                (digits, 10)
+            };
+            if number.is_empty() || !number.chars().all(|ch| ch.is_digit(radix)) {
+                return Err(patch_error("invalid XML character reference"));
+            }
+            let value = u32::from_str_radix(number, radix)
+                .map_err(|_| patch_error("invalid XML character reference"))?;
+            if !is_xml10_char(value) {
+                return Err(patch_error(
+                    "XML character reference names a character forbidden by XML 1.0",
+                ));
+            }
+            pos += 2 + end + 1;
+        } else {
+            let ch = rest.chars().next().expect("position is before end");
+            pos += ch.len_utf8();
+        }
+    }
+    Ok(())
+}
+
+fn is_xml10_char(value: u32) -> bool {
+    matches!(value, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+}
+
+fn check_xml_depth(root: Node<'_, '_>) -> Result<()> {
+    let mut pending = vec![(root, 1usize)];
+    while let Some((node, depth)) = pending.pop() {
+        if depth > MAX_XML_DEPTH {
+            return Err(patch_error("XML patch file is nested too deeply"));
+        }
+        for child in node.children().filter(Node::is_element) {
+            pending.push((child, depth + 1));
+        }
+    }
+    Ok(())
 }
 
 fn append_unavailable(note: &str, reason: &str) -> String {
@@ -465,37 +226,33 @@ fn append_unavailable(note: &str, reason: &str) -> String {
     }
 }
 
-fn attr_true(element: &Element, name: &str) -> bool {
+fn attr_true(element: Node<'_, '_>, name: &str) -> bool {
     element
-        .attrs
-        .get(name)
+        .attribute(name)
         .is_some_and(|value| value.eq_ignore_ascii_case("true"))
 }
 
-fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
+fn encode_line(line: Node<'_, '_>) -> std::result::Result<ByteWrite, String> {
     let kind = line
-        .attrs
-        .get("Type")
+        .attribute("Type")
         .ok_or_else(|| "line is missing Type".to_owned())?;
     if !matches!(
-        kind.as_str(),
+        kind,
         "bytes" | "bytes16" | "bytes32" | "bytes64" | "float32" | "float64" | "utf8" | "utf16"
     ) {
         return Err(format!("unsupported patch type {kind:?}"));
     }
     let address = line
-        .attrs
-        .get("Address")
+        .attribute("Address")
         .ok_or_else(|| "line is missing Address".to_owned())?;
     let address = parse_u64(address).map_err(|_| format!("invalid address {address:?}"))?;
     let offset = address
         .checked_sub(EBOOT_BASE)
         .ok_or_else(|| "address is below EBOOT_BASE".to_owned())?;
     let value = line
-        .attrs
-        .get("Value")
+        .attribute("Value")
         .ok_or_else(|| "line is missing Value".to_owned())?;
-    let bytes = match kind.as_str() {
+    let bytes = match kind {
         "bytes" => decode_hex(value)?,
         "bytes16" | "bytes32" | "bytes64" => {
             let width = kind[5..]
@@ -515,12 +272,12 @@ fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
             number.to_le_bytes()[..width].to_vec()
         }
         "float32" => {
-            let parsed = value.parse::<f32>().ok().filter(|v| v.is_finite());
+            let parsed = value.parse::<f32>().ok().filter(|value| value.is_finite());
             let value = parsed.ok_or_else(|| format!("invalid float32 value {value:?}"))?;
             value.to_le_bytes().to_vec()
         }
         "float64" => {
-            let parsed = value.parse::<f64>().ok().filter(|v| v.is_finite());
+            let parsed = value.parse::<f64>().ok().filter(|value| value.is_finite());
             let value = parsed.ok_or_else(|| format!("invalid float64 value {value:?}"))?;
             value.to_le_bytes().to_vec()
         }
@@ -912,6 +669,53 @@ mod tests {
             parse("bad.xml", "<Patches>&unknown;</Patches>"),
             Err(Error::Patch(_))
         ));
+        assert!(matches!(
+            parse(
+                "bad.xml",
+                "<Patches><!--bad--comment--><Metadata Name=\"P\" AppVer=\"1\"/></Patches>"
+            ),
+            Err(Error::Patch(_))
+        ));
+        assert!(matches!(
+            parse("bad.xml", "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"<\"/></Metadata></Patches>"),
+            Err(Error::Patch(_))
+        ));
+        assert!(matches!(
+            parse("bad.xml", "<!DOCTYPE Patches [<!ENTITY value \"x\">]><Patches><Metadata Name=\"P\" AppVer=\"1\"/></Patches>"),
+            Err(Error::Patch(_))
+        ));
+        assert!(matches!(
+            parse("bad.xml", "<!DOCTYPE Patches SYSTEM \"file:///etc/passwd\"><Patches><Metadata Name=\"P\" AppVer=\"1\"/></Patches>"),
+            Err(Error::Patch(_))
+        ));
+    }
+
+    #[test]
+    fn xml_node_and_depth_limits_are_enforced() {
+        let at_limit = format!(
+            "<Patches>{}{}</Patches>",
+            "<N>".repeat(MAX_XML_DEPTH - 1),
+            "</N>".repeat(MAX_XML_DEPTH - 1)
+        );
+        assert!(parse("depth.xml", &at_limit).is_ok());
+        let over_limit = format!(
+            "<Patches>{}{}</Patches>",
+            "<N>".repeat(MAX_XML_DEPTH),
+            "</N>".repeat(MAX_XML_DEPTH)
+        );
+        assert!(matches!(
+            parse("depth.xml", &over_limit),
+            Err(Error::Patch(_))
+        ));
+
+        let too_many_nodes = format!(
+            "<Patches>{}</Patches>",
+            "<N/>".repeat(MAX_XML_NODES as usize)
+        );
+        assert!(matches!(
+            parse("nodes.xml", &too_many_nodes),
+            Err(Error::Patch(_))
+        ));
     }
 
     #[test]
@@ -1093,9 +897,14 @@ mod tests {
             "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#x1;\"/></Metadata></Patches>",
             "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#1;\"/></Metadata></Patches>",
             "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xD800;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xDFFF;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#55296;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#x110000;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xFFFFFFFF;\"/></Metadata></Patches>",
             "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xFFFE;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#X41;\"/></Metadata></Patches>",
         ] {
-            assert!(matches!(parse("bad.xml", xml), Err(Error::Patch(_))));
+            assert!(matches!(parse("bad.xml", xml), Err(Error::Patch(_))), "accepted malformed XML: {xml}");
         }
         let raw_forbidden = "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"x\u{1}\"/></Metadata></Patches>";
         assert!(matches!(
@@ -1103,28 +912,33 @@ mod tests {
             Err(Error::Patch(_))
         ));
 
-        for valid in [
-            '\u{9}',
-            '\u{A}',
-            '\u{D}',
-            '\u{20}',
-            '\u{D7FF}',
-            '\u{E000}',
-            '\u{FFFD}',
-            '\u{10000}',
-            '\u{10FFFF}',
+        for reference in [
+            "&#x9;",
+            "&#xA;",
+            "&#xD;",
+            "&#x20;",
+            "&#xD7FF;",
+            "&#xE000;",
+            "&#xFFFD;",
+            "&#x10000;",
+            "&#x10FFFF;",
+            "&#x41;",
+            "&#65;",
         ] {
-            assert!(is_xml10_char(valid));
-            assert_eq!(
-                decode_entities(&format!("&#x{:X};", valid as u32)).unwrap(),
-                valid.to_string()
+            let xml = format!(
+                "<Patches><Metadata Name=\"Valid\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"{reference}\"/></Metadata></Patches>"
             );
+            assert_eq!(parse("valid.xml", &xml).unwrap()[0].writes.len(), 1);
         }
-        for invalid in [
-            '\u{0}', '\u{8}', '\u{B}', '\u{C}', '\u{1F}', '\u{FFFE}', '\u{FFFF}',
-        ] {
-            assert!(!is_xml10_char(invalid));
-        }
+
+        let escaped = "<Patches><Metadata Name=\"Escaped\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&amp;#xD800;\"/></Metadata></Patches>";
+        assert_eq!(
+            parse("escaped.xml", escaped).unwrap()[0].writes[0].bytes,
+            b"&#xD800;\0"
+        );
+
+        let ignored_contexts = "<Patches><!-- &#xD800; --><?pi &#xD800;?><![CDATA[&#xD800;]]><Metadata Name=\"P\" AppVer=\"1\"/></Patches>";
+        assert!(parse("contexts.xml", ignored_contexts).is_ok());
     }
 
     #[test]
