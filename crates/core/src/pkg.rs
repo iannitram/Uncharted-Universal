@@ -5,9 +5,10 @@
 //! big-endian.
 
 use crate::error::{Error, Result};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAGIC: [u8; 4] = *b"\x7fCNT";
 pub const HEADER_SIZE: u64 = 0x1000;
@@ -20,6 +21,7 @@ pub const CONTENT_TYPE_DELTA_PATCH: u32 = 0x1E;
 const CONTENT_FLAG_DELTA_PATCH: u32 = 0x4100_0000;
 const MAX_ENTRY_COUNT: u32 = 1 << 20;
 const MAX_NAMES_SIZE: u64 = 256 << 20;
+static NEXT_TEMP_FILE: AtomicU64 = AtomicU64::new(0);
 
 /// Random access to a package, by seeking: a retail package is tens of gigabytes.
 pub trait Source {
@@ -273,26 +275,11 @@ fn safe_target(root: &Path, relative: &str) -> Result<PathBuf> {
         }
     }
     if let Ok(meta) = fs::symlink_metadata(&current) {
-        if meta.file_type().is_symlink() || !meta.is_file() || has_multiple_links(&meta) {
-            return Err(pkg("extraction target is not a single-link regular file"));
+        if meta.file_type().is_symlink() || !meta.is_file() {
+            return Err(pkg("extraction target is not a regular file"));
         }
     }
     Ok(current)
-}
-
-#[cfg(unix)]
-fn has_multiple_links(meta: &fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    meta.nlink() > 1
-}
-#[cfg(windows)]
-fn has_multiple_links(meta: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    meta.number_of_links() > 1
-}
-#[cfg(not(any(unix, windows)))]
-fn has_multiple_links(_: &fs::Metadata) -> bool {
-    false
 }
 
 fn validate_target(root: &Path, relative: &str) -> Result<()> {
@@ -310,12 +297,28 @@ fn validate_target(root: &Path, relative: &str) -> Result<()> {
             if i + 1 < parts.len() && !meta.is_dir() {
                 return Err(pkg("file blocks extraction directory"));
             }
-            if i + 1 == parts.len() && (!meta.is_file() || has_multiple_links(&meta)) {
-                return Err(pkg("extraction target is not a single-link regular file"));
+            if i + 1 == parts.len() && !meta.is_file() {
+                return Err(pkg("extraction target is not a regular file"));
             }
         }
     }
     Ok(())
+}
+
+fn create_staging_file(parent: &Path) -> Result<(PathBuf, File)> {
+    for _ in 0..128 {
+        let sequence = NEXT_TEMP_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = parent.join(format!(
+            ".pkg-extract-{}-{sequence}.tmp",
+            std::process::id()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(pkg("cannot create staged extraction file")),
+        }
+    }
+    Err(pkg("cannot allocate a unique staged extraction file"))
 }
 
 /// Extract every unencrypted named game file under `out`.
@@ -338,9 +341,6 @@ pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
                 .skipped_encrypted
                 .checked_add(1)
                 .ok_or_else(|| pkg("encrypted entry count overflow"))?;
-            continue;
-        }
-        if entry.size == 0 {
             continue;
         }
         // Existing symlinks are rejected even for nested components; components created above
@@ -378,30 +378,40 @@ pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
     }
     for (entry, relative) in destinations {
         let target = safe_target(&root, &relative)?;
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&target)
-            .map_err(|_| pkg("cannot create extraction file"))?;
-        let mut done = 0u64;
-        let mut chunk = vec![0u8; CHUNK_SIZE];
-        while done < entry.size {
-            let count = usize::try_from((entry.size - done).min(CHUNK_SIZE as u64))
-                .map_err(|_| pkg("entry chunk size overflow"))?;
-            let offset = entry
-                .offset
-                .checked_add(done)
-                .ok_or_else(|| pkg("entry offset overflow"))?;
-            read(source, offset, &mut chunk[..count])?;
-            file.write_all(&chunk[..count])
-                .map_err(|_| pkg("cannot write extraction file"))?;
-            done = done
-                .checked_add(count as u64)
-                .ok_or_else(|| pkg("entry copy size overflow"))?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| pkg("extraction target has no parent"))?;
+        let (staged_path, mut file) = create_staging_file(parent)?;
+        let copied = (|| -> Result<()> {
+            let mut done = 0u64;
+            let mut chunk = vec![0u8; CHUNK_SIZE];
+            while done < entry.size {
+                let count = usize::try_from((entry.size - done).min(CHUNK_SIZE as u64))
+                    .map_err(|_| pkg("entry chunk size overflow"))?;
+                let offset = entry
+                    .offset
+                    .checked_add(done)
+                    .ok_or_else(|| pkg("entry offset overflow"))?;
+                read(source, offset, &mut chunk[..count])?;
+                file.write_all(&chunk[..count])
+                    .map_err(|_| pkg("cannot write staged extraction file"))?;
+                done = done
+                    .checked_add(count as u64)
+                    .ok_or_else(|| pkg("entry copy size overflow"))?;
+            }
+            file.flush()
+                .map_err(|_| pkg("cannot finish staged extraction file"))?;
+            Ok(())
+        })();
+        drop(file);
+        if let Err(error) = copied {
+            let _ = fs::remove_file(&staged_path);
+            return Err(error);
         }
-        file.flush()
-            .map_err(|_| pkg("cannot finish extraction file"))?;
+        if fs::rename(&staged_path, &target).is_err() {
+            let _ = fs::remove_file(&staged_path);
+            return Err(pkg("cannot replace extraction target"));
+        }
         report.extracted = report
             .extracted
             .checked_add(1)
@@ -561,6 +571,21 @@ mod tests {
     }
 
     #[test]
+    fn extracts_empty_files_and_replaces_older_nonempty_contents() {
+        let out = temp_path();
+        let fresh = fixture(&[("fresh.bin", b"", 0)], 0x1a);
+        let report = extract(&fresh, &out).unwrap();
+        assert_eq!(report.extracted, 1);
+        assert_eq!(fs::metadata(out.join("fresh.bin")).unwrap().len(), 0);
+        let overlay = fixture(&[("stale.bin", b"older bytes", 0)], 0x1a);
+        extract(&overlay, &out).unwrap();
+        let replacement = fixture(&[("stale.bin", b"", 0)], 0x1a);
+        assert_eq!(extract(&replacement, &out).unwrap().extracted, 1);
+        assert_eq!(fs::metadata(out.join("stale.bin")).unwrap().len(), 0);
+        fs::remove_dir_all(out).unwrap();
+    }
+
+    #[test]
     fn rejects_bad_header_counts_and_table_bounds() {
         let src = fixture(&[("a", b"x", 0)], 0x1a);
         for count in [0, MAX_ENTRY_COUNT + 1] {
@@ -594,15 +619,16 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn refuses_to_truncate_an_existing_hard_link() {
+    fn replaces_a_hard_link_without_modifying_its_other_name() {
         let src = fixture(&[("file.bin", b"replacement", 0)], 0x1a);
         let out = temp_path();
         let outside = temp_path();
         fs::create_dir_all(&out).unwrap();
         fs::write(&outside, b"keep me").unwrap();
         fs::hard_link(&outside, out.join("file.bin")).unwrap();
-        assert!(extract(&src, &out).is_err());
+        assert_eq!(extract(&src, &out).unwrap().extracted, 1);
         assert_eq!(fs::read(&outside).unwrap(), b"keep me");
+        assert_eq!(fs::read(out.join("file.bin")).unwrap(), b"replacement");
         fs::remove_dir_all(out).unwrap();
         fs::remove_file(outside).unwrap();
     }
