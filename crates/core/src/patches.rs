@@ -5,16 +5,22 @@
 //! keyed by title id, executable (`AppElf`) and `APP_VER`, and never applied to another build.
 //!
 //! Only literal writes are supported (`bytes`, `bytes16/32/64`, `float32/64`, `utf8`,
-//! `utf16`); a pattern ("mask") patch is skipped whole, never half-applied. The XML reader is
-//! hand-written in std (no parser dependency yet).
+//! `utf16`); a pattern ("mask") patch is skipped whole, never half-applied. The small XML
+//! reader below accepts the XML constructs used by third-party patch files and puts explicit
+//! bounds on input size, nesting and element count.
 
-use crate::error::{not_built, Result};
+use crate::error::{Error, Result};
 use crate::games::Game;
+use std::collections::BTreeMap;
 
 /// Patch addresses are PS4 virtual addresses with the executable at this base.
 pub const EBOOT_BASE: u64 = 0x40_0000;
 /// The first eight bytes of `patches.bin`.
 pub const PATCHES_MAGIC: [u8; 8] = *b"BBPATCH2";
+
+const MAX_XML_BYTES: usize = 8 * 1024 * 1024;
+const MAX_XML_DEPTH: usize = 64;
+const MAX_XML_ELEMENTS: usize = 100_000;
 
 /// One byte write, at an offset into the executable's memory image (`address - EBOOT_BASE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,23 +64,505 @@ pub struct Selection {
     pub disabled: Vec<String>,
 }
 
+#[derive(Debug)]
+struct Element {
+    name: String,
+    attrs: BTreeMap<String, String>,
+    text: String,
+    children: Vec<Element>,
+}
+
+impl Element {
+    fn descendants_named<'a>(&'a self, name: &'a str, out: &mut Vec<&'a Element>) {
+        if self.name == name {
+            out.push(self);
+        }
+        for child in &self.children {
+            child.descendants_named(name, out);
+        }
+    }
+}
+
+struct XmlReader<'a> {
+    input: &'a str,
+    pos: usize,
+    elements: usize,
+}
+
+impl<'a> XmlReader<'a> {
+    fn new(input: &'a str) -> Result<Self> {
+        if input.len() > MAX_XML_BYTES {
+            return Err(patch_error("XML patch file exceeds the 8 MiB limit"));
+        }
+        Ok(Self {
+            input,
+            pos: 0,
+            elements: 0,
+        })
+    }
+
+    fn parse(mut self) -> Result<Element> {
+        let mut stack: Vec<Element> = Vec::new();
+        let mut root = None;
+        while self.pos < self.input.len() {
+            if self.rest().starts_with("<!--") {
+                self.skip_until("<!--", "-->", "unterminated XML comment")?;
+            } else if self.rest().starts_with("<?") {
+                self.skip_until("<?", "?>", "unterminated XML processing instruction")?;
+            } else if self.rest().starts_with("<![CDATA[") {
+                let content_start = self.pos + "<![CDATA[".len();
+                let tail = self.input[content_start..]
+                    .find("]]>")
+                    .ok_or_else(|| patch_error("unterminated XML CDATA section"))?;
+                let content_end = content_start + tail;
+                if let Some(parent) = stack.last_mut() {
+                    parent
+                        .text
+                        .push_str(&self.input[content_start..content_end]);
+                } else if !self.input[content_start..content_end].trim().is_empty() {
+                    return Err(patch_error("text outside the XML root element"));
+                }
+                self.pos = content_end + 3;
+            } else if self.rest().starts_with("<!") {
+                return Err(patch_error(
+                    "XML declarations other than comments and CDATA are not supported",
+                ));
+            } else if self.rest().starts_with("</") {
+                self.parse_close(&mut stack, &mut root)?;
+            } else if self.rest().starts_with('<') {
+                self.parse_open(&mut stack, &mut root)?;
+            } else {
+                let end = self
+                    .rest()
+                    .find('<')
+                    .map_or(self.input.len(), |n| self.pos + n);
+                let text = decode_entities(&self.input[self.pos..end])?;
+                if let Some(parent) = stack.last_mut() {
+                    parent.text.push_str(&text);
+                } else if !text.trim().is_empty() {
+                    return Err(patch_error("text outside the XML root element"));
+                }
+                self.pos = end;
+            }
+        }
+        if !stack.is_empty() {
+            return Err(patch_error("unclosed XML element"));
+        }
+        root.ok_or_else(|| patch_error("XML document has no root element"))
+    }
+
+    fn rest(&self) -> &'a str {
+        &self.input[self.pos..]
+    }
+
+    fn skip_space(&mut self) {
+        while let Some(ch) = self.rest().chars().next() {
+            if !ch.is_ascii_whitespace() {
+                break;
+            }
+            self.pos += ch.len_utf8();
+        }
+    }
+
+    fn skip_until(&mut self, opening: &str, closing: &str, message: &str) -> Result<()> {
+        self.pos += opening.len();
+        let close_at = self.input[self.pos..]
+            .find(closing)
+            .map(|n| self.pos + n)
+            .ok_or_else(|| patch_error(message))?;
+        self.pos = close_at + closing.len();
+        Ok(())
+    }
+
+    fn parse_open(&mut self, stack: &mut Vec<Element>, root: &mut Option<Element>) -> Result<()> {
+        self.pos += 1; // '<'
+        let name = self.parse_name()?;
+        self.elements += 1;
+        if self.elements > MAX_XML_ELEMENTS {
+            return Err(patch_error("XML patch file has too many elements"));
+        }
+        let mut attrs = BTreeMap::new();
+        let mut empty = false;
+        loop {
+            self.skip_space();
+            if self.rest().starts_with(">") {
+                self.pos += 1;
+                break;
+            }
+            if self.rest().starts_with("/>") {
+                self.pos += 2;
+                empty = true;
+                break;
+            }
+            if self.pos >= self.input.len() {
+                return Err(patch_error("unterminated XML start tag"));
+            }
+            let key = self.parse_name()?;
+            self.skip_space();
+            if !self.rest().starts_with('=') {
+                return Err(patch_error("XML attribute is missing '='"));
+            }
+            self.pos += 1;
+            self.skip_space();
+            let quote = self
+                .rest()
+                .chars()
+                .next()
+                .ok_or_else(|| patch_error("missing XML attribute value"))?;
+            if quote != '\'' && quote != '"' {
+                return Err(patch_error("XML attribute value must be quoted"));
+            }
+            self.pos += quote.len_utf8();
+            let value_start = self.pos;
+            let value_end = self
+                .rest()
+                .find(quote)
+                .map(|n| self.pos + n)
+                .ok_or_else(|| patch_error("unterminated XML attribute value"))?;
+            let value = decode_entities(&self.input[value_start..value_end])?;
+            self.pos = value_end + quote.len_utf8();
+            if attrs.insert(key, value).is_some() {
+                return Err(patch_error("duplicate XML attribute"));
+            }
+        }
+        if stack.len() >= MAX_XML_DEPTH {
+            return Err(patch_error("XML patch file is nested too deeply"));
+        }
+        let element = Element {
+            name,
+            attrs,
+            text: String::new(),
+            children: Vec::new(),
+        };
+        if empty {
+            Self::attach(element, stack, root)?;
+        } else {
+            stack.push(element);
+        }
+        Ok(())
+    }
+
+    fn parse_close(&mut self, stack: &mut Vec<Element>, root: &mut Option<Element>) -> Result<()> {
+        self.pos += 2;
+        let name = self.parse_name()?;
+        self.skip_space();
+        if !self.rest().starts_with('>') {
+            return Err(patch_error("malformed XML end tag"));
+        }
+        self.pos += 1;
+        let element = stack
+            .pop()
+            .ok_or_else(|| patch_error("unexpected XML end tag"))?;
+        if element.name != name {
+            return Err(patch_error("XML start and end tags do not match"));
+        }
+        Self::attach(element, stack, root)
+    }
+
+    fn attach(element: Element, stack: &mut [Element], root: &mut Option<Element>) -> Result<()> {
+        if let Some(parent) = stack.last_mut() {
+            parent.children.push(element);
+            Ok(())
+        } else if root.is_none() {
+            *root = Some(element);
+            Ok(())
+        } else {
+            Err(patch_error("XML document has multiple root elements"))
+        }
+    }
+
+    fn parse_name(&mut self) -> Result<String> {
+        let n = self
+            .rest()
+            .find(|ch: char| {
+                ch.is_ascii_whitespace() || matches!(ch, '/' | '>' | '=' | '<' | '\'' | '"' | '?')
+            })
+            .unwrap_or_else(|| self.rest().len());
+        if n == 0 {
+            return Err(patch_error("expected XML name"));
+        }
+        let name = self.rest()[..n].to_owned();
+        if !name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_' || ch == ':')
+        {
+            return Err(patch_error("invalid XML name"));
+        }
+        self.pos += n;
+        Ok(name)
+    }
+}
+
+fn decode_entities(text: &str) -> Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i + 1..];
+        let end = rest
+            .find(';')
+            .ok_or_else(|| patch_error("unterminated XML entity"))?;
+        let entity = &rest[..end];
+        let ch = match entity {
+            "amp" => '&',
+            "lt" => '<',
+            "gt" => '>',
+            "apos" => '\'',
+            "quot" => '"',
+            _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                let value = u32::from_str_radix(&entity[2..], 16)
+                    .map_err(|_| patch_error("invalid XML character entity"))?;
+                char::from_u32(value).ok_or_else(|| patch_error("invalid XML character entity"))?
+            }
+            _ if entity.starts_with('#') => {
+                let value = entity[1..]
+                    .parse::<u32>()
+                    .map_err(|_| patch_error("invalid XML character entity"))?;
+                char::from_u32(value).ok_or_else(|| patch_error("invalid XML character entity"))?
+            }
+            _ => return Err(patch_error("unknown XML entity")),
+        };
+        out.push(ch);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// Parse one patch XML file (`file_name` forms the keys). Bad XML is `Error::Patch(..)`; a
 /// patch with an unsupported line type is kept with `writes` empty and a note, so About can
 /// list it as unavailable.
 pub fn parse(file_name: &str, xml: &str) -> Result<Vec<Patch>> {
-    not_built("patches::parse")
+    let root = XmlReader::new(xml)?.parse()?;
+    let mut id_nodes = Vec::new();
+    root.descendants_named("ID", &mut id_nodes);
+    let title_ids = id_nodes
+        .iter()
+        .map(|node| node.text.trim().to_owned())
+        .filter(|id| !id.is_empty())
+        .collect::<Vec<_>>();
+    let mut metadata = Vec::new();
+    root.descendants_named("Metadata", &mut metadata);
+    let mut patches = Vec::with_capacity(metadata.len());
+    for meta in metadata {
+        let name = meta
+            .attrs
+            .get("Name")
+            .cloned()
+            .ok_or_else(|| patch_error("patch metadata is missing Name"))?;
+        let key = format!("{file_name}/{name}");
+        let mut lines = Vec::new();
+        meta.descendants_named("Line", &mut lines);
+        let mut writes = Vec::with_capacity(lines.len());
+        let mut unavailable = None;
+        for line in lines {
+            match encode_line(line) {
+                Ok(write) => writes.push(write),
+                Err(message) => {
+                    unavailable = Some(message);
+                    break;
+                }
+            }
+        }
+        if let Some(reason) = unavailable {
+            writes.clear();
+            patches.push(Patch {
+                key,
+                name,
+                author: meta.attrs.get("Author").cloned().unwrap_or_default(),
+                note: append_unavailable(
+                    meta.attrs.get("Note").map(String::as_str).unwrap_or(""),
+                    &reason,
+                ),
+                title_ids: title_ids.clone(),
+                executable: meta
+                    .attrs
+                    .get("AppElf")
+                    .cloned()
+                    .unwrap_or_else(|| "eboot.bin".to_owned()),
+                app_ver: meta.attrs.get("AppVer").cloned().unwrap_or_default(),
+                enabled_by_default: attr_true(meta, "isEnabled"),
+                writes,
+            });
+        } else {
+            patches.push(Patch {
+                key,
+                name,
+                author: meta.attrs.get("Author").cloned().unwrap_or_default(),
+                note: meta.attrs.get("Note").cloned().unwrap_or_default(),
+                title_ids: title_ids.clone(),
+                executable: meta
+                    .attrs
+                    .get("AppElf")
+                    .cloned()
+                    .unwrap_or_else(|| "eboot.bin".to_owned()),
+                app_ver: meta.attrs.get("AppVer").cloned().unwrap_or_default(),
+                enabled_by_default: attr_true(meta, "isEnabled"),
+                writes,
+            });
+        }
+    }
+    Ok(patches)
+}
+
+fn append_unavailable(note: &str, reason: &str) -> String {
+    if note.is_empty() {
+        format!("Unavailable: {reason}")
+    } else {
+        format!("{note} (Unavailable: {reason})")
+    }
+}
+
+fn attr_true(element: &Element, name: &str) -> bool {
+    element
+        .attrs
+        .get(name)
+        .is_some_and(|value| value.eq_ignore_ascii_case("true"))
+}
+
+fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
+    let kind = line
+        .attrs
+        .get("Type")
+        .ok_or_else(|| "line is missing Type".to_owned())?;
+    if !matches!(
+        kind.as_str(),
+        "bytes" | "bytes16" | "bytes32" | "bytes64" | "float32" | "float64" | "utf8" | "utf16"
+    ) {
+        return Err(format!("unsupported patch type {kind:?}"));
+    }
+    let address = line
+        .attrs
+        .get("Address")
+        .ok_or_else(|| "line is missing Address".to_owned())?;
+    let address = parse_u64(address).map_err(|_| format!("invalid address {address:?}"))?;
+    let offset = address
+        .checked_sub(EBOOT_BASE)
+        .ok_or_else(|| "address is below EBOOT_BASE".to_owned())?;
+    let value = line
+        .attrs
+        .get("Value")
+        .ok_or_else(|| "line is missing Value".to_owned())?;
+    let bytes = match kind.as_str() {
+        "bytes" => decode_hex(value)?,
+        "bytes16" | "bytes32" | "bytes64" => {
+            let width = kind[5..]
+                .parse::<usize>()
+                .map_err(|_| "invalid integer width".to_owned())?
+                / 8;
+            let number =
+                parse_u64(value).map_err(|_| format!("invalid integer value {value:?}"))?;
+            let max = if width == 8 {
+                u64::MAX
+            } else {
+                (1u64 << (width * 8)) - 1
+            };
+            if number > max {
+                return Err(format!("integer value does not fit {kind}"));
+            }
+            number.to_le_bytes()[..width].to_vec()
+        }
+        "float32" => {
+            let value = value
+                .parse::<f32>()
+                .map_err(|_| format!("invalid float32 value {value:?}"))?;
+            value.to_le_bytes().to_vec()
+        }
+        "float64" => {
+            let value = value
+                .parse::<f64>()
+                .map_err(|_| format!("invalid float64 value {value:?}"))?;
+            value.to_le_bytes().to_vec()
+        }
+        "utf8" => {
+            let mut bytes = value.as_bytes().to_vec();
+            bytes.push(0);
+            bytes
+        }
+        "utf16" => {
+            let mut bytes = value
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>();
+            bytes.extend_from_slice(&[0, 0]);
+            bytes
+        }
+        unsupported => return Err(format!("unsupported patch type {unsupported:?}")),
+    };
+    if bytes.is_empty() {
+        return Err("literal patch line has no bytes".to_owned());
+    }
+    Ok(ByteWrite { offset, bytes })
+}
+
+fn parse_u64(value: &str) -> std::result::Result<u64, ()> {
+    let trimmed = value.trim();
+    if let Some(hex) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        u64::from_str_radix(hex, 16).map_err(|_| ())
+    } else {
+        trimmed.parse::<u64>().map_err(|_| ())
+    }
+}
+
+fn decode_hex(value: &str) -> std::result::Result<Vec<u8>, String> {
+    let digits = value
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect::<Vec<_>>();
+    if digits.len() % 2 != 0 {
+        return Err("bytes value has an odd number of hexadecimal digits".to_owned());
+    }
+    digits
+        .chunks_exact(2)
+        .map(|pair| {
+            let hex = pair.iter().collect::<String>();
+            u8::from_str_radix(&hex, 16).map_err(|_| format!("invalid hexadecimal byte {hex:?}"))
+        })
+        .collect()
+}
+
+fn patch_error(message: impl Into<String>) -> Error {
+    Error::Patch(message.into())
 }
 
 /// The patches that may be written to this dump: the file lists no title ids or lists
-/// `target.title_id`, and `executable` and `app_ver` match. With an unknown title id
-/// (`fail_closed`), a file that lists title ids is skipped, never applied on a guess.
-pub fn applicable<'a>(patches: &'a [Patch], target: &Target, fail_closed: bool) -> Vec<&'a Patch> {
-    not_built!("patches::applicable")
+/// `target.title_id`, and `executable` and `app_ver` match. A scoped patch is skipped whenever
+/// the target title id is unknown; a missing identity never authorizes a guess. The final
+/// argument remains for API compatibility; scoped patches always require an exact title id.
+pub fn applicable<'a>(patches: &'a [Patch], target: &Target, _fail_closed: bool) -> Vec<&'a Patch> {
+    patches
+        .iter()
+        .filter(|patch| {
+            if patch.executable != target.executable || patch.app_ver != target.app_ver {
+                return false;
+            }
+            if patch.title_ids.is_empty() {
+                return true;
+            }
+            // A scoped patch must never be authorized by an unknown title id.
+            if target.title_id.is_empty() {
+                return false;
+            }
+            patch.title_ids.iter().any(|id| id == &target.title_id)
+        })
+        .collect()
 }
 
 /// The selected patches among `found`: `Selection` first, else `enabled_by_default`.
 pub fn select<'a>(found: &[&'a Patch], selection: &Selection) -> Vec<&'a Patch> {
-    not_built!("patches::select")
+    found
+        .iter()
+        .copied()
+        .filter(|patch| {
+            selection.enabled.iter().any(|key| key == &patch.key)
+                || (!selection.disabled.iter().any(|key| key == &patch.key)
+                    && patch.enabled_by_default)
+        })
+        .collect()
 }
 
 /// The writes of `selected`, checked to lie inside the executable's loadable `segments`
@@ -84,18 +572,142 @@ pub fn compile(
     selected: &[&Patch],
     segments: &[(u64, u64)],
 ) -> Result<(Vec<ByteWrite>, Vec<String>)> {
-    not_built("patches::compile")
+    let mut writes = Vec::new();
+    let mut notes = Vec::new();
+    for patch in selected {
+        if patch.writes.is_empty() {
+            notes.push(format!(
+                "{}: patch has no supported literal writes",
+                patch.key
+            ));
+            continue;
+        }
+        let valid = patch.writes.iter().all(|write| {
+            let Some(len) = u64::try_from(write.bytes.len()).ok() else {
+                return false;
+            };
+            let Some(end) = write.offset.checked_add(len) else {
+                return false;
+            };
+            segments
+                .iter()
+                .any(|(start, stop)| start <= &write.offset && end <= *stop && start < stop)
+        });
+        if valid {
+            writes.extend(patch.writes.iter().cloned());
+        } else {
+            notes.push(format!(
+                "{}: one or more writes fall outside the executable",
+                patch.key
+            ));
+        }
+    }
+    Ok((writes, notes))
 }
 
-/// The loadable segments of an ELF image as `(vaddr, vaddr + memsz)`.
+/// The loadable segments of an ELF image as `(offset, offset + memsz)` relative to `EBOOT_BASE`.
 pub fn eboot_segments(elf: &[u8]) -> Result<Vec<(u64, u64)>> {
-    not_built("patches::eboot_segments")
+    const ELF_HEADER: usize = 64;
+    const PROGRAM_HEADER: usize = 56;
+    if elf.len() < ELF_HEADER
+        || &elf[..4] != b"\x7fELF"
+        || elf[4] != 2
+        || elf[5] != 1
+        || elf[6] != 1
+    {
+        return Err(patch_error("invalid ELF64 little-endian executable header"));
+    }
+    let phoff = read_u64(elf, 32)?;
+    let phentsize = read_u16(elf, 54)? as usize;
+    let phnum = read_u16(elf, 56)? as usize;
+    if phentsize < PROGRAM_HEADER || phnum == 0 {
+        return Err(patch_error("ELF has no valid program-header table"));
+    }
+    let table_start = usize::try_from(phoff)
+        .map_err(|_| patch_error("ELF program-header offset is too large"))?;
+    let table_bytes = phentsize
+        .checked_mul(phnum)
+        .ok_or_else(|| patch_error("ELF program-header table overflows"))?;
+    let table_end = table_start
+        .checked_add(table_bytes)
+        .ok_or_else(|| patch_error("ELF program-header table overflows"))?;
+    if table_end > elf.len() {
+        return Err(patch_error("ELF program-header table is truncated"));
+    }
+    let mut segments = Vec::new();
+    for index in 0..phnum {
+        let at = table_start + index * phentsize;
+        if read_u32(elf, at)? != 1 {
+            continue;
+        } // PT_LOAD
+        let file_offset = read_u64(elf, at + 8)?;
+        let vaddr = read_u64(elf, at + 16)?;
+        let filesz = read_u64(elf, at + 32)?;
+        let memsz = read_u64(elf, at + 40)?;
+        if filesz > memsz {
+            return Err(patch_error("ELF loadable segment filesz exceeds memsz"));
+        }
+        let file_end = file_offset
+            .checked_add(filesz)
+            .ok_or_else(|| patch_error("ELF loadable segment file range overflows"))?;
+        if file_end > elf.len() as u64 {
+            return Err(patch_error("ELF loadable segment exceeds the file"));
+        }
+        let absolute_end = vaddr
+            .checked_add(memsz)
+            .ok_or_else(|| patch_error("ELF loadable segment address range overflows"))?;
+        let start = vaddr
+            .checked_sub(EBOOT_BASE)
+            .ok_or_else(|| patch_error("ELF loadable segment starts below EBOOT_BASE"))?;
+        let end = absolute_end
+            .checked_sub(EBOOT_BASE)
+            .ok_or_else(|| patch_error("ELF loadable segment address range overflows"))?;
+        if memsz == 0 {
+            continue;
+        }
+        segments.push((start, end));
+    }
+    if segments.is_empty() {
+        return Err(patch_error("ELF has no non-empty loadable segments"));
+    }
+    segments.sort_unstable();
+    Ok(segments)
+}
+
+fn read_u16(data: &[u8], at: usize) -> Result<u16> {
+    let bytes = data
+        .get(at..at + 2)
+        .ok_or_else(|| patch_error("truncated ELF header"))?;
+    Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+}
+fn read_u32(data: &[u8], at: usize) -> Result<u32> {
+    let bytes = data
+        .get(at..at + 4)
+        .ok_or_else(|| patch_error("truncated ELF program header"))?;
+    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+fn read_u64(data: &[u8], at: usize) -> Result<u64> {
+    let bytes = data
+        .get(at..at + 8)
+        .ok_or_else(|| patch_error("truncated ELF header"))?;
+    Ok(u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]))
 }
 
 /// `patches.bin` for the loader: `PATCHES_MAGIC`, `EBOOT_BASE` and the count (little-endian
 /// u64), then per write its offset, length and bytes. Empty `writes` is a valid file.
 pub fn to_patches_bin(writes: &[ByteWrite]) -> Vec<u8> {
-    not_built!("patches::to_patches_bin")
+    let mut output = Vec::new();
+    output.extend_from_slice(&PATCHES_MAGIC);
+    output.extend_from_slice(&EBOOT_BASE.to_le_bytes());
+    output.extend_from_slice(&(writes.len() as u64).to_le_bytes());
+    for write in writes {
+        output.extend_from_slice(&write.offset.to_le_bytes());
+        output.extend_from_slice(&(write.bytes.len() as u64).to_le_bytes());
+        output.extend_from_slice(&write.bytes);
+    }
+    output
 }
 
 /// One line of the About page's patch list.
@@ -115,10 +727,295 @@ pub struct AboutEntry {
 /// The patches for About: every parsed patch with its name, author and whether it applies to
 /// this dump, so unavailable ones are listed too.
 pub fn about_list(patches: &[Patch], target: &Target, selection: &Selection) -> Vec<AboutEntry> {
-    not_built!("patches::about_list")
+    patches
+        .iter()
+        .map(|patch| {
+            let identity_matches = applicable(std::slice::from_ref(patch), target, true).len() == 1;
+            let has_writes = !patch.writes.is_empty();
+            let available = identity_matches
+                && has_writes
+                && !patch.note.starts_with("Unavailable:")
+                && !patch.note.contains("(Unavailable:");
+            let enabled = selection.enabled.iter().any(|key| key == &patch.key)
+                || (!selection.disabled.iter().any(|key| key == &patch.key)
+                    && patch.enabled_by_default);
+            let why_not = if available {
+                String::new()
+            } else if !identity_matches {
+                "This patch is for a different title, executable or revision.".to_owned()
+            } else if let Some(reason) = patch.note.split("Unavailable:").nth(1) {
+                reason.trim_end_matches(')').trim().to_owned()
+            } else {
+                "This patch has no supported literal writes.".to_owned()
+            };
+            AboutEntry {
+                key: patch.key.clone(),
+                name: patch.name.clone(),
+                author: patch.author.clone(),
+                enabled,
+                available,
+                why_not,
+            }
+        })
+        .collect()
 }
 
 /// The game a patch's `AppElf` belongs to, if any.
 pub fn game_of(patch: &Patch) -> Option<Game> {
     Game::from_executable(&patch.executable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const XML: &str = r#"<?xml version="1.0"?>
+<Patches><TitleID><ID>CUSA02320</ID><ID>CUSA02343</ID></TitleID>
+<Metadata Name="Literals" Author="A &amp; B" AppVer="01.02" isEnabled="true">
+<PatchList>
+<Line Type="bytes" Address="0x00401000" Value="01 02"/>
+<Line Type="bytes16" Address="0x00401002" Value="0x1234"/>
+<Line Type="bytes32" Address="0x00401004" Value="305419896"/>
+<Line Type="bytes64" Address="0x00401008" Value="0x0102030405060708"/>
+<Line Type="float32" Address="0x00401010" Value="1.5"/>
+<Line Type="float64" Address="0x00401014" Value="-2.25"/>
+<Line Type="utf8" Address="0x0040101c" Value="A&amp;B"/>
+<Line Type="utf16" Address="0x00401020" Value="Hi"/>
+</PatchList></Metadata></Patches>"#;
+
+    fn target() -> Target {
+        Target {
+            title_id: "CUSA02320".into(),
+            executable: "eboot.bin".into(),
+            app_ver: "01.02".into(),
+        }
+    }
+
+    #[test]
+    fn parses_all_literal_types_and_entities() {
+        let parsed = parse("community.xml", XML).unwrap();
+        assert_eq!(parsed.len(), 1);
+        let patch = &parsed[0];
+        assert_eq!(patch.key, "community.xml/Literals");
+        assert_eq!(patch.author, "A & B");
+        assert_eq!(patch.title_ids, ["CUSA02320", "CUSA02343"]);
+        assert_eq!(
+            patch
+                .writes
+                .iter()
+                .map(|w| w.bytes.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec![1, 2],
+                0x1234u16.to_le_bytes().to_vec(),
+                0x12345678u32.to_le_bytes().to_vec(),
+                0x0102030405060708u64.to_le_bytes().to_vec(),
+                1.5f32.to_le_bytes().to_vec(),
+                (-2.25f64).to_le_bytes().to_vec(),
+                b"A&B\0".to_vec(),
+                vec![b'H', 0, b'i', 0, 0, 0],
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_xml_is_patch_error() {
+        assert!(matches!(
+            parse("bad.xml", "<Patches><Metadata></Patches>"),
+            Err(Error::Patch(_))
+        ));
+        assert!(matches!(
+            parse("bad.xml", "<Patches>&unknown;</Patches>"),
+            Err(Error::Patch(_))
+        ));
+    }
+
+    #[test]
+    fn unsupported_or_malformed_line_discards_every_write() {
+        let xml = r#"<Patches><Metadata Name="Mask" AppVer="01.02"><Line Type="bytes" Address="0x401000" Value="90"/><Line Type="mask" Address="0x401001" Value="90 ??"/></Metadata></Patches>"#;
+        let patch = &parse("m.xml", xml).unwrap()[0];
+        assert!(patch.writes.is_empty());
+        assert!(patch.note.contains("unsupported patch type"));
+        assert!(
+            !about_list(
+                std::slice::from_ref(patch),
+                &Target {
+                    title_id: String::new(),
+                    executable: "eboot.bin".into(),
+                    app_ver: "01.02".into()
+                },
+                &Selection::default()
+            )[0]
+            .available
+        );
+    }
+
+    #[test]
+    fn selection_and_target_require_exact_identity() {
+        let patches = parse("community.xml", XML).unwrap();
+        let target = target();
+        assert_eq!(applicable(&patches, &target, true).len(), 1);
+        let mut wrong = target.clone();
+        wrong.title_id = "CUSA00000".into();
+        assert!(applicable(&patches, &wrong, true).is_empty());
+        wrong = target.clone();
+        wrong.executable = "big2-ps4_Shipping.elf".into();
+        assert!(applicable(&patches, &wrong, true).is_empty());
+        wrong = target.clone();
+        wrong.app_ver = "01.00".into();
+        assert!(applicable(&patches, &wrong, true).is_empty());
+        wrong = target.clone();
+        wrong.title_id.clear();
+        assert!(applicable(&patches, &wrong, true).is_empty());
+        assert!(applicable(&patches, &wrong, false).is_empty());
+        let found = applicable(&patches, &target, true);
+        assert_eq!(
+            select(
+                &found,
+                &Selection {
+                    enabled: vec![],
+                    disabled: vec![patches[0].key.clone()]
+                }
+            )
+            .len(),
+            0
+        );
+        assert_eq!(
+            select(
+                &found,
+                &Selection {
+                    enabled: vec![patches[0].key.clone()],
+                    disabled: vec![patches[0].key.clone()]
+                }
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn compile_refuses_entire_patch_for_bounds_or_overflow() {
+        let patch = Patch {
+            key: "x/P".into(),
+            name: "P".into(),
+            author: String::new(),
+            note: String::new(),
+            title_ids: vec![],
+            executable: "eboot.bin".into(),
+            app_ver: "01.02".into(),
+            enabled_by_default: true,
+            writes: vec![
+                ByteWrite {
+                    offset: 0,
+                    bytes: vec![1],
+                },
+                ByteWrite {
+                    offset: 9,
+                    bytes: vec![2],
+                },
+            ],
+        };
+        let (writes, notes) = compile(&[&patch], &[(0, 8)]).unwrap();
+        assert!(writes.is_empty());
+        assert_eq!(notes.len(), 1);
+        let overflowing = Patch {
+            writes: vec![ByteWrite {
+                offset: u64::MAX,
+                bytes: vec![1],
+            }],
+            ..patch
+        };
+        assert!(compile(&[&overflowing], &[(0, u64::MAX)])
+            .unwrap()
+            .0
+            .is_empty());
+    }
+
+    fn synthetic_elf(
+        vaddr: u64,
+        filesz: u64,
+        memsz: u64,
+        file_offset: u64,
+        file_len: usize,
+    ) -> Vec<u8> {
+        let segment_end = if file_offset <= 1024 && filesz <= 1024 {
+            (file_offset + filesz) as usize
+        } else {
+            0
+        };
+        let mut elf = vec![0u8; file_len.max(120).max(segment_end)];
+        elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+        elf[64..68].copy_from_slice(&1u32.to_le_bytes());
+        elf[72..80].copy_from_slice(&file_offset.to_le_bytes());
+        elf[80..88].copy_from_slice(&vaddr.to_le_bytes());
+        elf[96..104].copy_from_slice(&filesz.to_le_bytes());
+        elf[104..112].copy_from_slice(&memsz.to_le_bytes());
+        elf
+    }
+
+    #[test]
+    fn elf_segments_are_base_relative_and_validate_ranges() {
+        assert_eq!(
+            eboot_segments(&synthetic_elf(EBOOT_BASE + 0x1000, 0x20, 0x40, 120, 120)).unwrap(),
+            vec![(0x1000, 0x1040)]
+        );
+        assert!(matches!(
+            eboot_segments(b"not an ELF"),
+            Err(Error::Patch(_))
+        ));
+        assert!(eboot_segments(&synthetic_elf(EBOOT_BASE + 0x1000, 0x20, 0x10, 120, 120)).is_err());
+        assert!(eboot_segments(&synthetic_elf(
+            EBOOT_BASE + 0x1000,
+            0x20,
+            0x20,
+            u64::MAX - 1,
+            120
+        ))
+        .is_err());
+        assert!(eboot_segments(&synthetic_elf(u64::MAX - 2, 1, 8, 120, 120)).is_err());
+        let segments =
+            eboot_segments(&synthetic_elf(EBOOT_BASE + 0x1000, 0x20, 0x40, 120, 120)).unwrap();
+        let patch = Patch {
+            key: "x/P".into(),
+            name: "P".into(),
+            author: String::new(),
+            note: String::new(),
+            title_ids: vec![],
+            executable: "eboot.bin".into(),
+            app_ver: "01.02".into(),
+            enabled_by_default: true,
+            writes: vec![ByteWrite {
+                offset: 0x103e,
+                bytes: vec![1, 2],
+            }],
+        };
+        assert_eq!(compile(&[&patch], &segments).unwrap().0.len(), 1);
+        let outside = Patch {
+            writes: vec![ByteWrite {
+                offset: 0x1040,
+                bytes: vec![1],
+            }],
+            ..patch
+        };
+        assert!(compile(&[&outside], &segments).unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn patches_bin_has_loader_header_and_empty_list() {
+        let empty = to_patches_bin(&[]);
+        assert_eq!(&empty[..8], &PATCHES_MAGIC);
+        assert_eq!(&empty[8..16], &EBOOT_BASE.to_le_bytes());
+        assert_eq!(&empty[16..24], &0u64.to_le_bytes());
+        let blob = to_patches_bin(&[ByteWrite {
+            offset: 3,
+            bytes: vec![0xaa, 0xbb],
+        }]);
+        assert_eq!(&blob[16..24], &1u64.to_le_bytes());
+        assert_eq!(&blob[24..32], &3u64.to_le_bytes());
+        assert_eq!(&blob[32..40], &2u64.to_le_bytes());
+        assert_eq!(&blob[40..], &[0xaa, 0xbb]);
+    }
 }
