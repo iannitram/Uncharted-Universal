@@ -223,6 +223,37 @@ mod tests {
     }
 
     #[test]
+    fn unset_required_values_match_empty_ones_and_empty_xdg_overrides_fall_back() {
+        assert_eq!(
+            vars(Os::Linux, &[]).unwrap_err(),
+            Error::Env("HOME is not set".into())
+        );
+        assert_eq!(
+            vars(Os::Mac, &[]).unwrap_err(),
+            Error::Env("HOME is not set".into())
+        );
+        assert_eq!(
+            vars(
+                Os::Windows,
+                &[("LOCALAPPDATA", "C:\\data"), ("APPDATA", "C:\\roaming")]
+            )
+            .unwrap_err(),
+            Error::Env("USERPROFILE is not set".into())
+        );
+        let fallback = vars(
+            Os::Linux,
+            &[
+                ("HOME", "/home/player"),
+                ("XDG_DATA_HOME", ""),
+                ("XDG_CONFIG_HOME", ""),
+            ],
+        )
+        .unwrap();
+        assert_eq!(fallback.data, PathBuf::from("/home/player/.local/share"));
+        assert_eq!(fallback.config, PathBuf::from("/home/player/.config"));
+    }
+
+    #[test]
     fn mobile_folders_are_supplied_without_reading_environment() {
         for os in [Os::Ios, Os::Android] {
             let result =
