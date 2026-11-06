@@ -309,6 +309,16 @@ fn xml_char(value: u32) -> Result<char> {
         .ok_or_else(|| patch_error("invalid XML character entity"))
 }
 
+/// A numeric character reference: plain digits only (no sign), then an XML 1.0 character.
+fn numeric_entity(digits: &str, radix: u32) -> Result<char> {
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
+        return Err(patch_error("invalid XML character entity"));
+    }
+    let value = u32::from_str_radix(digits, radix)
+        .map_err(|_| patch_error("invalid XML character entity"))?;
+    xml_char(value)
+}
+
 fn decode_entities(text: &str) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -326,16 +336,9 @@ fn decode_entities(text: &str) -> Result<String> {
             "apos" => '\'',
             "quot" => '"',
             _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-                let value = u32::from_str_radix(&entity[2..], 16)
-                    .map_err(|_| patch_error("invalid XML character entity"))?;
-                xml_char(value)?
+                numeric_entity(&entity[2..], 16)?
             }
-            _ if entity.starts_with('#') => {
-                let value = entity[1..]
-                    .parse::<u32>()
-                    .map_err(|_| patch_error("invalid XML character entity"))?;
-                xml_char(value)?
-            }
+            _ if entity.starts_with('#') => numeric_entity(&entity[1..], 10)?,
             _ => return Err(patch_error("unknown XML entity")),
         };
         out.push(ch);
@@ -479,15 +482,13 @@ fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
             number.to_le_bytes()[..width].to_vec()
         }
         "float32" => {
-            let value = value
-                .parse::<f32>()
-                .map_err(|_| format!("invalid float32 value {value:?}"))?;
+            let parsed = value.parse::<f32>().ok().filter(|v| v.is_finite());
+            let value = parsed.ok_or_else(|| format!("invalid float32 value {value:?}"))?;
             value.to_le_bytes().to_vec()
         }
         "float64" => {
-            let value = value
-                .parse::<f64>()
-                .map_err(|_| format!("invalid float64 value {value:?}"))?;
+            let parsed = value.parse::<f64>().ok().filter(|v| v.is_finite());
+            let value = parsed.ok_or_else(|| format!("invalid float64 value {value:?}"))?;
             value.to_le_bytes().to_vec()
         }
         "utf8" => {
@@ -518,14 +519,18 @@ fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
 
 fn parse_u64(value: &str) -> std::result::Result<u64, ()> {
     let trimmed = value.trim();
-    if let Some(hex) = trimmed
+    let (digits, radix) = match trimmed
         .strip_prefix("0x")
         .or_else(|| trimmed.strip_prefix("0X"))
     {
-        u64::from_str_radix(hex, 16).map_err(|_| ())
-    } else {
-        trimmed.parse::<u64>().map_err(|_| ())
+        Some(hex) => (hex, 16),
+        None => (trimmed, 10),
+    };
+    // `from_str_radix` accepts a leading sign; a literal must be plain digits.
+    if digits.is_empty() || !digits.chars().all(|ch| ch.is_digit(radix)) {
+        return Err(());
     }
+    u64::from_str_radix(digits, radix).map_err(|_| ())
 }
 
 fn decode_hex(value: &str) -> std::result::Result<Vec<u8>, String> {
@@ -535,6 +540,9 @@ fn decode_hex(value: &str) -> std::result::Result<Vec<u8>, String> {
         .collect::<Vec<_>>();
     if digits.len() % 2 != 0 {
         return Err("bytes value has an odd number of hexadecimal digits".to_owned());
+    }
+    if !digits.iter().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("bytes value has a non-hexadecimal character".to_owned());
     }
     digits
         .as_slice()
@@ -557,6 +565,10 @@ fn patch_error(message: impl Into<String>) -> Error {
 /// the target title id is unknown; a missing identity never authorizes a guess. The final
 /// argument remains for API compatibility; scoped patches always require an exact title id.
 pub fn applicable<'a>(patches: &'a [Patch], target: &Target, _fail_closed: bool) -> Vec<&'a Patch> {
+    // An unknown executable or revision matches nothing: a missing identity never authorizes a guess.
+    if target.executable.is_empty() || target.app_ver.is_empty() {
+        return Vec::new();
+    }
     patches
         .iter()
         .filter(|patch| {
@@ -1167,5 +1179,90 @@ mod tests {
         assert_eq!(&blob[24..32], &3u64.to_le_bytes());
         assert_eq!(&blob[32..40], &2u64.to_le_bytes());
         assert_eq!(&blob[40..], &[0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn missing_revision_or_executable_never_matches() {
+        let unversioned = parse(
+            "nover.xml",
+            "<Patches><Metadata Name=\"NoVer\"><Line Type=\"bytes\" Address=\"0x401000\" Value=\"90\"/></Metadata></Patches>",
+        )
+        .unwrap();
+        let unknown_revision = Target {
+            title_id: String::new(),
+            executable: "eboot.bin".into(),
+            app_ver: String::new(),
+        };
+        assert!(applicable(&unversioned, &unknown_revision, true).is_empty());
+        assert!(applicable(
+            &unversioned,
+            &Target {
+                app_ver: String::new(),
+                ..target()
+            },
+            true
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn unscoped_patch_applies_only_to_its_executable_and_revision() {
+        let unscoped = parse(
+            "u.xml",
+            "<Patches><Metadata Name=\"U\" AppVer=\"01.02\"><Line Type=\"bytes\" Address=\"0x401000\" Value=\"90\"/></Metadata></Patches>",
+        )
+        .unwrap();
+        assert_eq!(applicable(&unscoped, &target(), true).len(), 1);
+        assert!(applicable(
+            &unscoped,
+            &Target {
+                executable: "big2-ps4_Shipping.elf".into(),
+                ..target()
+            },
+            true
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn integer_literals_must_fit_their_width() {
+        for (kind, value, fits) in [
+            ("bytes16", "0xFFFF", true),
+            ("bytes16", "0x10000", false),
+            ("bytes32", "0xFFFFFFFF", true),
+            ("bytes32", "0x100000000", false),
+            ("bytes64", "0xFFFFFFFFFFFFFFFF", true),
+            ("bytes64", "0x10000000000000000", false),
+        ] {
+            let xml = format!(
+                "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"{kind}\" Address=\"0x401000\" Value=\"{value}\"/></Metadata></Patches>"
+            );
+            let patch = &parse("w.xml", &xml).unwrap()[0];
+            assert_eq!(!patch.writes.is_empty(), fits, "{kind} {value}");
+        }
+    }
+
+    #[test]
+    fn numeric_literals_reject_signs_and_non_finite_floats() {
+        assert!(decode_hex("+f").is_err());
+        assert!(decode_hex("0x").is_err());
+        assert!(parse_u64("+1").is_err());
+        assert!(parse_u64("0x").is_err());
+        assert!(parse_u64("-1").is_err());
+        let signed_entity = "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#+65;\"/></Metadata></Patches>";
+        assert!(matches!(
+            parse("bad.xml", signed_entity),
+            Err(Error::Patch(_))
+        ));
+        let infinite = "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"float32\" Address=\"0x401000\" Value=\"inf\"/></Metadata></Patches>";
+        assert!(parse("f.xml", infinite).unwrap()[0].writes.is_empty());
+    }
+
+    #[test]
+    fn elf_loadable_segment_must_lie_in_file_and_above_base() {
+        assert!(
+            eboot_segments(&synthetic_elf(EBOOT_BASE + 0x1000, 0x20, 0x40, 2000, 120)).is_err()
+        );
+        assert!(eboot_segments(&synthetic_elf(0x1000, 0, 0x40, 0, 120)).is_err());
     }
 }
