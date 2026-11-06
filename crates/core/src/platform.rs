@@ -5,7 +5,7 @@
 //!
 //! `Os`, `Vars` and `AppDirs` are copied from iannitram/totk-native (MIT) and renamed.
 
-use crate::error::{not_built, Result};
+use crate::error::{Error, Result};
 use std::path::PathBuf;
 
 /// A device family the launcher builds a port for (SPEC.md platforms).
@@ -83,7 +83,186 @@ impl Vars {
     /// A missing required variable is `Error::Env("<NAME> is not set")`, first one missing
     /// in the order above.
     pub fn from_lookup(os: Os, var: impl Fn(&str) -> Option<String>) -> Result<Vars> {
-        not_built("platform::Vars::from_lookup")
+        fn required(var: &impl Fn(&str) -> Option<String>, name: &str) -> Result<PathBuf> {
+            var(name)
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| Error::Env(format!("{name} is not set")))
+        }
+
+        match os {
+            Os::Linux => {
+                let home = required(&var, "HOME")?;
+                let data = var("XDG_DATA_HOME")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".local/share"));
+                let config = var("XDG_CONFIG_HOME")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".config"));
+                Ok(Vars { home, data, config })
+            }
+            Os::Windows => Ok(Vars {
+                home: required(&var, "USERPROFILE")?,
+                data: required(&var, "LOCALAPPDATA")?,
+                config: required(&var, "APPDATA")?,
+            }),
+            Os::Mac => {
+                let home = required(&var, "HOME")?;
+                let support = home.join("Library/Application Support");
+                Ok(Vars {
+                    home,
+                    data: support.clone(),
+                    config: support,
+                })
+            }
+            Os::Ios | Os::Android => Err(Error::Unsupported(format!(
+                "the app supplies its folders on {}",
+                os.key()
+            ))),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Os, Vars};
+    use crate::error::Error;
+    use std::{collections::HashMap, path::PathBuf};
+
+    fn vars(os: Os, values: &[(&str, &str)]) -> crate::error::Result<Vars> {
+        let values: HashMap<_, _> = values
+            .iter()
+            .map(|(key, value)| (*key, (*value).to_owned()))
+            .collect();
+        Vars::from_lookup(os, |key| values.get(key).cloned())
+    }
+
+    #[test]
+    fn linux_uses_xdg_overrides_and_home_fallbacks() {
+        let overridden = vars(
+            Os::Linux,
+            &[
+                ("HOME", "/home/player"),
+                ("XDG_DATA_HOME", "/data"),
+                ("XDG_CONFIG_HOME", "/config"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(overridden.home, PathBuf::from("/home/player"));
+        assert_eq!(overridden.data, PathBuf::from("/data"));
+        assert_eq!(overridden.config, PathBuf::from("/config"));
+
+        let fallback = vars(
+            Os::Linux,
+            &[("HOME", "/home/player"), ("XDG_DATA_HOME", "")],
+        )
+        .unwrap();
+        assert_eq!(fallback.data, PathBuf::from("/home/player/.local/share"));
+        assert_eq!(fallback.config, PathBuf::from("/home/player/.config"));
+    }
+
+    #[test]
+    fn windows_requires_each_standard_folder_variable() {
+        let folders = vars(
+            Os::Windows,
+            &[
+                ("USERPROFILE", "C:\\Users\\player"),
+                ("LOCALAPPDATA", "C:\\Users\\player\\AppData\\Local"),
+                ("APPDATA", "C:\\Users\\player\\AppData\\Roaming"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(folders.home, PathBuf::from("C:\\Users\\player"));
+        assert_eq!(
+            folders.data,
+            PathBuf::from("C:\\Users\\player\\AppData\\Local")
+        );
+        assert_eq!(
+            folders.config,
+            PathBuf::from("C:\\Users\\player\\AppData\\Roaming")
+        );
+    }
+
+    #[test]
+    fn mac_uses_application_support_for_data_and_config() {
+        let folders = vars(Os::Mac, &[("HOME", "/Users/player")]).unwrap();
+        let support = PathBuf::from("/Users/player/Library/Application Support");
+        assert_eq!(folders.home, PathBuf::from("/Users/player"));
+        assert_eq!(folders.data, support);
+        assert_eq!(folders.config, folders.data);
+    }
+
+    #[test]
+    fn empty_required_values_are_reported_in_contract_order() {
+        assert_eq!(
+            vars(Os::Linux, &[("HOME", "")]).unwrap_err(),
+            Error::Env("HOME is not set".into())
+        );
+        assert_eq!(
+            vars(
+                Os::Windows,
+                &[("USERPROFILE", "C:\\Users\\player"), ("LOCALAPPDATA", "")]
+            )
+            .unwrap_err(),
+            Error::Env("LOCALAPPDATA is not set".into())
+        );
+        assert_eq!(
+            vars(
+                Os::Windows,
+                &[
+                    ("USERPROFILE", "C:\\Users\\player"),
+                    ("LOCALAPPDATA", "C:\\data"),
+                    ("APPDATA", "")
+                ]
+            )
+            .unwrap_err(),
+            Error::Env("APPDATA is not set".into())
+        );
+    }
+
+    #[test]
+    fn unset_required_values_match_empty_ones_and_empty_xdg_overrides_fall_back() {
+        assert_eq!(
+            vars(Os::Linux, &[]).unwrap_err(),
+            Error::Env("HOME is not set".into())
+        );
+        assert_eq!(
+            vars(Os::Mac, &[]).unwrap_err(),
+            Error::Env("HOME is not set".into())
+        );
+        assert_eq!(
+            vars(
+                Os::Windows,
+                &[("LOCALAPPDATA", "C:\\data"), ("APPDATA", "C:\\roaming")]
+            )
+            .unwrap_err(),
+            Error::Env("USERPROFILE is not set".into())
+        );
+        let fallback = vars(
+            Os::Linux,
+            &[
+                ("HOME", "/home/player"),
+                ("XDG_DATA_HOME", ""),
+                ("XDG_CONFIG_HOME", ""),
+            ],
+        )
+        .unwrap();
+        assert_eq!(fallback.data, PathBuf::from("/home/player/.local/share"));
+        assert_eq!(fallback.config, PathBuf::from("/home/player/.config"));
+    }
+
+    #[test]
+    fn mobile_folders_are_supplied_without_reading_environment() {
+        for os in [Os::Ios, Os::Android] {
+            let result =
+                Vars::from_lookup(os, |_| panic!("mobile lookup must not read environment"));
+            assert_eq!(
+                result.unwrap_err(),
+                Error::Unsupported(format!("the app supplies its folders on {}", os.key()))
+            );
+        }
     }
 }
 

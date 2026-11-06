@@ -2,9 +2,9 @@
 //! constant data reads back. Delete a case here when its module is built (its own tests
 //! replace it).
 
-use uncharted_core::error::{Error, Result};
+use uncharted_core::error::Error;
 use uncharted_core::games::{self, Game};
-use uncharted_core::platform::{AppDirs, Os, Vars};
+use uncharted_core::platform::{AppDirs, Os};
 use uncharted_core::recipe::{self, Hub};
 use uncharted_core::{artwork, cheats};
 
@@ -30,19 +30,12 @@ fn error_codes_are_stable() {
 }
 
 #[test]
-fn vars_come_from_a_lookup_closure() {
-    let result: Result<Vars> = Vars::from_lookup(Os::Linux, |_| None);
-    assert_eq!(result.unwrap_err().code(), "not_built");
-}
-
-#[test]
 fn app_dirs_sit_under_uncharted_universal() {
-    let vars = Vars {
+    let dirs = AppDirs::new(&uncharted_core::platform::Vars {
         home: "/h".into(),
         data: "/h/data".into(),
         config: "/h/config".into(),
-    };
-    let dirs = AppDirs::new(&vars);
+    });
     assert!(dirs.config.ends_with("uncharted-universal"));
     assert!(dirs.install("u2").ends_with("installs/u2"));
 }
@@ -62,7 +55,7 @@ fn games_and_their_executables() {
     );
     assert_eq!(
         games::check_revision(Game::U1, "01.00").unwrap_err().code(),
-        "not_built"
+        "wrong_revision"
     );
 }
 
