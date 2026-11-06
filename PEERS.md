@@ -55,3 +55,9 @@ Each is an issue labelled `from-peer` (adopt: port their code; learn: their idea
 | drop-ours (theirs) | FSR 3.1 protected-memory patch: we already carry it (#114) | drakolordx7 6bc6ea38e |
 
 Upstream issues brought in with an `Upstream:` line: #142 (DLSS probe on GPUs without DLSS), #143 (Intel HD 630 extension), #144 (RDNA 4 black weapons), #145 (Steam Input on non-Steam shortcuts), #146 (zh-CN). Upstream links added to our existing #10, #41, #114, #115, #116, #117, #118, #124 and #126.
+
+## Supporting crates
+
+| Crate | Role | Version and licence |
+|---|---|---|
+| [RazrFalcon/roxmltree](https://github.com/RazrFalcon/roxmltree) | Read-only parser for third-party patch XML; DTD expansion and external entity resolution are disabled | Pin 0.21.1; [crate metadata](https://docs.rs/crate/roxmltree/0.21.1/source/Cargo.toml.orig) declares `MIT OR Apache-2.0`; use the [MIT option](https://github.com/RazrFalcon/roxmltree/blob/master/LICENSE-MIT). The adapter validates numeric references because the parser maps invalid Unicode scalar references (such as surrogates) to U+FFFD. |

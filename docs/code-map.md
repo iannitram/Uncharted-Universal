@@ -68,7 +68,7 @@ flowchart TD
 | `content_profile` | present: offline metadata conversion and serialization, covered by synthetic tests; not wired to runtime | `from_sfo`, `to_bin` (the exact 28-byte `BBCONT01` record), `to_json` (pretty metadata with trailing newline); `Sku` is a probe setting, not a licence check | `scripts/content_profile.py` | M7, M20 |
 | `link` | stub | `link_modules` and `link_libc`: module and libc import tables for the boot image | `scripts/link_modules.py`, `scripts/link_libc.py` | M7, M20 |
 | `prepare` | stub | `prepare` a game folder into an install: boot image, linked modules, patches, render size; returns `InstallManifest` | `scripts/prepare.py` | M7, M11, M20 |
-| `patches` | stub | third-party patches per executable (`APP_VER` and title decide): `parse`, `applicable`, `select`, `compile` to the patch image, `about_list` for About | `scripts/patches.py` | M7, M8, M20 |
+| `patches` | present | third-party literal patches per executable (`APP_VER` and title decide): `roxmltree` parse (8 MiB, 100,000-node, 64-depth bounds; DTD expansion and external resolution disabled), `applicable`, `select`, bounds-checked `compile` to the patch image, `about_list` for About; unsupported patch lines are retained as unavailable and discarded whole | external-patch half of `scripts/patches.py` | M7, M8, M20 |
 | `mods` | stub | mod folder layouts (`dvdroot_ps4`, `app0/...`), overlay list for the runtime's file VFS | `scripts/mods.py` | M7, M20 |
 | `cheats` | stub | cheat table `parse`, `compile` against the executable's hash, `apply` | `scripts/cheats.py` | M7, M20 |
 | `trophies` | stub | the `.trp` reader and unlock log, read for the runtime (showing trophies in the launcher is after 1.0, #12) | `scripts/trophies.py` | M7, M20 |
