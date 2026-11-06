@@ -120,7 +120,7 @@ pub fn analyse(source: &dyn Source) -> Result<Info> {
     table.resize(table_len, 0);
     read(source, table_offset, &mut table)?;
     let mut raw = Vec::with_capacity(entry_count as usize);
-    for record in table.chunks_exact(ENTRY_SIZE as usize) {
+    for record in table.as_chunks::<{ ENTRY_SIZE as usize }>().0 {
         let id = be32(record, 0)?;
         let name_offset = be32(record, 4)?;
         let flags = be32(record, 8)?;
