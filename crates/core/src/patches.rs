@@ -224,7 +224,7 @@ impl<'a> XmlReader<'a> {
                 .find(quote)
                 .map(|n| self.pos + n)
                 .ok_or_else(|| patch_error("unterminated XML attribute value"))?;
-            let value = decode_entities(&self.input[value_start..value_end])?;
+            let value = decode_attribute_value(&self.input[value_start..value_end])?;
             self.pos = value_end + quote.len_utf8();
             if attrs.insert(key, value).is_some() {
                 return Err(patch_error("duplicate XML attribute"));
@@ -317,6 +317,39 @@ fn numeric_entity(digits: &str, radix: u32) -> Result<char> {
     let value = u32::from_str_radix(digits, radix)
         .map_err(|_| patch_error("invalid XML character entity"))?;
     xml_char(value)
+}
+
+fn decode_attribute_value(text: &str) -> Result<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    while pos < text.len() {
+        let rest = &text[pos..];
+        let ch = rest.chars().next().expect("position is before end");
+        if ch == '&' {
+            let end = rest
+                .find(';')
+                .ok_or_else(|| patch_error("unterminated XML entity"))?;
+            let after_entity = end + 1;
+            out.push_str(&decode_entities(&rest[..after_entity])?);
+            pos += after_entity;
+        } else if ch == '\r' {
+            // XML end-of-line handling folds CRLF (and lone CR) to LF before attribute
+            // whitespace normalization. Therefore a raw CRLF pair contributes one space.
+            pos += if rest.starts_with("\r\n") {
+                2
+            } else {
+                ch.len_utf8()
+            };
+            out.push(' ');
+        } else if matches!(ch, '\n' | '\t') {
+            out.push(' ');
+            pos += ch.len_utf8();
+        } else {
+            out.push(ch);
+            pos += ch.len_utf8();
+        }
+    }
+    Ok(out)
 }
 
 fn decode_entities(text: &str) -> Result<String> {
@@ -601,8 +634,8 @@ pub fn select<'a>(found: &[&'a Patch], selection: &Selection) -> Vec<&'a Patch> 
 }
 
 /// The writes of `selected`, checked to lie inside the executable's loadable `segments`
-/// (`(start, end)` offsets from [`eboot_segments`]) and fit the loader's per-write limit; an
-/// invalid patch is skipped whole and named in the returned notes.
+/// (`(start, end)` offsets from [`eboot_segments`]), contain no empty writes, and fit the
+/// loader's per-write limit; an invalid patch is skipped whole and named in the returned notes.
 pub fn compile(
     selected: &[&Patch],
     segments: &[(u64, u64)],
@@ -621,6 +654,7 @@ pub fn compile(
             .writes
             .iter()
             .any(|write| write.bytes.len() > MAX_PATCH_WRITE_BYTES);
+        let empty_write = patch.writes.iter().any(|write| write.bytes.is_empty());
         let in_bounds = patch.writes.iter().all(|write| {
             let Some(len) = u64::try_from(write.bytes.len()).ok() else {
                 return false;
@@ -632,11 +666,16 @@ pub fn compile(
                 .iter()
                 .any(|(start, stop)| start <= &write.offset && end <= *stop && start < stop)
         });
-        if !oversized && in_bounds {
+        if !oversized && !empty_write && in_bounds {
             writes.extend(patch.writes.iter().cloned());
         } else if oversized {
             notes.push(format!(
                 "{}: a write exceeds the {MAX_PATCH_WRITE_BYTES}-byte loader limit",
+                patch.key
+            ));
+        } else if empty_write {
+            notes.push(format!(
+                "{}: a write has zero bytes, which the loader rejects",
                 patch.key
             ));
         } else {
@@ -1163,6 +1202,49 @@ mod tests {
         let (writes, notes) = compile(&[&exact], &[(0, MAX_PATCH_WRITE_BYTES as u64)]).unwrap();
         assert!(notes.is_empty());
         assert_eq!(writes[0].bytes.len(), MAX_PATCH_WRITE_BYTES);
+    }
+
+    #[test]
+    fn attribute_whitespace_normalizes_raw_chars_but_preserves_numeric_references() {
+        let raw = "a\tb\nc\r\nd\re";
+        let xml = format!("<Patches><Metadata Name=\"Whitespace\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"{raw}\"/><Line Type=\"utf8\" Address=\"0x401100\" Value=\"a&#x9;b&#xA;c&#xD;d\"/></Metadata></Patches>");
+        let patches = parse("whitespace.xml", &xml).unwrap();
+        assert_eq!(patches[0].writes[0].bytes, b"a b c d e\0");
+        assert_eq!(patches[0].writes[1].bytes, b"a\tb\nc\rd\0");
+
+        let raw_crlf = "<Patches><Metadata Name=\"CRLF\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"a\r\nb\"/></Metadata></Patches>";
+        assert_eq!(
+            parse("crlf.xml", raw_crlf).unwrap()[0].writes[0].bytes,
+            b"a b\0"
+        );
+    }
+
+    #[test]
+    fn compile_refuses_empty_write_and_prior_valid_writes_as_one_patch() {
+        let patch = Patch {
+            key: "empty/P".into(),
+            name: "P".into(),
+            author: String::new(),
+            note: String::new(),
+            title_ids: vec![],
+            executable: "eboot.bin".into(),
+            app_ver: "1".into(),
+            enabled_by_default: true,
+            writes: vec![
+                ByteWrite {
+                    offset: 0,
+                    bytes: vec![0x90],
+                },
+                ByteWrite {
+                    offset: 1,
+                    bytes: Vec::new(),
+                },
+            ],
+        };
+        let (writes, notes) = compile(&[&patch], &[(0, 8)]).unwrap();
+        assert!(writes.is_empty());
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("zero bytes"));
     }
 
     #[test]
