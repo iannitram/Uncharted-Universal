@@ -812,6 +812,55 @@ mod tests {
         }
     }
 
+    /// The limits pinned by literal numbers, so changing a constant fails here even though
+    /// the other tests derive their boundaries from it.
+    #[test]
+    fn limits_are_pinned_by_literal_values() {
+        let nested = |levels: usize| {
+            format!(
+                "<Patches>{}{}</Patches>",
+                "<N>".repeat(levels - 1),
+                "</N>".repeat(levels - 1)
+            )
+        };
+        assert!(parse("depth.xml", &nested(64)).is_ok());
+        assert!(matches!(
+            parse("depth.xml", &nested(65)),
+            Err(Error::Patch(_))
+        ));
+
+        let padded = |total: usize| {
+            let body = "<Patches/>";
+            format!("{body}{}", " ".repeat(total - body.len()))
+        };
+        assert!(parse("size.xml", &padded(8_388_608)).is_ok());
+        assert!(matches!(
+            parse("size.xml", &padded(8_388_609)),
+            Err(Error::Patch(_))
+        ));
+
+        let siblings = |count: usize| format!("<Patches>{}</Patches>", "<N/>".repeat(count));
+        assert!(parse("nodes.xml", &siblings(99_998)).is_ok());
+        assert!(matches!(
+            parse("nodes.xml", &siblings(99_999)),
+            Err(Error::Patch(_))
+        ));
+
+        let write = |count: usize| {
+            format!(
+                "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"bytes\" Address=\"0x401000\" Value=\"{}\"/></Metadata></Patches>",
+                "AA".repeat(count)
+            )
+        };
+        assert_eq!(
+            parse("w.xml", &write(4096)).unwrap()[0].writes[0]
+                .bytes
+                .len(),
+            4096
+        );
+        assert!(parse("w.xml", &write(4097)).unwrap()[0].writes.is_empty());
+    }
+
     #[test]
     fn nesting_at_limit_parses() {
         let xml = format!(
