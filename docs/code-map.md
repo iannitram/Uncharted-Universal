@@ -60,7 +60,7 @@ flowchart TD
 | Module | Status | Owns | Replaces | Musts |
 |---|---|---|---|---|
 | `error` | present | `Error` with stable `code()` and plain message per variant, `NotBuilt`, `Result` | | all |
-| `platform` | stub | `Os` (linux, windows, mac, ios, android), `Vars` (home, data, config from env lookup), `AppDirs` (`<config>/uncharted-universal`, `<data>/uncharted-universal`: installs, backups, logs) | the folder code of `launcher/uncharted_linux.py` (`config_dir`, XDG folders) and `launcher/bbport_launcher_win.py` | M7, M11, M14, M20 |
+| `platform` | present (#213) | `Os` (linux, windows, mac, ios, android), `Vars` (home, data, config from env lookup; Linux/Windows/macOS contracts tested independently of host), `AppDirs` (`<config>/uncharted-universal`, `<data>/uncharted-universal`: installs, backups, logs) | the folder code of `launcher/uncharted_linux.py` (`config_dir`, XDG folders) and `launcher/bbport_launcher_win.py` | M7, M11, M14, M20 |
 | `sfo` | stub | `param.sfo` reader: `parse` to keys (`TITLE_ID`, `APP_VER`, `VERSION`, `TITLE`), never writes | `scripts/prepare.py` `sfo()` | M11, M20 |
 | `games` | stub | `Game` (U1, U2, U3) with its key, name and executable (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`); the four collection title ids (`CUSA02320`, `CUSA02343`, `CUSA02344`, `CUSA02826`), one family shared by all three games, so a game is told by its executable; `title_region` (which id is which region: not known yet); `SUPPORTED` revisions per game; `check_revision` (plain refusal) | `NDC_IDS`, `NDC_ELFS` in `scripts/patches.py`; `EXECUTABLES` in `run.py` | M11, M20 |
 | `pkg` | stub | `.pkg` extractor: entry table, bounded copies, overlap refusal | `scripts/pkg.py` | M11, M20 |
