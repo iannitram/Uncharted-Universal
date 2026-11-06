@@ -21,6 +21,8 @@ pub const PATCHES_MAGIC: [u8; 8] = *b"BBPATCH2";
 const MAX_XML_BYTES: usize = 8 * 1024 * 1024;
 const MAX_XML_DEPTH: usize = 64;
 const MAX_XML_ELEMENTS: usize = 100_000;
+/// `apply_patches` in `src/probe.c` reads a fixed 4096-byte entry buffer.
+const MAX_PATCH_WRITE_BYTES: usize = 4096;
 
 /// One byte write, at an offset into the executable's memory image (`address - EBOOT_BASE`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +95,9 @@ impl<'a> XmlReader<'a> {
     fn new(input: &'a str) -> Result<Self> {
         if input.len() > MAX_XML_BYTES {
             return Err(patch_error("XML patch file exceeds the 8 MiB limit"));
+        }
+        if !input.chars().all(is_xml10_char) {
+            return Err(patch_error("XML contains a character forbidden by XML 1.0"));
         }
         Ok(Self {
             input,
@@ -294,6 +299,16 @@ impl<'a> XmlReader<'a> {
     }
 }
 
+fn is_xml10_char(ch: char) -> bool {
+    matches!(ch, '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
+fn xml_char(value: u32) -> Result<char> {
+    char::from_u32(value)
+        .filter(|ch| is_xml10_char(*ch))
+        .ok_or_else(|| patch_error("invalid XML character entity"))
+}
+
 fn decode_entities(text: &str) -> Result<String> {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -313,13 +328,13 @@ fn decode_entities(text: &str) -> Result<String> {
             _ if entity.starts_with("#x") || entity.starts_with("#X") => {
                 let value = u32::from_str_radix(&entity[2..], 16)
                     .map_err(|_| patch_error("invalid XML character entity"))?;
-                char::from_u32(value).ok_or_else(|| patch_error("invalid XML character entity"))?
+                xml_char(value)?
             }
             _ if entity.starts_with('#') => {
                 let value = entity[1..]
                     .parse::<u32>()
                     .map_err(|_| patch_error("invalid XML character entity"))?;
-                char::from_u32(value).ok_or_else(|| patch_error("invalid XML character entity"))?
+                xml_char(value)?
             }
             _ => return Err(patch_error("unknown XML entity")),
         };
@@ -493,6 +508,11 @@ fn encode_line(line: &Element) -> std::result::Result<ByteWrite, String> {
     if bytes.is_empty() {
         return Err("literal patch line has no bytes".to_owned());
     }
+    if bytes.len() > MAX_PATCH_WRITE_BYTES {
+        return Err(format!(
+            "literal write exceeds the {MAX_PATCH_WRITE_BYTES}-byte loader limit"
+        ));
+    }
     Ok(ByteWrite { offset, bytes })
 }
 
@@ -517,7 +537,10 @@ fn decode_hex(value: &str) -> std::result::Result<Vec<u8>, String> {
         return Err("bytes value has an odd number of hexadecimal digits".to_owned());
     }
     digits
-        .chunks_exact(2)
+        .as_slice()
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let hex = pair.iter().collect::<String>();
             u8::from_str_radix(&hex, 16).map_err(|_| format!("invalid hexadecimal byte {hex:?}"))
@@ -566,8 +589,8 @@ pub fn select<'a>(found: &[&'a Patch], selection: &Selection) -> Vec<&'a Patch> 
 }
 
 /// The writes of `selected`, checked to lie inside the executable's loadable `segments`
-/// (`(start, end)` offsets from [`eboot_segments`]); a patch with an address outside is
-/// skipped whole and named in the returned notes.
+/// (`(start, end)` offsets from [`eboot_segments`]) and fit the loader's per-write limit; an
+/// invalid patch is skipped whole and named in the returned notes.
 pub fn compile(
     selected: &[&Patch],
     segments: &[(u64, u64)],
@@ -582,7 +605,11 @@ pub fn compile(
             ));
             continue;
         }
-        let valid = patch.writes.iter().all(|write| {
+        let oversized = patch
+            .writes
+            .iter()
+            .any(|write| write.bytes.len() > MAX_PATCH_WRITE_BYTES);
+        let in_bounds = patch.writes.iter().all(|write| {
             let Some(len) = u64::try_from(write.bytes.len()).ok() else {
                 return false;
             };
@@ -593,8 +620,13 @@ pub fn compile(
                 .iter()
                 .any(|(start, stop)| start <= &write.offset && end <= *stop && start < stop)
         });
-        if valid {
+        if !oversized && in_bounds {
             writes.extend(patch.writes.iter().cloned());
+        } else if oversized {
+            notes.push(format!(
+                "{}: a write exceeds the {MAX_PATCH_WRITE_BYTES}-byte loader limit",
+                patch.key
+            ));
         } else {
             notes.push(format!(
                 "{}: one or more writes fall outside the executable",
@@ -696,7 +728,8 @@ fn read_u64(data: &[u8], at: usize) -> Result<u64> {
 }
 
 /// `patches.bin` for the loader: `PATCHES_MAGIC`, `EBOOT_BASE` and the count (little-endian
-/// u64), then per write its offset, length and bytes. Empty `writes` is a valid file.
+/// u64), then per write its offset, length and bytes. Pass only writes accepted by [`compile`];
+/// this serializer does not truncate or filter them. An empty `writes` list is valid.
 pub fn to_patches_bin(writes: &[ByteWrite]) -> Vec<u8> {
     let mut output = Vec::new();
     output.extend_from_slice(&PATCHES_MAGIC);
@@ -1001,6 +1034,123 @@ mod tests {
             ..patch
         };
         assert!(compile(&[&outside], &segments).unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn rejects_xml_10_forbidden_raw_and_numeric_characters() {
+        for xml in [
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#x1;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#1;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xD800;\"/></Metadata></Patches>",
+            "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"&#xFFFE;\"/></Metadata></Patches>",
+        ] {
+            assert!(matches!(parse("bad.xml", xml), Err(Error::Patch(_))));
+        }
+        let raw_forbidden = "<Patches><Metadata Name=\"P\" AppVer=\"1\"><Line Type=\"utf8\" Address=\"0x401000\" Value=\"x\u{1}\"/></Metadata></Patches>";
+        assert!(matches!(
+            parse("bad.xml", raw_forbidden),
+            Err(Error::Patch(_))
+        ));
+
+        for valid in [
+            '\u{9}',
+            '\u{A}',
+            '\u{D}',
+            '\u{20}',
+            '\u{D7FF}',
+            '\u{E000}',
+            '\u{FFFD}',
+            '\u{10000}',
+            '\u{10FFFF}',
+        ] {
+            assert!(is_xml10_char(valid));
+            assert_eq!(
+                decode_entities(&format!("&#x{:X};", valid as u32)).unwrap(),
+                valid.to_string()
+            );
+        }
+        for invalid in [
+            '\u{0}', '\u{8}', '\u{B}', '\u{C}', '\u{1F}', '\u{FFFE}', '\u{FFFF}',
+        ] {
+            assert!(!is_xml10_char(invalid));
+        }
+    }
+
+    #[test]
+    fn literal_write_limit_matches_loader_and_discards_oversized_patch_whole() {
+        let line = |kind: &str, value: &str| {
+            format!("<Line Type=\"{kind}\" Address=\"0x401000\" Value=\"{value}\"/>")
+        };
+        let exact_bytes = "AA".repeat(MAX_PATCH_WRITE_BYTES);
+        let too_many_bytes = "AA".repeat(MAX_PATCH_WRITE_BYTES + 1);
+        let exact_utf8 = "a".repeat(MAX_PATCH_WRITE_BYTES - 1);
+        let oversized_utf8 = "a".repeat(MAX_PATCH_WRITE_BYTES);
+        let exact_utf16 = "a".repeat((MAX_PATCH_WRITE_BYTES - 2) / 2);
+        let oversized_utf16 = "a".repeat(MAX_PATCH_WRITE_BYTES / 2);
+        for (kind, value, expected) in [
+            ("bytes", exact_bytes.as_str(), MAX_PATCH_WRITE_BYTES),
+            ("utf8", exact_utf8.as_str(), MAX_PATCH_WRITE_BYTES),
+            ("utf16", exact_utf16.as_str(), MAX_PATCH_WRITE_BYTES),
+        ] {
+            let xml = format!(
+                "<Patches><Metadata Name=\"P\" AppVer=\"1\">{}</Metadata></Patches>",
+                line(kind, value)
+            );
+            assert_eq!(
+                parse("limits.xml", &xml).unwrap()[0].writes[0].bytes.len(),
+                expected
+            );
+        }
+        for (kind, value) in [
+            ("bytes", too_many_bytes.as_str()),
+            ("utf8", oversized_utf8.as_str()),
+            ("utf16", oversized_utf16.as_str()),
+        ] {
+            let xml = format!(
+                "<Patches><Metadata Name=\"P\" AppVer=\"1\">{}{}</Metadata></Patches>",
+                line("bytes", "90"),
+                line(kind, value)
+            );
+            let patch = &parse("limits.xml", &xml).unwrap()[0];
+            assert!(patch.writes.is_empty());
+            assert!(patch.note.contains("4096-byte loader limit"));
+        }
+
+        let patch = Patch {
+            key: "limits/P".into(),
+            name: "P".into(),
+            author: String::new(),
+            note: String::new(),
+            title_ids: vec![],
+            executable: "eboot.bin".into(),
+            app_ver: "1".into(),
+            enabled_by_default: true,
+            writes: vec![
+                ByteWrite {
+                    offset: 0,
+                    bytes: vec![1],
+                },
+                ByteWrite {
+                    offset: 1,
+                    bytes: vec![2; MAX_PATCH_WRITE_BYTES + 1],
+                },
+            ],
+        };
+        let (writes, notes) = compile(&[&patch], &[(0, 8192)]).unwrap();
+        assert!(writes.is_empty());
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("4096-byte loader limit"));
+
+        let exact = Patch {
+            writes: vec![ByteWrite {
+                offset: 0,
+                bytes: vec![2; MAX_PATCH_WRITE_BYTES],
+            }],
+            ..patch
+        };
+        let (writes, notes) = compile(&[&exact], &[(0, MAX_PATCH_WRITE_BYTES as u64)]).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(writes[0].bytes.len(), MAX_PATCH_WRITE_BYTES);
     }
 
     #[test]
