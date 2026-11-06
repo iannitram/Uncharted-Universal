@@ -73,6 +73,7 @@ pub fn parse(file_name: &str, xml: &str) -> Result<Vec<Patch>> {
     if xml.len() > MAX_XML_BYTES {
         return Err(patch_error("XML patch file exceeds the 8 MiB limit"));
     }
+    precheck_xml_depth(xml)?;
     validate_xml_character_references(xml)?;
     let options = ParsingOptions {
         allow_dtd: false,
@@ -203,6 +204,73 @@ fn validate_xml_character_references(xml: &str) -> Result<()> {
 
 fn is_xml10_char(value: u32) -> bool {
     matches!(value, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF)
+}
+
+/// Linear pre-scan that refuses XML nested deeper than `MAX_XML_DEPTH` before `roxmltree`
+/// sees it: `roxmltree` 0.21.1 has no depth option and recurses while it parses, so a very
+/// deep document overflows the stack before `check_xml_depth` runs. This pass keeps one
+/// counter and never recurses. It skips comments, CDATA sections, processing instructions,
+/// declarations and quoted attribute values, so a `>` or `<` inside them cannot change the
+/// count. Well-formed XML gets an exact count; anything malformed is an error either way.
+fn precheck_xml_depth(xml: &str) -> Result<()> {
+    let bytes = xml.as_bytes();
+    let mut depth = 0usize;
+    let mut at = 0usize;
+    while let Some(offset) = bytes[at..].iter().position(|&byte| byte == b'<') {
+        let start = at + offset;
+        let rest = &bytes[start..];
+        at = if rest.starts_with(b"<!--") {
+            skip_past(bytes, start + 4, b"-->")?
+        } else if rest.starts_with(b"<![CDATA[") {
+            skip_past(bytes, start + 9, b"]]>")?
+        } else if rest.starts_with(b"<?") {
+            skip_past(bytes, start + 2, b"?>")?
+        } else if rest.starts_with(b"<!") {
+            skip_past(bytes, start + 2, b">")?
+        } else if rest.starts_with(b"</") {
+            let end = skip_past(bytes, start + 2, b">")?;
+            depth = depth.saturating_sub(1);
+            end
+        } else {
+            let (end, self_closing) = scan_start_tag(bytes, start + 1)?;
+            // A self-closing element is a level too: `check_xml_depth` counts leaves.
+            if depth + 1 > MAX_XML_DEPTH {
+                return Err(patch_error("XML patch file is nested too deeply"));
+            }
+            if !self_closing {
+                depth += 1;
+            }
+            end
+        };
+    }
+    Ok(())
+}
+
+/// Index just past the first `needle` at or after `from`.
+fn skip_past(bytes: &[u8], from: usize, needle: &[u8]) -> Result<usize> {
+    bytes[from..]
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .map(|offset| from + offset + needle.len())
+        .ok_or_else(|| patch_error("XML patch file is malformed"))
+}
+
+/// Index just past the `>` that ends a start tag whose name begins at `from`, and whether the
+/// tag is self-closing. A `>` inside a quoted attribute value does not end the tag.
+fn scan_start_tag(bytes: &[u8], from: usize) -> Result<(usize, bool)> {
+    let mut quote: Option<u8> = None;
+    let mut previous = 0u8;
+    for (offset, &byte) in bytes[from..].iter().enumerate() {
+        match quote {
+            Some(open) if byte == open => quote = None,
+            Some(_) => {}
+            None if byte == b'"' || byte == b'\'' => quote = Some(byte),
+            None if byte == b'>' => return Ok((from + offset + 1, previous == b'/')),
+            None => {}
+        }
+        previous = byte;
+    }
+    Err(patch_error("XML patch file is malformed"))
 }
 
 fn check_xml_depth(root: Node<'_, '_>) -> Result<()> {
@@ -716,6 +784,65 @@ mod tests {
             parse("nodes.xml", &too_many_nodes),
             Err(Error::Patch(_))
         ));
+    }
+
+    /// Runs `work` on a 256 KiB thread. A stack overflow aborts the test binary, so a deep
+    /// document that reached `roxmltree` fails the run instead of returning an error. Only
+    /// refusals run here: a debug-build parse of 64 levels needs more than 256 KiB.
+    fn on_small_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(work)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_before_roxmltree_recurses() {
+        for depth in [5_000usize, 100_000] {
+            let xml = format!(
+                "<Patches>{}{}</Patches>",
+                "<N>".repeat(depth),
+                "</N>".repeat(depth)
+            );
+            let refused =
+                on_small_stack(move || matches!(parse("deep.xml", &xml), Err(Error::Patch(_))));
+            assert!(refused, "{depth} nested elements were not refused");
+        }
+    }
+
+    #[test]
+    fn nesting_at_limit_parses() {
+        let xml = format!(
+            "<Patches>{}{}</Patches>",
+            "<N>".repeat(MAX_XML_DEPTH - 1),
+            "</N>".repeat(MAX_XML_DEPTH - 1)
+        );
+        assert!(parse("depth.xml", &xml).is_ok());
+    }
+
+    #[test]
+    fn depth_count_ignores_markup_inside_quotes_comments_and_cdata() {
+        let level = r#"<N v="> x" w='>'><!-- <N> --><![CDATA[<N>]]>"#;
+        let close = "</N>";
+        let at_limit = format!(
+            "<Patches>{}{}</Patches>",
+            level.repeat(MAX_XML_DEPTH - 1),
+            close.repeat(MAX_XML_DEPTH - 1)
+        );
+        assert!(parse("depth.xml", &at_limit).is_ok());
+        let over_limit = format!(
+            "<Patches>{}{}</Patches>",
+            level.repeat(MAX_XML_DEPTH),
+            close.repeat(MAX_XML_DEPTH)
+        );
+        let refused =
+            on_small_stack(move || matches!(parse("depth.xml", &over_limit), Err(Error::Patch(_))));
+        assert!(
+            refused,
+            "65 real levels with markup in quotes were not refused"
+        );
     }
 
     #[test]
