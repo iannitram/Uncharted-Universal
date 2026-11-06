@@ -212,4 +212,17 @@ mod tests {
         assert_eq!(parsed["mounted_addons"], serde_json::json!([]));
         assert_eq!(parsed["boot_attr"], 0);
     }
+
+    #[test]
+    fn missing_title_id_is_null_with_zero_parameters_and_full_sku_json() {
+        let profile = from_sfo(&values(&[]), Sku::Full).unwrap();
+        assert_eq!(profile.title_id, None);
+        assert_eq!(profile.user_params, [0, 0, 0, 0]);
+        assert_eq!(profile.to_bin()[8..12], 3u32.to_le_bytes());
+        let json = profile.to_json();
+        assert!(json.contains("\"title_id\": null,\n  \"sku\": \"full\""));
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["title_id"], serde_json::Value::Null);
+        assert_eq!(parsed["sku"], "full");
+    }
 }
