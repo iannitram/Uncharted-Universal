@@ -7,7 +7,7 @@
 //! id. `title_region` is therefore a stub; the dump check (piece 1.05) fills it from real
 //! `param.sfo` files.
 
-use crate::error::{not_built, Result};
+use crate::error::{Error, Result};
 
 /// One of the collection's games.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,11 +93,101 @@ pub fn supported(game: Game) -> &'static [&'static str] {
 /// is which is not known yet (see the module docs), so this is a stub; `Error::BadDump` for an
 /// id outside [`TITLE_IDS`].
 pub fn title_region(title_id: &str) -> Result<&'static str> {
-    not_built("games::title_region")
+    if !is_collection_title_id(title_id) {
+        return Err(Error::BadDump("Unknown collection title id.".into()));
+    }
+
+    // Legacy code groups all four IDs into one family and never maps one to a region.
+    // Keep known IDs unusable for region-specific decisions until dump evidence exists.
+    Err(Error::NotBuilt("games::title_region"))
 }
 
 /// The revision gate (SPEC.md M11): `Ok` when `app_ver` is in [`supported`] for `game`,
 /// else `Error::WrongRevision` with the plain refusal.
 pub fn check_revision(game: Game, app_ver: &str) -> Result<()> {
-    not_built("games::check_revision")
+    check_revision_in(game, app_ver, &SUPPORTED)
+}
+
+fn check_revision_in(game: Game, app_ver: &str, supported: &[(Game, &[&str])]) -> Result<()> {
+    if supported
+        .iter()
+        .find(|(candidate, _)| *candidate == game)
+        .is_some_and(|(_, versions)| versions.contains(&app_ver))
+    {
+        return Ok(());
+    }
+
+    Err(Error::WrongRevision {
+        game: game.key().to_owned(),
+        found: app_ver.to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn game_names_keys_executables_and_collection_ids_match_legacy_contracts() {
+        let expected = [
+            (Game::U1, "u1", "Uncharted 1", "eboot.bin"),
+            (Game::U2, "u2", "Uncharted 2", "big2-ps4_Shipping.elf"),
+            (Game::U3, "u3", "Uncharted 3", "big3-ps4_Shipping.elf"),
+        ];
+        for (game, key, name, executable) in expected {
+            assert_eq!(game.key(), key);
+            assert_eq!(game.name(), name);
+            assert_eq!(game.executable(), executable);
+            assert_eq!(Game::from_key(&key.to_ascii_uppercase()), Some(game));
+            assert_eq!(Game::from_executable(executable), Some(game));
+        }
+        assert_eq!(Game::from_key("unknown"), None);
+        assert_eq!(Game::from_executable("unknown"), None);
+        assert_eq!(
+            TITLE_IDS,
+            ["CUSA02320", "CUSA02343", "CUSA02344", "CUSA02826"]
+        );
+        assert!(TITLE_IDS.iter().all(|id| is_collection_title_id(id)));
+        assert!(!is_collection_title_id("CUSA00000"));
+    }
+
+    #[test]
+    fn title_region_fails_closed_for_unknown_and_unmapped_known_ids() {
+        assert_eq!(
+            title_region("CUSA00000"),
+            Err(Error::BadDump("Unknown collection title id.".into()))
+        );
+        assert_eq!(
+            title_region(TITLE_IDS[0]),
+            Err(Error::NotBuilt("games::title_region"))
+        );
+    }
+
+    #[test]
+    fn revision_gate_accepts_injected_entries_but_production_stays_closed() {
+        let synthetic = [(Game::U1, &["test-only" as &str][..])];
+        assert_eq!(check_revision_in(Game::U1, "test-only", &synthetic), Ok(()));
+        assert_eq!(
+            check_revision_in(Game::U1, "unknown", &synthetic),
+            Err(Error::WrongRevision {
+                game: "u1".into(),
+                found: "unknown".into(),
+            })
+        );
+        assert_eq!(
+            check_revision_in(Game::U2, "test-only", &synthetic),
+            Err(Error::WrongRevision {
+                game: "u2".into(),
+                found: "test-only".into(),
+            })
+        );
+        assert!(SUPPORTED.iter().all(|(_, versions)| versions.is_empty()));
+        assert_eq!(
+            check_revision(Game::U3, "unknown"),
+            Err(Error::WrongRevision {
+                game: "u3".into(),
+                found: "unknown".into(),
+            })
+        );
+    }
 }
