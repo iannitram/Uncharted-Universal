@@ -350,16 +350,20 @@ pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
     if destinations.is_empty() {
         return Ok(report);
     }
-    let mut paths: Vec<String> = destinations
+    // Refuse two names that fold to the same path, and any name that needs an ancestor which is
+    // itself a file name (a file "a" and a file "a/b"). Checked against the whole set, not
+    // neighbours in sorted order, because "a!x" sorts between "a" and "a/b".
+    let folded: Vec<String> = destinations
         .iter()
         .map(|(_, path)| path.to_lowercase())
         .collect();
-    paths.sort_unstable();
-    if paths.windows(2).any(|pair| {
-        pair[1] == pair[0]
-            || (pair[1].starts_with(&pair[0])
-                && pair[1].as_bytes().get(pair[0].len()) == Some(&b'/'))
-    }) {
+    let names: std::collections::HashSet<&str> = folded.iter().map(String::as_str).collect();
+    if names.len() != folded.len()
+        || folded.iter().any(|path| {
+            path.match_indices('/')
+                .any(|(at, _)| names.contains(&path[..at]))
+        })
+    {
         return Err(pkg(
             "package paths collide on a case-insensitive filesystem",
         ));
@@ -631,6 +635,76 @@ mod tests {
         assert_eq!(fs::read(out.join("file.bin")).unwrap(), b"replacement");
         fs::remove_dir_all(out).unwrap();
         fs::remove_file(outside).unwrap();
+    }
+
+    #[test]
+    fn rejects_file_directory_collision_even_with_names_sorting_between() {
+        // "a!x" sorts between "a" and "a/b", so adjacent-pair checks would miss the collision.
+        let src = fixture(&[("a", b"x", 0), ("a!x", b"y", 0), ("a/b", b"z", 0)], 0x1a);
+        let out = temp_path();
+        assert!(extract(&src, &out).is_err());
+        assert!(!out.exists());
+    }
+
+    #[test]
+    fn rejects_windows_unc_drive_and_reserved_paths() {
+        for path in [
+            "\\\\server\\share\\x",
+            "CON",
+            "a/NUL.txt",
+            "a/lpt1.log",
+            "aux.txt",
+            "a/b.",
+            "a/b ",
+            "a\\..\\b",
+            "a/.\u{0}b",
+        ] {
+            assert!(safe_relative(path).is_err(), "{path}");
+        }
+    }
+
+    #[test]
+    fn copies_entries_larger_than_one_chunk_exactly() {
+        let payload: Vec<u8> = (0..CHUNK_SIZE + 17).map(|i| (i % 251) as u8).collect();
+        let src = fixture(&[("big.bin", &payload, 0)], 0x1a);
+        let out = temp_path();
+        assert_eq!(extract(&src, &out).unwrap().extracted, 1);
+        assert_eq!(fs::read(out.join("big.bin")).unwrap(), payload);
+        fs::remove_dir_all(out).unwrap();
+    }
+
+    #[test]
+    fn refuses_oversized_names_table_before_reading_it() {
+        struct Sparse {
+            head: Vec<u8>,
+            size: u64,
+        }
+        impl Source for Sparse {
+            fn size(&self) -> u64 {
+                self.size
+            }
+            fn read_at(&self, offset: u64, buf: &mut [u8]) -> Result<()> {
+                let start = usize::try_from(offset).map_err(|_| pkg("test offset"))?;
+                let data = self
+                    .head
+                    .get(start..start + buf.len())
+                    .ok_or_else(|| pkg("test read beyond head"))?;
+                buf.copy_from_slice(data);
+                Ok(())
+            }
+        }
+        let mut image = fixture(&[("a", b"x", 0)], 0x1a).0;
+        let table = be32(&image, 0x18).unwrap() as usize;
+        let names_size = MAX_NAMES_SIZE + 1;
+        let names_at = image.len() as u32;
+        put32(&mut image, table + 16, names_at);
+        put32(&mut image, table + 20, names_size as u32);
+        let sparse = Sparse {
+            size: u64::from(names_at) + names_size,
+            head: image,
+        };
+        let error = analyse(&sparse).unwrap_err();
+        assert_eq!(error, pkg("package names table is too large"));
     }
 
     #[test]
