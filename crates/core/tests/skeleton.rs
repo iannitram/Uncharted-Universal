@@ -62,7 +62,7 @@ fn games_and_their_executables() {
     );
     assert_eq!(
         games::check_revision(Game::U1, "01.00").unwrap_err().code(),
-        "not_built"
+        "wrong_revision"
     );
 }
 
