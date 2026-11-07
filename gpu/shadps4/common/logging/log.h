@@ -45,8 +45,8 @@ void UpdateLogFlushLevel(std::string_view log_flush_level);
 static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "Warning",
                                                "Error", "Critical", "Off"};
 
-[[nodiscard]] static constexpr std::string_view to_string_view(spdlog::level lvl) noexcept {
-    return level_string_views.at(level_to_number(lvl));
+[[nodiscard]] static constexpr const char* to_string_view(spdlog::level lvl) noexcept {
+    return level_string_views.at(level_to_number(lvl)).data();
 }
 
 [[nodiscard]] static constexpr const char* basename(const char* path) noexcept {
