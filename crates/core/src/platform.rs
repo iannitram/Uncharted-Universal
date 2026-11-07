@@ -6,7 +6,40 @@
 //! `Os`, `Vars` and `AppDirs` are copied from iannitram/totk-native (MIT) and renamed.
 
 use crate::error::{Error, Result};
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::path::{Path, PathBuf};
+
+/// Create a new per-user configuration file without following or replacing an existing path.
+/// Unix permissions are owner-only (0600); Windows inherits the app-data directory ACL.
+pub fn create_private_file(path: &Path) -> Result<File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    Ok(options.open(path)?)
+}
+
+/// Whether a file's permissions are suitable for storing a pairing key.
+pub fn private_file_permissions(path: &Path) -> Result<bool> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(false);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        Ok(metadata.permissions().mode() & 0o077 == 0)
+    }
+    #[cfg(not(unix))]
+    {
+        // The file lives below the per-user application configuration directory, whose ACL is
+        // inherited from APPDATA/Application Support on these platforms.
+        Ok(true)
+    }
+}
 
 /// A device family the launcher builds a port for (SPEC.md platforms).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
