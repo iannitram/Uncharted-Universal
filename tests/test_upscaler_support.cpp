@@ -32,21 +32,21 @@ int main() {
     s.upscaler = UpscalerFsr3;
     assert(RenderPreset() == Performance);
 
-    // A DLSS feature requirement query failure is optional-provider failure: hide DLSS and
-    // retain the normal FSR 3.1 startup path. RTX success remains available without changing
-    // the selected provider.
+    // The settings layer hides an unavailable DLSS provider and falls back from a saved DLSS
+    // choice. This covers settings behavior; it does not exercise the NGX query or Vulkan device
+    // creation path. A successful DLSS probe leaves the selected provider unchanged.
     s.upscaler = UpscalerDlss;
     ConfigureDlssSupport(true, nullptr);
     assert(s.dlss_supported && s.upscaler == UpscalerDlss);
     s.upscaler = UpscalerDlss;
-    ConfigureDlssSupport(true, nullptr, true);
+    ConfigureDlssSupport(false, "feature requirement query failed");
     assert(!s.dlss_supported && s.upscaler == UpscalerFsr3);
     assert(s.dlss_problem && std::string_view{s.dlss_problem.load()} ==
-                                 "forced feature requirement query failure (test)");
+                                 "feature requirement query failed");
     // If the player chose TAA, an unavailable optional DLSS provider must not override that
     // explicit choice.
     s.upscaler = UpscalerTaa;
-    ConfigureDlssSupport(false, "forced feature requirement query failure (test)", true);
+    ConfigureDlssSupport(false, "feature requirement query failed");
     assert(!s.dlss_supported && s.upscaler == UpscalerTaa);
 
     for (bool fsr4 : {false, true}) {

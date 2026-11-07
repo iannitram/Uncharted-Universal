@@ -129,9 +129,7 @@ int DriverDefaultUpscaler(int current, bool chosen, bool driver_validated);
 /// After device creation: applies DriverDefaultUpscaler for this driver and logs the decision.
 void ConfigureDriverDefault(unsigned driver_id, const char* driver_name);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
-// The final argument is a test hook that simulates NGX's feature requirement query failing.
-void ConfigureDlssSupport(bool available, const char* problem,
-                          bool force_feature_query_failure_for_test = false);
+void ConfigureDlssSupport(bool available, const char* problem);
 /// Same for Intel XeSS (libxess.dll).
 void ConfigureXessSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
