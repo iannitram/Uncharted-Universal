@@ -9,9 +9,18 @@ use crate::games::Game;
 use std::path::{Path, PathBuf};
 
 const COLLECTION_ART: [(&str, &[u8]); 5] = [
-    ("u1.jpg", include_bytes!("../data/collection-artwork/u1.jpg")),
-    ("u2.jpg", include_bytes!("../data/collection-artwork/u2.jpg")),
-    ("u3.jpg", include_bytes!("../data/collection-artwork/u3.jpg")),
+    (
+        "u1.jpg",
+        include_bytes!("../data/collection-artwork/u1.jpg"),
+    ),
+    (
+        "u2.jpg",
+        include_bytes!("../data/collection-artwork/u2.jpg"),
+    ),
+    (
+        "u3.jpg",
+        include_bytes!("../data/collection-artwork/u3.jpg"),
+    ),
     (
         "collection_banner.jpg",
         include_bytes!("../data/collection-artwork/collection_banner.jpg"),
@@ -107,7 +116,6 @@ mod collection_art_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Art {
