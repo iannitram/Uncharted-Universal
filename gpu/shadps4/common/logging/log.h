@@ -45,10 +45,6 @@ void UpdateLogFlushLevel(std::string_view log_flush_level);
 static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "Warning",
                                                "Error", "Critical", "Off"};
 
-[[nodiscard]] static constexpr const char* bbport_log_level_text(spdlog::level lvl) noexcept {
-    return level_string_views.at(level_to_number(lvl)).data();
-}
-
 [[nodiscard]] static constexpr const char* basename(const char* path) noexcept {
     const char* name = path;
     for (const char* cursor = path; *cursor; ++cursor) {
@@ -64,7 +60,8 @@ static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "War
         if (auto logger = Common::Log::ALL_LOGGERS[class_arg];                                     \
             logger && logger->should_log(level_arg)) {                                             \
             logger->log(level_arg, "[{}] <{}> ({}) {}:{} {}: " fmt_arg, class_arg,                 \
-                        Common::Log::bbport_log_level_text(level_arg),                              \
+                        Common::Log::level_string_views.at(static_cast<std::size_t>(level_arg))     \
+                            .data(),                                                               \
                         Common::GetCurrentThreadName(),                                             \
                         Common::Log::basename(__FILE__), __LINE__,                                 \
                         std::string_view(__func__) == "operator()" ? "lambda" : __func__,          \
