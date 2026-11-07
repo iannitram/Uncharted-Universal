@@ -96,7 +96,7 @@ jobs:
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
       - name: Run Python tests and enforce the Windows expected-skip list
-        run: source ./msys2-env.sh && python tools/ci_unittest.py --platform windows
+        run: source ./msys2-env.sh && python3 --version && python3 tools/ci_unittest.py --platform windows
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
