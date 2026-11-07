@@ -59,12 +59,12 @@ static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "War
 } // namespace Common::Log
 
 // Define the fmt lib macros
-#define LOG_GENERIC(log_class, log_level, format, ...)                                             \
+#define LOG_GENERIC(class_arg, level_arg, fmt_arg, ...)                                            \
     do {                                                                                           \
-        if (auto logger = Common::Log::ALL_LOGGERS[log_class];                                     \
-            logger && logger->should_log(log_level)) {                                             \
-            logger->log(log_level, "[{}] <{}> ({}) {}:{} {}: " format, log_class,                  \
-                        Common::Log::bbport_log_level_text(log_level),                              \
+        if (auto logger = Common::Log::ALL_LOGGERS[class_arg];                                     \
+            logger && logger->should_log(level_arg)) {                                             \
+            logger->log(level_arg, "[{}] <{}> ({}) {}:{} {}: " fmt_arg, class_arg,                 \
+                        Common::Log::bbport_log_level_text(level_arg),                              \
                         Common::GetCurrentThreadName(),                                             \
                         Common::Log::basename(__FILE__), __LINE__,                                 \
                         std::string_view(__func__) == "operator()" ? "lambda" : __func__,          \
