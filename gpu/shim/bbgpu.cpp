@@ -3,6 +3,7 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
+#include "equeue_request_gate.h"
 #ifndef _WIN32
 #include <sys/resource.h>
 #endif
@@ -341,28 +342,19 @@ extern "C" unsigned bbgpu_symbol_count(void) {
 // Kernel service thread: runs boost::asio timers for equeue timer events.
 namespace Libraries::Kernel {
 boost::asio::io_context io_context;
-static std::mutex m_asio_req;
-static std::condition_variable_any cv_asio_req;
-static std::atomic<u32> asio_requests;
+static EqueueRequestGate asio_requests;
 static std::jthread service_thread;
 
 void KernelSignalRequest() {
-    std::unique_lock lock{m_asio_req};
-    ++asio_requests;
-    cv_asio_req.notify_one();
+    asio_requests.Signal();
 }
 
 static void KernelServiceThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("bb:kernel_service");
     while (!stoken.stop_requested()) {
-        {
-            std::unique_lock lock{m_asio_req};
-            cv_asio_req.wait(lock, stoken, [] { return asio_requests != 0; });
-        }
-        if (stoken.stop_requested()) break;
+        if (!asio_requests.Wait(stoken)) break;
         io_context.run();
         io_context.restart();
-        asio_requests = 0;
     }
 }
 
