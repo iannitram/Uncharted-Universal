@@ -278,9 +278,9 @@ pub fn read_peers(path: &Path) -> Result<Vec<Peer>> {
     #[cfg(windows)]
     {
         let _ = path;
-        return Err(Error::Hub(
+        Err(Error::Hub(
             "protected paired-device storage is not implemented on Windows".into(),
-        ));
+        ))
     }
     #[cfg(not(windows))]
     read_peers_impl(path)
@@ -359,9 +359,9 @@ pub fn write_peers(path: &Path, peers: &[Peer]) -> Result<()> {
     #[cfg(windows)]
     {
         let _ = (path, peers);
-        return Err(Error::Hub(
+        Err(Error::Hub(
             "protected paired-device storage is not implemented on Windows".into(),
-        ));
+        ))
     }
     #[cfg(not(windows))]
     write_peers_impl(path, peers)
