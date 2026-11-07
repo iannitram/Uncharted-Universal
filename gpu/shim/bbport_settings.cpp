@@ -201,8 +201,13 @@ void ConfigureDriverDefault(unsigned driver_id, const char* driver_name) {
     }
 }
 
-void ConfigureDlssSupport(bool available, const char* problem) {
+void ConfigureDlssSupport(bool available, const char* problem,
+                          bool force_feature_query_failure_for_test) {
     auto& v = Get();
+    if (force_feature_query_failure_for_test) {
+        available = false;
+        problem = "forced feature requirement query failure (test)";
+    }
     v.dlss_supported = available;
     static std::string kept;
     kept = problem ? problem : "";
