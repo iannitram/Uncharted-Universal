@@ -14,8 +14,8 @@ path = "src/lib.rs"
 [features]
 # `relay` (src/relay.rs, planned, not in the tree yet) links iannitram/save-relay's library;
 # its issue adds the module, the dependency and this feature.
-# `hub` is the build hub on the home network (src/hub.rs, ADR 0004); its issues add the
-# pure-Rust crates it needs (mdns-sd, RustCrypto spake2, chacha20poly1305, sha2).
+# `hub` is the build hub on the home network (src/hub.rs, ADR 0004); discovery and the bundle
+# transfer service still need mDNS integration, while pairing/game-data crypto is implemented.
 hub = ["dep:chacha20poly1305", "dep:getrandom", "dep:hmac", "dep:sha2", "dep:spake2"]
 
 # Core dependencies are pure Rust and add no native libraries or platform SDK requirements.

@@ -256,6 +256,15 @@ fn regular_file_in_tree(root: &Path, rel_path: &str) -> std::io::Result<()> {
 /// each `DEVICE_OWNED` entry the old `install_dir` has into `staged`, swaps the folders, and
 /// deletes the old one. Saves are backed up by `update` before this runs (M19).
 pub fn install(b: &Bundle, staged: &Path, install_dir: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(staged.join(".uu-transfer-incomplete")) {
+        Ok(_) => {
+            return Err(Error::Hub(
+                "game-data transfer is incomplete; this install is not ready".into(),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     verify(b, staged)?;
 
     for name in DEVICE_OWNED {
@@ -710,5 +719,25 @@ mod tests {
         assert!(!with_extension(&install_dir, "old").exists());
 
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn install_refuses_a_marked_incomplete_game_data_transfer() {
+        let staged = temp_dir("incomplete-transfer");
+        let install_dir = temp_dir("incomplete-install");
+        let bundle = Bundle {
+            target: Os::Linux,
+            patch_level: 0,
+            build_id: "empty".into(),
+            files: Vec::new(),
+        };
+        write_file(&staged, ".uu-transfer-incomplete", b"incomplete");
+        assert!(matches!(
+            install(&bundle, &staged, &install_dir),
+            Err(Error::Hub(message)) if message.contains("incomplete")
+        ));
+        assert!(staged.exists());
+        std::fs::remove_dir_all(staged).unwrap();
+        std::fs::remove_dir_all(install_dir).unwrap();
     }
 }

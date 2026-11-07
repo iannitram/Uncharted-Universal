@@ -3,8 +3,8 @@
 //! Nothing here reads the dump, keys or a save; it moves only what `bundle` lists. Home network
 //! only: an address outside the private ranges is refused. The shape is copied from
 //! iannitram/totk-native's `hub.rs` (MIT); SPAKE2 and RustCrypto AEAD are used for pairing and
-//! game-data transfer. Peer persistence, pairing rate limits, mDNS and bundle serving still need
-//! integration before this is a complete hub service.
+//! game-data transfer. A limiter and Unix peer-file storage helper exist, but no accept loop wires
+//! them to a remote address. mDNS discovery and bundle serving remain unimplemented.
 
 use crate::bundle::Bundle;
 use crate::error::{not_built, Error, Result};
@@ -27,8 +27,11 @@ const MAX_GAME_FILES: usize = 10_000;
 const MAX_GAME_MANIFEST: usize = 1024 * 1024;
 const MAX_GAME_FILE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_GAME_TOTAL: u64 = 100 * 1024 * 1024 * 1024;
+const STAGING_MARKER: &str = ".uu-transfer-incomplete";
 const PAIRING_ID: &[u8] = b"uncharted-universal-hub-pairing-v1";
 const TRANSFER_DOMAIN: &[u8] = b"uncharted-universal-game-transfer-v1";
+const CLIENT_TO_SERVER: u8 = 1;
+const SERVER_TO_CLIENT: u8 = 2;
 
 /// A hub found on the home network.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +48,57 @@ pub struct Found {
 pub struct Peer {
     pub device: String,
     /// Hex of the key both sides derived at pairing.
-    pub key_hex: String,
+    key_hex: String,
+}
+
+/// Clock seam for deterministic pairing-rate-limit tests and app integrations.
+pub trait Clock {
+    fn now(&self) -> std::time::Duration;
+}
+
+/// Wall clock implementation for pairing attempts.
+pub struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> std::time::Duration {
+        static PROCESS_START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        PROCESS_START.get_or_init(std::time::Instant::now).elapsed()
+    }
+}
+
+/// Per-remote-device pairing attempt budget. Keep one limiter for each accepted transport peer;
+/// after three wrong codes that remote is blocked for five minutes.
+#[derive(Debug, Clone, Default)]
+pub struct PairingLimiter {
+    failures: u8,
+    locked_until: Option<std::time::Duration>,
+}
+
+impl PairingLimiter {
+    pub fn check(&mut self, now: std::time::Duration) -> Result<()> {
+        if let Some(until) = self.locked_until {
+            if now < until {
+                return Err(Error::Hub(
+                    "too many pairing attempts; try again in five minutes".into(),
+                ));
+            }
+            self.failures = 0;
+            self.locked_until = None;
+        }
+        Ok(())
+    }
+
+    fn failed(&mut self, now: std::time::Duration) {
+        self.failures = self.failures.saturating_add(1);
+        if self.failures >= 3 {
+            self.locked_until = Some(now + std::time::Duration::from_secs(5 * 60));
+        }
+    }
+
+    fn reset(&mut self) {
+        self.failures = 0;
+        self.locked_until = None;
+    }
 }
 
 impl std::fmt::Debug for Peer {
@@ -136,8 +189,8 @@ pub fn discover(wait_ms: u64) -> Result<Vec<Found>> {
 
 /// Pairs over `t` with the six-digit `code` shown on both screens (SPAKE2), confirms possession
 /// on both sides, then returns an ephemeral peer record with the same key on both devices.
-/// Persistent protected storage and failed-attempt throttling are not implemented yet.
-pub fn pair(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
+/// Internal PAKE exchange; exported callers must go through `pair_limited`.
+fn pair_inner(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
     if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(Error::Hub(
             "the pairing code must contain six digits".into(),
@@ -189,6 +242,192 @@ pub fn pair(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
     })
 }
 
+/// Rate-limited pairing entry point. The accept loop must keep `limiter` attached to the remote
+/// address for the full five-minute window and call this for every incoming pairing attempt.
+pub fn pair_limited(
+    t: &mut dyn Transport,
+    code: &str,
+    device: &str,
+    limiter: &mut PairingLimiter,
+    clock: &dyn Clock,
+) -> Result<Peer> {
+    let now = clock.now();
+    limiter.check(now)?;
+    match pair_inner(t, code, device) {
+        Ok(peer) => {
+            limiter.reset();
+            Ok(peer)
+        }
+        Err(error) => {
+            if matches!(&error, Error::Hub(message) if message == "the pairing code did not match")
+            {
+                limiter.failed(now);
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Load paired devices from a protected `peers.json` file. Callers should normally pass
+/// `<AppDirs.config>/peers.json`; the format contains secrets and is never suitable for logs.
+pub fn read_peers(path: &Path) -> Result<Vec<Peer>> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        return Err(Error::Hub(
+            "protected paired-device storage is not implemented on Windows".into(),
+        ));
+    }
+    #[cfg(not(windows))]
+    read_peers_impl(path)
+}
+
+#[cfg(not(windows))]
+fn read_peers_impl(path: &Path) -> Result<Vec<Peer>> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    };
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(Error::Hub(
+            "paired-device storage is not a regular file".into(),
+        ));
+    }
+    if !crate::platform::private_file_permissions(path)? {
+        return Err(Error::Hub("paired-device storage is not private".into()));
+    }
+    let bytes = fs::read(path)?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(Error::Hub("paired-device storage exceeds its limit".into()));
+    }
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| Error::Hub("paired-device storage is malformed".into()))?;
+    if value.get("version").and_then(|v| v.as_u64()) != Some(1) {
+        return Err(Error::Hub(
+            "paired-device storage has an unsupported version".into(),
+        ));
+    }
+    let entries = value
+        .get("peers")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::Hub("paired-device storage is malformed".into()))?;
+    if entries.len() > 256 {
+        return Err(Error::Hub(
+            "paired-device storage has too many peers".into(),
+        ));
+    }
+    let mut peers = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let device = entry
+            .get("device")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Hub("paired-device storage is malformed".into()))?;
+        let key_hex = entry
+            .get("key_hex")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::Hub("paired-device storage is malformed".into()))?;
+        if device.is_empty()
+            || device.len() > 128
+            || device.chars().any(char::is_control)
+            || key_hex.len() != 64
+            || peer_key(&Peer {
+                device: device.to_string(),
+                key_hex: key_hex.to_string(),
+            })
+            .is_err()
+            || peers.iter().any(|peer: &Peer| peer.device == device)
+        {
+            return Err(Error::Hub("paired-device storage is malformed".into()));
+        }
+        peers.push(Peer {
+            device: device.to_string(),
+            key_hex: key_hex.to_ascii_lowercase(),
+        });
+    }
+    Ok(peers)
+}
+
+/// Atomically replace the per-user paired-device file. On Unix the new file is created mode
+/// 0600 before rename. On Windows the destination ACL is inherited from the app's protected
+/// configuration directory; replacement of an existing file may be unavailable in this build.
+pub fn write_peers(path: &Path, peers: &[Peer]) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = (path, peers);
+        return Err(Error::Hub(
+            "protected paired-device storage is not implemented on Windows".into(),
+        ));
+    }
+    #[cfg(not(windows))]
+    write_peers_impl(path, peers)
+}
+
+#[cfg(not(windows))]
+fn write_peers_impl(path: &Path, peers: &[Peer]) -> Result<()> {
+    if peers.len() > 256 {
+        return Err(Error::Hub(
+            "paired-device storage has too many peers".into(),
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut entries = Vec::with_capacity(peers.len());
+    for peer in peers {
+        if peer.device.is_empty()
+            || peer.device.len() > 128
+            || peer.device.chars().any(char::is_control)
+            || peer_key(peer).is_err()
+            || !seen.insert(peer.device.clone())
+        {
+            return Err(Error::Hub("paired-device record is invalid".into()));
+        }
+        entries.push(serde_json::json!({
+            "device": peer.device,
+            "key_hex": peer.key_hex.to_ascii_lowercase(),
+        }));
+    }
+    let bytes = serde_json::to_vec(&serde_json::json!({ "version": 1, "peers": entries }))
+        .map_err(|_| Error::Hub("could not encode paired-device storage".into()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::Hub("paired-device path has no parent directory".into()))?;
+    fs::create_dir_all(parent)?;
+    let parent_meta = fs::symlink_metadata(parent)?;
+    if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
+        return Err(Error::Hub(
+            "paired-device directory must be a real directory".into(),
+        ));
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink()
+                || !meta.is_file()
+                || !crate::platform::private_file_permissions(path)?
+            {
+                return Err(Error::Hub("paired-device storage is not private".into()));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut random = [0u8; 8];
+    getrandom::getrandom(&mut random)
+        .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
+    let temp = parent.join(format!(".peers-{}.tmp", hex(&random)));
+    let mut output = crate::platform::create_private_file(&temp)?;
+    if let Err(error) = io::Write::write_all(&mut output, &bytes).and_then(|_| output.sync_all()) {
+        drop(output);
+        let _ = fs::remove_file(&temp);
+        return Err(error.into());
+    }
+    drop(output);
+    if let Err(error) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(error.into());
+    }
+    Ok(())
+}
+
 /// Sends the newest bundle for `target` and its files from `builds` to a paired peer, sealed.
 pub fn serve(t: &mut dyn Transport, peer: &Peer, builds: &Path, target: Os) -> Result<Bundle> {
     not_built("hub::serve")
@@ -211,7 +450,8 @@ pub fn serve_game(
     target: Os,
 ) -> Result<u64> {
     let key = peer_key(peer)?;
-    let (session, request) = read_sealed(t, &key, None)?;
+    let (session, request) = read_sealed(t, &key, None, CLIENT_TO_SERVER, 0)?;
+    let mut channel = SealedChannel::server(t, key, session);
     let expected = format!("PULLGAME1 {}", target.key());
     if request != expected.as_bytes() {
         return Err(Error::Hub(
@@ -221,11 +461,11 @@ pub fn serve_game(
 
     let files = enumerate_game_files(prepared_data)?;
     let manifest = format_game_manifest(target, &files)?;
-    write_sealed(t, &key, &session, &manifest)?;
+    channel.send(&manifest)?;
 
     let mut transferred = 0u64;
     for (index, file) in files.iter().enumerate() {
-        let command = read_sealed(t, &key, Some(&session))?.1;
+        let command = channel.receive()?;
         let expected_prefix = format!("NEED {index}");
         if command == format!("SKIP {index}").as_bytes() {
             continue;
@@ -251,41 +491,45 @@ pub fn serve_game(
             }
             let mut packet = format!("DATA {index} {read}\n").into_bytes();
             packet.extend_from_slice(&buf[..read]);
-            write_sealed(t, &key, &session, &packet)?;
+            channel.send(&packet)?;
             transferred = transferred
                 .checked_add(read as u64)
                 .ok_or_else(|| Error::Hub("game-data byte count overflowed".into()))?;
         }
-        write_sealed(t, &key, &session, format!("END {index}").as_bytes())?;
+        channel.send(format!("END {index}").as_bytes())?;
     }
-    write_sealed(t, &key, &session, b"DONE")?;
+    channel.send(b"DONE")?;
     Ok(transferred)
 }
 
-/// Pulls prepared game data into `staged`. Only authenticated, encrypted metadata is accepted;
+/// Pulls prepared game data into a disposable `staged` directory. Only authenticated, encrypted metadata is accepted;
 /// paths are relative and symlink-free, each file is capped at 32 GiB and the aggregate at 100 GiB.
 /// Existing regular files with the expected size/hash are skipped to resume completed files.
+/// A marker remains until the entire transfer verifies; callers must not expose or install this
+/// directory while `.uu-transfer-incomplete` exists.
 pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) -> Result<u64> {
     let key = peer_key(peer)?;
+    prepare_staging_root(staged)?;
+    let marker = mark_staging_incomplete(staged)?;
     let mut session = [0u8; 16];
     getrandom::getrandom(&mut session)
         .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
     let request = format!("PULLGAME1 {}", target.key());
-    write_sealed(t, &key, &session, request.as_bytes())?;
-    let (_, manifest) = read_sealed(t, &key, Some(&session))?;
+    let mut channel = SealedChannel::client(t, key, session);
+    channel.send(request.as_bytes())?;
+    let manifest = channel.receive()?;
     let files = parse_game_manifest(&manifest, target)?;
-    prepare_staging_root(staged)?;
     let mut received = 0u64;
 
     for (index, file) in files.iter().enumerate() {
         let destination = safe_destination(staged, &file.path, true)?;
         if file_matches(&destination, file)? {
-            write_sealed(t, &key, &session, format!("SKIP {index}").as_bytes())?;
+            channel.send(format!("SKIP {index}").as_bytes())?;
             continue;
         }
-        write_sealed(t, &key, &session, format!("NEED {index}").as_bytes())?;
+        channel.send(format!("NEED {index}").as_bytes())?;
         let temp = temporary_sibling(&destination)?;
-        let result = receive_game_file(t, &key, &session, index, file, &temp);
+        let result = receive_game_file(&mut channel, index, file, &temp);
         if let Err(error) = result {
             let _ = fs::remove_file(&temp);
             return Err(error);
@@ -295,12 +539,13 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
             .checked_add(file.size)
             .ok_or_else(|| Error::Hub("game-data byte count overflowed".into()))?;
     }
-    let (_, done) = read_sealed(t, &key, Some(&session))?;
+    let done = channel.receive()?;
     if done != b"DONE" {
         return Err(Error::Hub(
             "the game-data transfer ended unexpectedly".into(),
         ));
     }
+    fs::remove_file(marker)?;
     Ok(received)
 }
 
@@ -358,6 +603,8 @@ fn write_sealed(
     t: &mut dyn Transport,
     key: &[u8; 32],
     session: &[u8; 16],
+    direction: u8,
+    sequence: u64,
     plaintext: &[u8],
 ) -> Result<()> {
     if plaintext.len() > MAX_CONTROL_FRAME {
@@ -370,6 +617,8 @@ fn write_sealed(
         .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
     let mut aad = TRANSFER_DOMAIN.to_vec();
     aad.extend_from_slice(session);
+    aad.push(direction);
+    aad.extend_from_slice(&sequence.to_be_bytes());
     let sealed = cipher
         .encrypt(
             XNonce::from_slice(&nonce),
@@ -384,6 +633,7 @@ fn write_sealed(
         .checked_add(sealed.len())
         .ok_or_else(|| Error::Hub("transfer frame size overflowed".into()))?;
     t.write_all(session)?;
+    t.write_all(&sequence.to_be_bytes())?;
     t.write_all(&(size as u32).to_be_bytes())?;
     t.write_all(&nonce)?;
     t.write_all(&sealed)?;
@@ -395,11 +645,19 @@ fn read_sealed(
     t: &mut dyn Transport,
     key: &[u8; 32],
     expected_session: Option<&[u8; 16]>,
+    direction: u8,
+    expected_sequence: u64,
 ) -> Result<([u8; 16], Vec<u8>)> {
     let mut session = [0u8; 16];
     t.read_exact(&mut session)?;
     if expected_session.is_some_and(|expected| expected != &session) {
         return Err(Error::Hub("transfer session did not match".into()));
+    }
+    let mut sequence = [0u8; 8];
+    t.read_exact(&mut sequence)?;
+    let sequence = u64::from_be_bytes(sequence);
+    if sequence != expected_sequence {
+        return Err(Error::Hub("transfer frame was out of order".into()));
     }
     let mut size = [0u8; 4];
     t.read_exact(&mut size)?;
@@ -415,6 +673,8 @@ fn read_sealed(
         .map_err(|_| Error::Hub("could not initialize transfer encryption".into()))?;
     let mut aad = TRANSFER_DOMAIN.to_vec();
     aad.extend_from_slice(&session);
+    aad.push(direction);
+    aad.extend_from_slice(&sequence.to_be_bytes());
     let plain = cipher
         .decrypt(
             XNonce::from_slice(&nonce),
@@ -427,6 +687,73 @@ fn read_sealed(
     Ok((session, plain))
 }
 
+struct SealedChannel<'a> {
+    transport: &'a mut dyn Transport,
+    key: [u8; 32],
+    session: [u8; 16],
+    send_direction: u8,
+    receive_direction: u8,
+    send_sequence: u64,
+    receive_sequence: u64,
+}
+
+impl<'a> SealedChannel<'a> {
+    fn client(transport: &'a mut dyn Transport, key: [u8; 32], session: [u8; 16]) -> Self {
+        Self {
+            transport,
+            key,
+            session,
+            send_direction: CLIENT_TO_SERVER,
+            receive_direction: SERVER_TO_CLIENT,
+            send_sequence: 0,
+            receive_sequence: 0,
+        }
+    }
+
+    fn server(transport: &'a mut dyn Transport, key: [u8; 32], session: [u8; 16]) -> Self {
+        Self {
+            transport,
+            key,
+            session,
+            send_direction: SERVER_TO_CLIENT,
+            receive_direction: CLIENT_TO_SERVER,
+            send_sequence: 0,
+            receive_sequence: 1, // Request sequence zero established the session.
+        }
+    }
+
+    fn send(&mut self, plaintext: &[u8]) -> Result<()> {
+        write_sealed(
+            self.transport,
+            &self.key,
+            &self.session,
+            self.send_direction,
+            self.send_sequence,
+            plaintext,
+        )?;
+        self.send_sequence = self
+            .send_sequence
+            .checked_add(1)
+            .ok_or_else(|| Error::Hub("transfer sequence overflowed".into()))?;
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Result<Vec<u8>> {
+        let (_, plaintext) = read_sealed(
+            self.transport,
+            &self.key,
+            Some(&self.session),
+            self.receive_direction,
+            self.receive_sequence,
+        )?;
+        self.receive_sequence = self
+            .receive_sequence
+            .checked_add(1)
+            .ok_or_else(|| Error::Hub("transfer sequence overflowed".into()))?;
+        Ok(plaintext)
+    }
+}
+
 fn enumerate_game_files(root: &Path) -> Result<Vec<GameFile>> {
     if !root.is_dir() || fs::symlink_metadata(root)?.file_type().is_symlink() {
         return Err(Error::Hub(
@@ -436,6 +763,7 @@ fn enumerate_game_files(root: &Path) -> Result<Vec<GameFile>> {
     let mut result = Vec::new();
     collect_game_files(root, root, &mut result)?;
     result.sort_by(|a, b| a.path.cmp(&b.path));
+    validate_game_paths(&result)?;
     let mut total = 0u64;
     for file in &result {
         total = total
@@ -506,7 +834,7 @@ fn sensitive_game_path(path: &str) -> bool {
         || lowered
             .split('/')
             .next()
-            .is_some_and(|first| ["mods", "user"].iter().any(|owned| first == *owned))
+            .is_some_and(|first| ["mods", "user"].contains(&first))
         || [".keys", ".rif", ".pkg"]
             .iter()
             .any(|suffix| lowered.ends_with(suffix))
@@ -518,9 +846,63 @@ fn safe_transfer_path(path: &str) -> bool {
         && !path.contains('\\')
         && !path.contains(':')
         && !path.chars().any(char::is_control)
-        && path
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
+        && path.split('/').all(|part| {
+            let stem = part.split('.').next().unwrap_or("").to_ascii_uppercase();
+            let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+                || ["COM", "LPT"].iter().any(|prefix| {
+                    stem.strip_prefix(prefix)
+                        .and_then(|suffix| suffix.parse::<u8>().ok())
+                        .is_some_and(|number| (1..=9).contains(&number))
+                });
+            !part.is_empty()
+                && part != "."
+                && part != ".."
+                && !part.ends_with('.')
+                && !part.ends_with(' ')
+                && !reserved
+                && part != STAGING_MARKER
+        })
+}
+
+fn validate_game_paths(files: &[GameFile]) -> Result<()> {
+    let mut paths = std::collections::BTreeSet::new();
+    for file in files {
+        if !safe_transfer_path(&file.path) {
+            return Err(Error::Hub(
+                "game-data manifest contains an unsafe path".into(),
+            ));
+        }
+        let canonical = file.path.to_lowercase();
+        if !paths.insert(canonical.clone()) {
+            return Err(Error::Hub(
+                "game-data manifest contains case-folded path collisions".into(),
+            ));
+        }
+        let components: Vec<&str> = canonical.split('/').collect();
+        let mut prefix = String::new();
+        for component in &components[..components.len() - 1] {
+            if !prefix.is_empty() {
+                prefix.push('/');
+            }
+            prefix.push_str(component);
+            if paths.contains(&prefix) {
+                return Err(Error::Hub(
+                    "game-data manifest has a file/directory path conflict".into(),
+                ));
+            }
+        }
+        let descendant_prefix = format!("{canonical}/");
+        if paths
+            .range(descendant_prefix.clone()..)
+            .next()
+            .is_some_and(|existing| existing.starts_with(&descendant_prefix))
+        {
+            return Err(Error::Hub(
+                "game-data manifest has a file/directory path conflict".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn format_game_manifest(target: Os, files: &[GameFile]) -> Result<Vec<u8>> {
@@ -606,6 +988,7 @@ fn parse_game_manifest(bytes: &[u8], target: Os) -> Result<Vec<GameFile>> {
             sha256: sha256.to_string(),
         });
     }
+    validate_game_paths(&files)?;
     Ok(files)
 }
 
@@ -650,6 +1033,24 @@ fn prepare_staging_root(root: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn mark_staging_incomplete(root: &Path) -> Result<PathBuf> {
+    let marker = root.join(STAGING_MARKER);
+    match fs::symlink_metadata(&marker) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
+            return Err(Error::Hub("game-data staging marker is unsafe".into()))
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&marker)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(marker)
 }
 
 fn safe_destination(root: &Path, relative: &str, make_parents: bool) -> Result<PathBuf> {
@@ -709,9 +1110,7 @@ fn temporary_sibling(destination: &Path) -> Result<PathBuf> {
 }
 
 fn receive_game_file(
-    t: &mut dyn Transport,
-    key: &[u8; 32],
-    session: &[u8; 16],
+    channel: &mut SealedChannel<'_>,
     index: usize,
     file: &GameFile,
     temp: &Path,
@@ -723,7 +1122,7 @@ fn receive_game_file(
     let mut written = 0u64;
     let mut hash = Sha256::new();
     loop {
-        let (_, packet) = read_sealed(t, key, Some(session))?;
+        let packet = channel.receive()?;
         if packet == format!("END {index}").as_bytes() {
             break;
         }
@@ -874,6 +1273,16 @@ mod tests {
 
     impl Transport for MemoryTransport {}
 
+    fn pair_test(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
+        pair_limited(
+            t,
+            code,
+            device,
+            &mut PairingLimiter::default(),
+            &SystemClock,
+        )
+    }
+
     #[derive(Default)]
     struct BufferTransport {
         incoming: io::Cursor<Vec<u8>>,
@@ -943,25 +1352,25 @@ mod tests {
     #[test]
     fn spake2_pairing_confirms_both_peers_and_rejects_wrong_codes() {
         let (mut a, mut b) = MemoryTransport::pair();
-        let left = std::thread::spawn(move || pair(&mut a, "483921", "hub"));
-        let right = std::thread::spawn(move || pair(&mut b, "483921", "handheld"));
+        let left = std::thread::spawn(move || pair_test(&mut a, "483921", "hub"));
+        let right = std::thread::spawn(move || pair_test(&mut b, "483921", "handheld"));
         let left = left.join().unwrap().unwrap();
         let right = right.join().unwrap().unwrap();
         assert_ne!(left.device, right.device);
         assert_eq!(left.key_hex, right.key_hex);
 
         let (mut a, mut b) = MemoryTransport::pair();
-        let left = std::thread::spawn(move || pair(&mut a, "483921", "hub"));
-        let right = std::thread::spawn(move || pair(&mut b, "111111", "handheld"));
+        let left = std::thread::spawn(move || pair_test(&mut a, "483921", "hub"));
+        let right = std::thread::spawn(move || pair_test(&mut b, "111111", "handheld"));
         assert!(left.join().unwrap().is_err());
         assert!(right.join().unwrap().is_err());
     }
 
     #[test]
-    fn paired_loopback_game_data_transfer_is_sealed_bounded_and_resumable() {
+    fn paired_memory_transport_game_data_transfer_is_sealed_bounded_and_resumable() {
         let (mut a, mut b) = MemoryTransport::pair();
-        let hub_peer = std::thread::spawn(move || pair(&mut a, "483921", "hub"));
-        let device_peer = std::thread::spawn(move || pair(&mut b, "483921", "handheld"));
+        let hub_peer = std::thread::spawn(move || pair_test(&mut a, "483921", "hub"));
+        let device_peer = std::thread::spawn(move || pair_test(&mut b, "483921", "handheld"));
         let hub_peer = hub_peer.join().unwrap().unwrap();
         let device_peer = device_peer.join().unwrap().unwrap();
 
@@ -991,6 +1400,7 @@ mod tests {
         );
         assert!(fs::read(staged.join("content/empty")).unwrap().is_empty());
         assert_eq!(serving.join().unwrap().unwrap(), 27);
+        assert!(!staged.join(STAGING_MARKER).exists());
 
         let (mut server, mut client) = MemoryTransport::pair();
         let serving =
@@ -1000,6 +1410,61 @@ mod tests {
             0
         );
         assert_eq!(serving.join().unwrap().unwrap(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn paired_tcp_loopback_transfers_synthetic_game_data() {
+        let pairing_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let pairing_addr = pairing_listener.local_addr().unwrap();
+        let pairing_server = std::thread::spawn(move || {
+            let (stream, _) = pairing_listener.accept().unwrap();
+            let mut transport = TcpTransport::from_stream(stream).unwrap();
+            pair_limited(
+                &mut transport,
+                "483921",
+                "hub",
+                &mut PairingLimiter::default(),
+                &SystemClock,
+            )
+        });
+        let mut pairing_client =
+            TcpTransport::connect(pairing_addr, Duration::from_secs(2)).unwrap();
+        let client_peer = pair_limited(
+            &mut pairing_client,
+            "483921",
+            "handheld",
+            &mut PairingLimiter::default(),
+            &SystemClock,
+        )
+        .unwrap();
+        let server_peer = pairing_server.join().unwrap().unwrap();
+
+        let root = std::env::temp_dir().join(format!("uu-tcp-transfer-{}", std::process::id()));
+        let source = root.join("source");
+        let staged = root.join("staged");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("content.bin"), b"synthetic TCP loopback data").unwrap();
+
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let serving = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut transport = TcpTransport::from_stream(stream).unwrap();
+            serve_game(&mut transport, &server_peer, &source, Os::Linux)
+        });
+        let mut transport = TcpTransport::connect(addr, Duration::from_secs(2)).unwrap();
+        assert_eq!(
+            pull_game(&mut transport, &client_peer, Os::Linux, &staged).unwrap(),
+            27
+        );
+        assert_eq!(
+            fs::read(staged.join("content.bin")).unwrap(),
+            b"synthetic TCP loopback data"
+        );
+        assert!(!staged.join(STAGING_MARKER).exists());
+        assert_eq!(serving.join().unwrap().unwrap(), 27);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1034,10 +1499,18 @@ mod tests {
         let key = [9u8; 32];
         let session = [7u8; 16];
         let mut buffer = BufferTransport::default();
-        write_sealed(&mut buffer, &key, &session, b"synthetic manifest").unwrap();
+        write_sealed(
+            &mut buffer,
+            &key,
+            &session,
+            SERVER_TO_CLIENT,
+            0,
+            b"synthetic manifest",
+        )
+        .unwrap();
         buffer.outgoing[48] ^= 0x80;
         buffer.incoming = io::Cursor::new(buffer.outgoing.clone());
-        assert!(read_sealed(&mut buffer, &key, None).is_err());
+        assert!(read_sealed(&mut buffer, &key, None, SERVER_TO_CLIENT, 0).is_err());
     }
 
     #[test]
@@ -1047,6 +1520,10 @@ mod tests {
             "content/../../outside",
             "saves/slot",
             "user/mod",
+            "CON",
+            "NUL.txt",
+            "content/trailing.",
+            "content/trailing ",
         ] {
             let text = format!(
                 "uncharted-game-data 1\ntarget linux\nfile 1 {} {path}\n",
@@ -1066,14 +1543,28 @@ mod tests {
     }
 
     #[test]
+    fn manifest_rejects_casefold_collisions_and_file_directory_conflicts() {
+        let hash = "0".repeat(64);
+        for rows in [
+            format!("file 1 {hash} content/Foo\nfile 1 {hash} content/foo\n"),
+            format!("file 1 {hash} content\nfile 1 {hash} content/data.bin\n"),
+            format!("file 1 {hash} content/data.bin\nfile 1 {hash} CONTENT\n"),
+        ] {
+            let text = format!("uncharted-game-data 1\ntarget linux\n{rows}");
+            assert!(parse_game_manifest(text.as_bytes(), Os::Linux).is_err());
+        }
+    }
+
+    #[test]
     fn invalid_file_hash_is_never_committed_to_staging() {
-        let (mut receiver, mut sender) = MemoryTransport::pair();
+        let (mut receiver_transport, mut sender_transport) = MemoryTransport::pair();
         let key = [3u8; 32];
         let session = [5u8; 16];
-        let session_copy = session;
+        let receiver = SealedChannel::client(&mut receiver_transport, key, session);
         let sender_thread = std::thread::spawn(move || {
-            write_sealed(&mut sender, &key, &session_copy, b"DATA 0 3\nxyz").unwrap();
-            write_sealed(&mut sender, &key, &session_copy, b"END 0").unwrap();
+            let mut sender = SealedChannel::server(&mut sender_transport, key, session);
+            sender.send(b"DATA 0 3\nxyz").unwrap();
+            sender.send(b"END 0").unwrap();
         });
         let path = std::env::temp_dir().join(format!("uu-corrupt-{}.tmp", std::process::id()));
         let _ = fs::remove_file(&path);
@@ -1082,7 +1573,8 @@ mod tests {
             size: 3,
             sha256: hex(&Sha256::digest(b"abc")),
         };
-        assert!(receive_game_file(&mut receiver, &key, &session, 0, &file, &path).is_err());
+        let mut receiver = receiver;
+        assert!(receive_game_file(&mut receiver, 0, &file, &path).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"xyz");
         fs::remove_file(path).unwrap();
         sender_thread.join().unwrap();
@@ -1103,5 +1595,68 @@ mod tests {
         assert!(!outside.join("file.bin").exists());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn pairing_limiter_blocks_three_failures_for_five_minutes() {
+        let mut limiter = PairingLimiter::default();
+        let start = std::time::Duration::from_secs(10_000);
+        limiter.check(start).unwrap();
+        limiter.failed(start);
+        limiter.failed(start);
+        limiter.failed(start);
+        assert!(limiter
+            .check(start + std::time::Duration::from_secs(299))
+            .is_err());
+        limiter
+            .check(start + std::time::Duration::from_secs(300))
+            .unwrap();
+        assert_eq!(limiter.failures, 0);
+    }
+
+    #[test]
+    fn peer_storage_round_trips_with_owner_only_unix_mode_and_redacted_debug() {
+        let root = std::env::temp_dir().join(format!("uu-peers-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("peers.json");
+        let peer = Peer {
+            device: "synthetic handheld".into(),
+            key_hex: "a5".repeat(32),
+        };
+        write_peers(&path, std::slice::from_ref(&peer)).unwrap();
+        let peers = read_peers(&path).unwrap();
+        assert_eq!(peers, vec![peer.clone()]);
+        assert!(!format!("{peer:?}").contains(&peer.key_hex));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn peer_storage_rejects_duplicate_and_unprotected_files() {
+        let root = std::env::temp_dir().join(format!("uu-peers-invalid-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("peers.json");
+        let peer = Peer {
+            device: "synthetic handheld".into(),
+            key_hex: "a5".repeat(32),
+        };
+        assert!(write_peers(&path, &[peer.clone(), peer]).is_err());
+        fs::write(&path, br#"{"version":1,"peers":[]}"#).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(read_peers(&path).is_err());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
