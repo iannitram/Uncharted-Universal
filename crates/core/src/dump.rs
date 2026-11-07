@@ -3,7 +3,7 @@
 //! and `param.sfo` are read; nothing is copied, uploaded or logged (M9). Replaces the checks
 //! scattered through `run.py` (`locate`, `find_executable`) and `launcher/` start-up code.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::games::Game;
 use crate::sfo::{self, APP_VER, TITLE_ID};
 use std::fs::{self, File};
@@ -42,6 +42,31 @@ pub struct DumpReport {
 /// revision the port does not support is listed in `problems` and left to
 /// `games::check_revision` to refuse at prepare.
 pub fn check(folder: &Path) -> Result<DumpReport> {
+    // A dump's collection family must be known before inspecting executable files. Refuse
+    // missing or unusable SFO metadata before constructing a report, so callers can fail the
+    // preparation gate without guessing which collection this folder belongs to.
+    let param = folder.join("sce_sys").join("param.sfo");
+    let data = fs::read(&param).map_err(|error| {
+        Error::BadDump(
+            match error.kind() {
+                std::io::ErrorKind::NotFound => "The dump is missing sce_sys/param.sfo.",
+                _ => "sce_sys/param.sfo is damaged or unreadable.",
+            }
+            .into(),
+        )
+    })?;
+    let values = sfo::parse(&data)
+        .map_err(|_| Error::BadDump("sce_sys/param.sfo is damaged or unreadable.".into()))?;
+    let title_id = sfo::text(&values, TITLE_ID)
+        .ok_or_else(|| Error::BadDump("param.sfo is missing the CUSA title ID.".into()))?
+        .to_owned();
+    if !crate::games::is_collection_title_id(&title_id) {
+        return Err(Error::BadDump(
+            "param.sfo has an unrecognized CUSA title ID.".into(),
+        ));
+    }
+    let app_ver = sfo::text(&values, APP_VER).map(str::to_owned);
+
     let mut problems = Vec::new();
     let mut games = Vec::new();
     let mut decrypted = true;
@@ -69,40 +94,16 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
             app_ver: None,
         });
     }
-    let param = folder.join("sce_sys").join("param.sfo");
-    let mut title_id = None;
-    let mut app_ver = None;
-    if param.is_file() {
-        match fs::read(&param)
-            .map_err(crate::error::Error::from)
-            .and_then(|data| sfo::parse(&data))
-        {
-            Ok(values) => {
-                title_id = sfo::text(&values, TITLE_ID).map(str::to_owned);
-                app_ver = sfo::text(&values, APP_VER).map(str::to_owned);
-                if let Some(id) = title_id.as_deref() {
-                    if !crate::games::is_collection_title_id(id) {
-                        problems.push("param.sfo has an unrecognized CUSA title ID.".into());
-                    }
-                } else {
-                    problems.push("param.sfo is missing the CUSA title ID.".into());
-                }
-                if let Some(ver) = app_ver.as_deref() {
-                    if ver == "01.02" || ver == "1.02" {
-                        problems.push("This dump is version 1.02; the port expects version 1.00 and does not support the merged update.".into());
-                    } else if ver != "01.00" && ver != "1.00" {
-                        problems.push(format!(
-                            "This dump is version {ver}; the port expects version 1.00."
-                        ));
-                    }
-                } else {
-                    problems.push("param.sfo is missing APP_VER.".into());
-                }
-            }
-            Err(_) => problems.push("sce_sys/param.sfo is damaged or unreadable.".into()),
+    if let Some(ver) = app_ver.as_deref() {
+        if ver == "01.02" || ver == "1.02" {
+            problems.push("This dump is version 1.02; the port expects version 1.00 and does not support the merged update.".into());
+        } else if ver != "01.00" && ver != "1.00" {
+            problems.push(format!(
+                "This dump is version {ver}; the port expects version 1.00."
+            ));
         }
     } else {
-        problems.push("The dump is missing sce_sys/param.sfo.".into());
+        problems.push("param.sfo is missing APP_VER.".into());
     }
     for name in ["sce_sys", "u1data", "u2data", "u3data"] {
         if !folder.join(name).is_dir() {
@@ -113,7 +114,7 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
         found.app_ver = app_ver.clone();
     }
     Ok(DumpReport {
-        title_id,
+        title_id: Some(title_id),
         decrypted,
         games,
         problems,
@@ -145,7 +146,11 @@ mod tests {
     }
 
     fn put_sfo(dir: &Path, version: &str) {
-        let pairs = [("TITLE_ID", "CUSA02320"), ("APP_VER", version)];
+        put_sfo_with_title(dir, "CUSA02320", version);
+    }
+
+    fn put_sfo_with_title(dir: &Path, title_id: &str, version: &str) {
+        let pairs = [("TITLE_ID", title_id), ("APP_VER", version)];
         let mut keys = Vec::new();
         let mut vals = Vec::new();
         let mut entries = Vec::new();
@@ -229,10 +234,45 @@ mod tests {
             .any(|p| p == "The dump is missing the u3data folder."));
 
         let wrong = TempDir::new("wrong");
+        fs::create_dir(wrong.0.join("sce_sys")).unwrap();
+        for name in ["u1data", "u2data", "u3data"] {
+            fs::create_dir(wrong.0.join(name)).unwrap();
+        }
+        put_sfo(&wrong.0, "01.00");
         let report = check(&wrong.0).unwrap();
         assert!(report
             .problems
             .iter()
             .any(|p| p == "The dump is missing eboot.bin."));
+    }
+
+    #[test]
+    fn refuses_missing_unreadable_and_unknown_title_metadata_before_reporting() {
+        let missing = good("missing-sfo", "01.00");
+        fs::remove_file(missing.0.join("sce_sys/param.sfo")).unwrap();
+        assert_eq!(
+            check(&missing.0),
+            Err(crate::error::Error::BadDump(
+                "The dump is missing sce_sys/param.sfo.".into()
+            ))
+        );
+
+        let unreadable = good("unreadable-sfo", "01.00");
+        fs::write(unreadable.0.join("sce_sys/param.sfo"), b"not an SFO").unwrap();
+        assert_eq!(
+            check(&unreadable.0),
+            Err(crate::error::Error::BadDump(
+                "sce_sys/param.sfo is damaged or unreadable.".into()
+            ))
+        );
+
+        let unknown = good("unknown-title", "01.00");
+        put_sfo_with_title(&unknown.0, "CUSA00000", "01.00");
+        assert_eq!(
+            check(&unknown.0),
+            Err(crate::error::Error::BadDump(
+                "param.sfo has an unrecognized CUSA title ID.".into()
+            ))
+        );
     }
 }
