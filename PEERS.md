@@ -5,6 +5,16 @@ the player's own decrypted dump. This file records where other repositories
 already provide platform work we can study or adapt. The machine-readable
 `peer:` lines remain in [SPEC.md](SPEC.md#prior-art).
 
+## Shared save-sync dependency
+
+[iannitram/save-relay](https://github.com/iannitram/save-relay) owns save syncing
+across Linux, Windows, macOS, iOS/iPadOS and Android for this project. Attach its
+integration when the relevant platform support and interface are ready; for now,
+keep this reference and the existing roadmap dependency. Its README was checked
+on 2026-11-06: it describes a reusable pull-before-play/push-after-play service,
+but does not claim current support for all five targets. No dependency or sync
+implementation is added by this survey.
+
 ## Platform survey — checked 2026-11-06
 
 Repository heads, READMEs, trees and the linked implementation files were checked

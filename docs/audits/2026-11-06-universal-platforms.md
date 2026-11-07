@@ -95,6 +95,13 @@ implemented discovery/pairing/transfer path, verified installer, save-relay
 adapter or prepare/update rollback. Enabling the `hub` feature adds stub code,
 not a running service. #189 covers the separate home-network game-data copy.
 
+Save syncing is owned by the separate
+[iannitram/save-relay](https://github.com/iannitram/save-relay) project for all
+five target platforms. Reference it for now and attach its adapter when the
+relevant platform support and integration interface are ready. The missing
+adapter here is an integration dependency, not a request to implement a second
+save-sync service. Its current README does not establish five-platform readiness.
+
 **Next:** ROADMAP stages 4, 5 and 9. Specify the artifact boundary before serving
 files: engine/tool binaries are separate from the player's dump-derived boot
 images and AOT libraries. Those generated files also contain game code and

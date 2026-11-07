@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-06 Owner clarification: save sync on all five target platforms belongs to iannitram/save-relay; reference it now and attach its integration when ready. No sync dependency or implementation added here.
 - 2026-11-06 Universal readiness audit (#203): README now describes all five target platforms and current stubs; preserved the inherited Linux README, refreshed PEERS.md with pinned platform sources and reuse limits, and aligned pipeline, agent notes and CI descriptions with the approved spec. No platform implementation or acceptance claim added.
 - 2026-11-02 Upstream sync #164 (PR #186): Supermedo main bbd1b3a (26 commits, 0.3.10 and 0.3.11) merged into `main`; ten conflicts resolved, ours kept where it differs (`run.py` and launcher defaults and texts: Uncharted 3 aim blur and small-buffer readback stay off until measured in #191; the art generator stays until ported in #190).
 - 2026-11-01 Player tools added to the roadmap and code map: crash help (#165), auto-tune (#166), and the Game Mode menu after 1.0 (#167); split into #168-#178.

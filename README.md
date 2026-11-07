@@ -5,7 +5,8 @@ Collection dump**, with target versions for **Linux / SteamOS, Windows, macOS,
 iOS / iPadOS and Android**.
 
 The intended app checks the dump, prepares the selected game's platform build,
-installs it on your own device, and keeps your saves together through save-relay.
+installs it on your own device, and keeps your saves together through
+[save-relay](https://github.com/iannitram/save-relay).
 Linux and Windows use the original x86-64 game code with the port's runtime and
 Vulkan renderer. Android uses an ARM64 runtime around FEXCore. The approved
 Apple route is a library recompiled from your dump on a Mac, with Metal rendering
@@ -45,6 +46,17 @@ one host can cross-build every target.
 The dump and generated game code stay on your own devices. The home-network
 installation and save-relay flows are planned; they are not current services.
 Supported revisions must be verified per game and platform before preparation.
+
+## Save syncing
+
+[iannitram/save-relay](https://github.com/iannitram/save-relay) is the shared
+save-sync project for all five target platforms: Linux, Windows, macOS,
+iOS/iPadOS and Android. Uncharted-Universal will integrate it when its relevant
+platform support and integration interface are ready. For now this is a
+dependency reference; no sync library or service is attached here. The intended
+flow is to pull saves before play and push them after play, using the same saves
+across devices. Readiness is tracked in save-relay itself; this is not a claim
+that it currently supports all five platforms.
 
 ## Build and inspect the current code
 
