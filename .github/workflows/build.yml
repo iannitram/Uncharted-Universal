@@ -70,14 +70,15 @@ jobs:
           # rustup-init needs /proc/self/exe, which is intentionally not mounted in this
           # unprivileged chroot. Run its installer on the host, targeting the chroot's /root.
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
-          sudo env HOME="$CHROOT/root" RUSTUP_HOME="$CHROOT/root/.rustup" CARGO_HOME="$CHROOT/root/.cargo" \
+          sudo env RUSTUP_HOME="$CHROOT/root/.rustup" CARGO_HOME="$CHROOT/root/.cargo" \
             sh "$RUNNER_TEMP/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain 1.88.0
           rm -f "$RUNNER_TEMP/rustup-init.sh"
-          sudo chroot "$CHROOT" /root/.cargo/bin/rustc --version
+          # Rustup's proxy needs /proc/self/exe; call the installed toolchain binaries directly.
+          sudo chroot "$CHROOT" /root/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --version
       - name: Build
         run: |
           sudo chroot "$CHROOT" bash -euc '
-            export PATH="$HOME/.cargo/bin:$PATH"
+            export PATH="$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:$PATH"
             git config --global --add safe.directory "*"
             cd /work
             BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh
