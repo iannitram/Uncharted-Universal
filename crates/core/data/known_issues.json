@@ -1,0 +1,221 @@
+[
+  {
+    "id": "u2-submesh-assertion",
+    "signature": "iSubMesh < m_numSubMeshInstances",
+    "game": "u2",
+    "locations": [],
+    "summary": "U2 mesh-instance assertion reported during streaming; root cause remains under investigation.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/109"
+  },
+  {
+    "id": "u1-submesh-assertion",
+    "signature": "iSubMesh < m_numSubMeshInstances",
+    "game": "u1",
+    "locations": [
+      "chapter 4",
+      "chapter 10",
+      "chapter 11"
+    ],
+    "summary": "U1 mesh-instance assertion reported after cutscenes or checkpoints in these chapters.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
+  },
+  {
+    "id": "u2-legik-finite-assertion",
+    "signature": "IsFinite(deltaTransform)",
+    "game": "u2",
+    "locations": [
+      "train wreck"
+    ],
+    "summary": "U2 leg-IK finite-value assertion reported at the train wreck.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/127"
+  },
+  {
+    "id": "u2-eop-tick-framebegin",
+    "signature": "GetRenderFrameParams(frameToFreeInstancesFor)->m_gfxEopTick",
+    "game": "u2",
+    "locations": [],
+    "summary": "U2 FrameBegin EOP-tick assertion recorded in the crash report.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/84"
+  },
+  {
+    "id": "u2-trainwreck-fault-a93d88",
+    "signature": "guest offset 0xa93d88",
+    "game": "u2",
+    "locations": [
+      "train wreck"
+    ],
+    "summary": "U2 train-wreck report records a read fault at guest offset 0xa93d88.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/288"
+  },
+  {
+    "id": "u2-trainwreck-fault-c47e31",
+    "signature": "guest offset 0xc47e31",
+    "game": "u2",
+    "locations": [
+      "train wreck"
+    ],
+    "summary": "A second U2 train-wreck report records a read fault at guest offset 0xc47e31.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/288"
+  },
+  {
+    "id": "u2-steamvalve-null-call-6be567",
+    "signature": "guest offset 0x6be567",
+    "game": "u2",
+    "locations": [
+      "museum sewer after turning the steam valve",
+      "alarm panel"
+    ],
+    "summary": "U2 reports record a null-call crash at guest offset 0x6be567 after turning the museum-sewer steam valve and later at the alarm panel.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/88"
+  },
+  {
+    "id": "u2-trainwreck-fault-6bd76e",
+    "signature": "guest offset 0x6bd76e",
+    "game": "u2",
+    "locations": [
+      "train wreck"
+    ],
+    "summary": "U2 train-wreck report records a read fault at guest offset 0x6bd76e.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/253"
+  },
+  {
+    "id": "u2-framebegin-fault-5547d5",
+    "signature": "guest offset 0x5547d5",
+    "game": "u2",
+    "locations": [],
+    "summary": "U2 FrameBegin report records a read fault at guest offset 0x5547d5.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/84"
+  },
+  {
+    "id": "u2-legik-fault-8ec649",
+    "signature": "guest offset 0x8ec649",
+    "game": "u2",
+    "locations": [
+      "train wreck"
+    ],
+    "summary": "U2 leg-IK report records a read fault at guest offset 0x8ec649.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/88"
+  },
+  {
+    "id": "u1-chapter4-fault-74d488",
+    "signature": "guest offset 0x74d488",
+    "game": "u1",
+    "locations": [
+      "chapter 4"
+    ],
+    "summary": "U1 chapter 4 report records a read fault at guest offset 0x74d488.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/270"
+  },
+  {
+    "id": "u1-uboat-fault-581a90",
+    "signature": "guest offset 0x581a90",
+    "game": "u1",
+    "locations": [
+      "U-boat section"
+    ],
+    "summary": "U1 U-boat report records a repeatable read fault at guest offset 0x581a90.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/250"
+  },
+  {
+    "id": "u1-fault-581aba",
+    "signature": "guest offset 0x581aba",
+    "game": "u1",
+    "locations": [],
+    "summary": "U1 gameplay report records a read fault at guest offset 0x581aba.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/57"
+  },
+  {
+    "id": "u1-fault-63f61e",
+    "signature": "guest offset 0x63f61e",
+    "game": "u1",
+    "locations": [],
+    "summary": "U1 report records a read fault at guest offset 0x63f61e after several minutes of play.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/298"
+  },
+  {
+    "id": "u1-repeated-submesh-fault-74d488",
+    "signature": "guest offset 0x74d488",
+    "game": "u1",
+    "locations": [],
+    "summary": "U1 report records the same SubMesh assertion and read fault at guest offset 0x74d488 across several chapters.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/299"
+  },
+  {
+    "id": "u3-london-fault-4944cb",
+    "signature": "guest offset 0x4944cb",
+    "game": "u3",
+    "locations": [
+      "London bar fight"
+    ],
+    "summary": "U3 London bar report records a read fault at guest offset 0x4944cb.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/124"
+  },
+  {
+    "id": "u1-boat-framebegin-fault-4d27ba",
+    "signature": "guest offset 0x4d27ba",
+    "game": "u1",
+    "locations": [
+      "after leaving Elena with the boat"
+    ],
+    "summary": "U1 report after leaving Elena with the boat records a FrameBegin EOP-tick assertion and read fault at guest offset 0x4d27ba.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/121"
+  },
+  {
+    "id": "u3-london-fault-d9c59b",
+    "signature": "guest offset 0xd9c59b",
+    "game": "u3",
+    "locations": [
+      "London pub"
+    ],
+    "summary": "U3 London pub reports record a read fault at guest offset 0xd9c59b.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/71"
+  },
+  {
+    "id": "u3-main-menu-fault-8df3e0",
+    "signature": "guest offset 0x8df3e0",
+    "game": "u3",
+    "locations": [
+      "main menu"
+    ],
+    "summary": "U3 report records a read fault at guest offset 0x8df3e0 in the main menu.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/253"
+  }
+]
