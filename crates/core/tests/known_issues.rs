@@ -70,6 +70,14 @@ fn load_reads_a_valid_file_in_order() {
 }
 
 #[test]
+fn load_reads_the_shipped_known_issues_file() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/known_issues.json");
+    let issues = load_known_issues(&path);
+    assert!(issues.len() >= 15, "shipped known-issues data is incomplete");
+    assert!(issues.iter().all(|issue| issue.issue.starts_with("https://github.com/")));
+}
+
+#[test]
 fn a_valid_list_parses_in_order_with_every_field() {
     let got = parse(&[GENERAL, LOCATED]);
     assert_eq!(ids(&got), ["a", "b"]);
