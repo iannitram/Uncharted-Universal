@@ -171,6 +171,25 @@ All proposed peer code remains **not imported**. Build recipes, synthetic harnes
 
 ## Issue dependency index
 
+### Foundation batch (2026-11-06)
+
+These five independently buildable Rust foundations are the owner's selected
+first implementation batch. Their current public type contracts already exist,
+so none requires another issue in this batch to merge first. The consumer stages
+below remain integration work; a completed module does not establish a working
+launcher, prepared game or runnable platform. Module status changes land with
+the corresponding implementation PR, not with this planning index.
+
+| Foundation issue | Implementation | Later consumer |
+|---|---|---|
+| [#213 platform paths](https://github.com/iannitram/Uncharted-Universal/issues/213) | [PR #218](https://github.com/iannitram/Uncharted-Universal/pull/218) | Desktop configuration and install paths; mobile folders still come from the app. |
+| [#217 game/revision contracts](https://github.com/iannitram/Uncharted-Universal/issues/217) | [PR #219](https://github.com/iannitram/Uncharted-Universal/pull/219) | Dump/preparation revision gate. Supported revision tables and region mappings still require verified evidence. |
+| [#215 package analysis/extraction](https://github.com/iannitram/Uncharted-Universal/issues/215) | [PR #221](https://github.com/iannitram/Uncharted-Universal/pull/221) | Dump/package intake; encrypted content remains unsupported. |
+| [#214 content profiles](https://github.com/iannitram/Uncharted-Universal/issues/214) | [PR #220](https://github.com/iannitram/Uncharted-Universal/pull/220) | Preparation metadata consumed by AppContent. |
+| [#216 literal patch handling](https://github.com/iannitram/Uncharted-Universal/issues/216) | [PR #222](https://github.com/iannitram/Uncharted-Universal/pull/222) | Preparation writes and the launcher's patch listing. |
+
+### Strict issue prerequisites
+
 This index summarizes the 102 issues open in the 2026-11-06 snapshot. A listed issue edge means a genuine prerequisite for the dependent issue's stated acceptance; it does not imply that all investigation or implementation must wait. Roadmap stages, outside-project readiness, device checks, and local subtasks are shown separately below. Issues not listed as having an open issue predecessor had no such predecessor identified in this audit; that does not mean they are implemented, ready for every acceptance test, or in 1.0 scope. Do not infer dependencies from `Related` or `Part of` links, or make an issue depend on a task it owns.
 
 | Prerequisite issue | Dependent issue | What the edge gates |
