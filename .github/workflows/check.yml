@@ -15,6 +15,7 @@ jobs:
     name: Linux GPU and C tests
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/build.yml
+    # The reusable workflow declares contents: write for main releases; scope its caller grant here.
     permissions:
       contents: write
     with:
