@@ -318,6 +318,11 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
+add_executable(expand-image-test EXCLUDE_FROM_ALL ../tests/test_expand_image.cpp)
+target_include_directories(expand-image-test PRIVATE shadps4)
+target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(expand-image-test PRIVATE bbgpu)
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)

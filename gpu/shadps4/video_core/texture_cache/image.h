@@ -37,6 +37,11 @@ enum ImageFlagBits : u32 {
 };
 DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
+/// Whether the image contains GPU-written contents that are newer than guest memory.
+inline bool HasGpuValidData(ImageFlagBits flags) {
+    return True(flags & ImageFlagBits::GpuModified) && False(flags & ImageFlagBits::Dirty);
+}
+
 struct UniqueImage {
     explicit UniqueImage() = default;
     explicit UniqueImage(vk::Device device, VmaAllocator allocator)
@@ -115,7 +120,7 @@ struct Image {
     }
 
     bool SafeToDownload() const {
-        return True(flags & ImageFlagBits::GpuModified) && False(flags & (ImageFlagBits::Dirty));
+        return HasGpuValidData(flags);
     }
 
     void AssociateDepth(ImageId depth_image_id, u64 depth_image_uid) {
