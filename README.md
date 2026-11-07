@@ -16,7 +16,7 @@
 ## Distributions tested
 ✅ Confirmed Working: SteamOS 3.7, Fedora 44, Debian 13 CachyOS, Arch, openSUSE Tumbleweed, Ubuntu 24.04, Mint 22, Pop!OS 24.04
 
-❌ Not Supported: Ubuntu 22.04 and older, Linux Mint 21 and older, Debian 12 and older 
+❌ Not Supported: Ubuntu 22.04 and older, Linux Mint 21 and older, Debian 12 and older
 
 ## Download
 1. Download **[Uncharted-x86_64.AppImage](https://github.com/spacepepperoni/uncharted_Linux/releases/latest/download/Uncharted-x86_64.AppImage)**.
@@ -25,7 +25,7 @@
 
 ## Updates
 
-This client ships with a built in updater that can be toggled on/off, and updates from two sources: the main repo & this fork. 
+This client ships with a built in updater that can be toggled on/off, and updates from two sources: the main repo & this fork.
 
 - In the launcher itself, you'll see available updates in the bottom left of the launcher.
 <img width="400" height="98" alt="image" src="https://github.com/user-attachments/assets/911e9ded-29b0-465b-8c18-5f589e987063" />
@@ -43,7 +43,7 @@ This client ships with a built in updater that can be toggled on/off, and update
   <img width="1280" height="800" alt="image" src="https://github.com/user-attachments/assets/b63d118c-b9ed-46ac-b3d7-fc739cf927b6" />
 - It is recommended to set your FPS cap to 30fps and set Manual GPU Clock to 1300mhz.
 
-## Files needed 
+## Files needed
 
 You must have an unencrypted extracted dump of the Uncharted: The Nathan Drake Collection (CUSA02320) v1.00.
 
