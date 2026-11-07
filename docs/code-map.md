@@ -169,7 +169,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | Path | Status | From | Owns | Musts |
 |---|---|---|---|---|
 | `gpu/` | present; selected fixes remain open | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; open import candidates #31 (ExpandImage) and #37 (BUFFER_WBINVL1 decode/barrier), plus the independent equeue fix #35 | M1-M3, M5, M8 |
-| `android/` | planned; directory absent | revvv991/uncharted-android build recipe (GPL-2.0-or-later); FEX patterns from zenithblue-oss/shadps4-arm64 (selected MIT files); libadrenotools (BSD-2-Clause) | pinned dependency/build recipe, synthetic ARM64 guest harness, Rust runtime ABI bridge, strict Turnip/system Vulkan driver selection. Exclude game-derived recipes, XML, addresses, assets and generated output | M17 |
+| `android/` | partial: pinned dependency recipe and synthetic SDL link target | Selected FEXCore, Mesa Turnip, libadrenotools and SDL sources; recipe adapted from revvv991/uncharted-android (GPL-2.0-or-later) | `android/scripts/build_dependencies.sh` builds pinned public dependencies and links an authored smoke binary; APK project, FEX guest harness, runtime bridge and driver selection remain separate | M17 |
 | `apple/` | planned; directory absent | bloodborne-native recompiler, bbcpu, runtime, mac and iOS (per-file/license closure required) | ARM64 library generated from x86-64 guest code by AOT recompilation, interpreter fallback and Metal; iOS no-JIT. Feasibility and synthetic coverage gate any source adoption; no blanket tree import | M15, M16 |
 
 ## Peer import plan
