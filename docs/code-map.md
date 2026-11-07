@@ -169,6 +169,65 @@ This is a bounded source-reuse plan, not a statement that peer code is already p
 
 All proposed peer code remains **not imported**. Build recipes, synthetic harnesses, or ABI probes can establish source/build/API compatibility only; none establish a playable Android or Apple build. The proposed Apple route remains gated at #211: AOT plus interpreter fallback and Metal, with no iOS JIT. Save-relay stays a pointer-only external dependency under #163 until its support/interface is ready; do not create local sync work ahead of that gate.
 
+## Issue dependency index
+
+This index summarizes the 102 issues open in the 2026-11-06 snapshot. A listed issue edge means a genuine prerequisite for the dependent issue's stated acceptance; it does not imply that all investigation or implementation must wait. Roadmap stages, outside-project readiness, device checks, and local subtasks are shown separately below. Issues not listed as having an open issue predecessor had no such predecessor identified in this audit; that does not mean they are implemented, ready for every acceptance test, or in 1.0 scope. Do not infer dependencies from `Related` or `Part of` links, or make an issue depend on a task it owns.
+
+| Prerequisite issue | Dependent issue | What the edge gates |
+|---|---|---|
+| [#15](https://github.com/iannitram/Uncharted-Universal/issues/15) | [#16](https://github.com/iannitram/Uncharted-Universal/issues/16) | Shader preload follows route recording; both are after 1.0. |
+| [#10](https://github.com/iannitram/Uncharted-Universal/issues/10) | [#19](https://github.com/iannitram/Uncharted-Universal/issues/19) | Stereo option needs the after-1.0 graphics menu/profile. |
+| [#109](https://github.com/iannitram/Uncharted-Universal/issues/109), [#62](https://github.com/iannitram/Uncharted-Universal/issues/62) | [#77](https://github.com/iannitram/Uncharted-Universal/issues/77) | U2 end-to-end handheld campaign acceptance; component work and test setup can proceed. |
+| [#63](https://github.com/iannitram/Uncharted-Universal/issues/63), [#64](https://github.com/iannitram/Uncharted-Universal/issues/64), [#111](https://github.com/iannitram/Uncharted-Universal/issues/111) | [#78](https://github.com/iannitram/Uncharted-Universal/issues/78) | U3 end-to-end handheld campaign acceptance. #111 explicitly blocks #78; campaign work can proceed before final completion. |
+| [#168](https://github.com/iannitram/Uncharted-Universal/issues/168) | [#178](https://github.com/iannitram/Uncharted-Universal/issues/178) | Location-based chapter fixes need runtime location data. This does not block unrelated auto-tune work in #166. |
+| [#207](https://github.com/iannitram/Uncharted-Universal/issues/207) | [#208](https://github.com/iannitram/Uncharted-Universal/issues/208) | Android dependency build artifact for the synthetic FEX harness. |
+| [#208](https://github.com/iannitram/Uncharted-Universal/issues/208) | [#209](https://github.com/iannitram/Uncharted-Universal/issues/209) | Validated synthetic FEX execution is a prerequisite for runtime guest-call bridge integration. |
+| [#207](https://github.com/iannitram/Uncharted-Universal/issues/207) | [#210](https://github.com/iannitram/Uncharted-Universal/issues/210) | Android dependency/driver build; native driver loader work does not need Slint or the app shell. |
+| [#211](https://github.com/iannitram/Uncharted-Universal/issues/211) | [#212](https://github.com/iannitram/Uncharted-Universal/issues/212) | Apple feasibility/license gate precedes synthetic no-JIT coverage. |
+
+```mermaid
+flowchart LR
+  I15["#15 route recording"] --> I16["#16 shader preload"]
+  I10["#10 graphics menu, after 1.0"] --> I19["#19 stereo option"]
+  I109["#109"] --> I77["#77 U2 campaign acceptance"]
+  I62["#62"] --> I77
+  I63["#63"] --> I78["#78 U3 campaign acceptance"]
+  I64["#64"] --> I78
+  I111["#111"] --> I78
+  I168["#168 location data"] --> I178["#178 chapter fixes"]
+  I207["#207 Android dependencies"] --> I208["#208 synthetic FEX"] --> I209["#209 Rust ABI bridge"]
+  I207 --> I210["#210 native driver loader"]
+  I211["#211 Apple feasibility"] --> I212["#212 no-JIT synthetic tests"]
+```
+
+### Roadmap, external, and partial integration gates
+
+These affect a milestone or part of acceptance, but are not additional numbered issue dependencies. A task may start against its current interface and finish integration when the named gate is ready.
+
+| Work | Gate and start/completion distinction |
+|---|---|
+| [#20](https://github.com/iannitram/Uncharted-Universal/issues/20) | Steam launch and first-run stages 1.21/2.05 are integration context; documentation and standalone implementation can start before those app flows exist. |
+| [#39](https://github.com/iannitram/Uncharted-Universal/issues/39) | Windows OS shim stage 3.15 is Windows-specific. It is not an Android/FEX bridge prerequisite. |
+| [#72](https://github.com/iannitram/Uncharted-Universal/issues/72) | Requires the named owner decisions and roadmap 1.14/1.16/2.06 for its full profile/settings flow; it is not a prerequisite to unrelated core/runtime work. |
+| [#163](https://github.com/iannitram/Uncharted-Universal/issues/163) | Hold sync implementation on external save-relay platform/interface readiness. The local `Relay` seam is only a contract ([`launch.rs`](https://github.com/iannitram/Uncharted-Universal/blob/ef27c862dd15f60e64c51a1d285b96dec1be13b9/crates/core/src/launch.rs#L39-L58)); do not open local sync tasks ahead of that external gate. |
+| [#166](https://github.com/iannitram/Uncharted-Universal/issues/166) | Only location-selected auto-tune behavior waits on #168. The benchmark, dump check, cards and other settings work are separable; its 3.06/3.16 stages are integration/owner-device gates, not whole-issue start blockers. |
+| [#168](https://github.com/iannitram/Uncharted-Universal/issues/168) | The issue owns savedata metadata work and can start now. [`savedata::commit`](https://github.com/iannitram/Uncharted-Universal/blob/ef27c862dd15f60e64c51a1d285b96dec1be13b9/crates/runtime/src/savedata.rs#L22-L65) writes local `where.json`; guest save ABI is not wired. The final `Crash:` line needs loader/fault integration at 3.16, not as a prerequisite to the metadata portion. |
+| [#171](https://github.com/iannitram/Uncharted-Universal/issues/171), [#173](https://github.com/iannitram/Uncharted-Universal/issues/173) | Hardware-report parsing and benchmark/report contracts can be developed with fixtures. Live probe collection waits on loader stage 3.16; benchmark execution/integration waits on its runtime and scripted-input pieces. These gates do not block all Rust-side work. |
+| [#178](https://github.com/iannitram/Uncharted-Universal/issues/178) | Only its location-driven behavior follows #168; recipe 1.24 and tune 1.27 are integration context for chapter fix selection. |
+| [#185](https://github.com/iannitram/Uncharted-Universal/issues/185) | Playthrough writer work is done (closed #170); the remaining call belongs at Slint after-run stage 2.07. App lifecycle integration gates completion, not investigation or preparation. |
+| [#188](https://github.com/iannitram/Uncharted-Universal/issues/188) | Its missing/unreadable/unknown-SFO refusal can be implemented locally; current [`dump.rs`](https://github.com/iannitram/Uncharted-Universal/blob/ef27c862dd15f60e64c51a1d285b96dec1be13b9/crates/core/src/dump.rs#L75-L104) records report problems rather than the requested `BadDump`/no-report result. The title-to-region map remains a completion criterion; it is not a dependency on #206 ELF parsing. |
+| [#189](https://github.com/iannitram/Uncharted-Universal/issues/189) | This issue owns the hub/bundle transfer contracts; current [`hub`](https://github.com/iannitram/Uncharted-Universal/blob/ef27c862dd15f60e64c51a1d285b96dec1be13b9/crates/core/src/hub.rs#L38-L64) and [`bundle`](https://github.com/iannitram/Uncharted-Universal/blob/ef27c862dd15f60e64c51a1d285b96dec1be13b9/crates/core/src/bundle.rs#L45-L88) operations are stubs, not separate issue prerequisites. Fake-loopback transfer work can start before device acceptance. |
+| [#191](https://github.com/iannitram/Uncharted-Universal/issues/191) | Measure readback cost with explicit environment values; this measurement does not depend on #192's default choice, since the environment can set the options for the benchmark. |
+| [#198](https://github.com/iannitram/Uncharted-Universal/issues/198) | Applies only if this optional migration is selected; its external prerequisite [iannitram/shadPS4#41](https://github.com/iannitram/shadPS4/issues/41) is open, and is not this repository's local issue #41. This is not a project-wide blocker. |
+| [#209](https://github.com/iannitram/Uncharted-Universal/issues/209) | In addition to #208, the bridge needs stable runtime C ABI 3.01, memory contract 3.12 and thread/fiber 3.13. Do not add Windows shim 3.15 as an Android prerequisite. |
+| [#203](https://github.com/iannitram/Uncharted-Universal/issues/203), [#205](https://github.com/iannitram/Uncharted-Universal/issues/205) | These are review/governance trackers awaiting draft documentation PR #204; that review is not a code blocker. |
+
+### Satisfied references and work that can start
+
+Closed issue references are historical context, not active blockers: [#169](https://github.com/iannitram/Uncharted-Universal/issues/169)→[#175](https://github.com/iannitram/Uncharted-Universal/issues/175) (matcher/schema exists), [#139](https://github.com/iannitram/Uncharted-Universal/issues/139)/[#182](https://github.com/iannitram/Uncharted-Universal/issues/182)→[#184](https://github.com/iannitram/Uncharted-Universal/issues/184) (the `game_res_env` helper exists), [#170](https://github.com/iannitram/Uncharted-Universal/issues/170)/[#182](https://github.com/iannitram/Uncharted-Universal/issues/182)→[#185](https://github.com/iannitram/Uncharted-Universal/issues/185) (playthrough writer exists), and [#172](https://github.com/iannitram/Uncharted-Universal/issues/172)→[#188](https://github.com/iannitram/Uncharted-Universal/issues/188) (dump-check work exists). The remaining acceptance/integration belongs to each still-open issue. Likewise [#40](https://github.com/iannitram/Uncharted-Universal/issues/40), [#108](https://github.com/iannitram/Uncharted-Universal/issues/108), [#165](https://github.com/iannitram/Uncharted-Universal/issues/165) and #166 track outcome or completion; a parent tracker is not a prerequisite that blocks its child tasks from starting.
+
+Ready to start, subject to each issue's own scope and later acceptance: #31 and #37 GPU fixes (no duplicate issues); #35 equeue fix; #175 known-issue data seeding; #184 environment wiring; #188 SFO refusal behavior; #189 hub/bundle loopback contract; #190 artwork port; #206 Rust parser parity; #207 Android dependency recipe; and #211 Apple feasibility review. “Can start” does not mean merged, imported, device-verified, or playable. [#121](https://github.com/iannitram/Uncharted-Universal/issues/121) is conditional: only if its reported fault reproduces on the handheld does it block [#77](https://github.com/iannitram/Uncharted-Universal/issues/77)/[#78](https://github.com/iannitram/Uncharted-Universal/issues/78) campaign acceptance.
+
 ## Legacy (removed by M20)
 
 | Path | Removed when |
