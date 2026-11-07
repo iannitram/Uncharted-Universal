@@ -79,6 +79,24 @@ jobs:
             cd /work
             BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh
           '
+      - name: NVIDIA DLSS
+        # Linux fork: package.sh bundles DLSS (DLAA, Frame Generation) only when this has put the
+        # bridge and NVIDIA's DLSS libraries in out/dlss; without it the game fell back to FSR 3.1.
+        run: |
+          sudo chroot "$CHROOT" bash -euc '
+            git config --global --add safe.directory "*"
+            cd /work
+            bash packaging/linux/build_dlss.sh
+          '
+      - name: FSR 4
+        # Linux fork (PR #45 by Tutuzaooo): package.sh bundles the FSR 4 assets (all presets, the
+        # 1080 and 2160 tiers) only when this has fetched them into fsr4_shaders/; without them
+        # an FSR 4 choice fell back to FSR 3.1.
+        run: |
+          sudo chroot "$CHROOT" bash -euc '
+            cd /work
+            bash tools/fetch_fsr4_assets.sh
+          '
       - name: Extract AppImage tool outside the chroot
         # The AppImage runtime needs /proc/self/exe, unavailable in this unprivileged chroot.
         run: |

@@ -25,7 +25,7 @@ class FixDefaults(unittest.TestCase):
     def test_uncharted_1_keeps_its_other_defaults(self):
         got = run.fix_defaults(frozen(), U1)
         self.assertEqual(got['BB_TINY_READBACK'], '0')
-        self.assertNotIn('BB_GPU_MERGE', got)
+        self.assertEqual(got['BB_GPU_MERGE'], '0')  # every game since the 2026-11-06 sync
 
     def test_uncharted_2_gets_all_four_of_its_fixes(self):
         self.assertEqual(run.fix_defaults(frozen(), U2),
