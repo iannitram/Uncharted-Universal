@@ -71,7 +71,9 @@ impl Config {
 
         let settings = environment
             .into_iter()
-            .filter(|(key, _)| is_report_setting(key))
+            .filter_map(|(key, value)| {
+                normalize_report_setting(&key, &value).map(|value| (key, value))
+            })
             .collect();
         Ok(Some(Self { seconds, settings }))
     }
@@ -93,8 +95,96 @@ impl Config {
     }
 }
 
-fn is_report_setting(key: &str) -> bool {
-    REPORTED_SETTINGS.contains(&key)
+fn normalize_report_setting(key: &str, value: &str) -> Option<String> {
+    if !REPORTED_SETTINGS.contains(&key) {
+        return None;
+    }
+    match key {
+        "BB_RESOLUTION" | "BB_GAME_RES" | "BB_RENDER_RES" | "BB_OUTPUT_RES" => {
+            normalize_resolution(value)
+        }
+        "BB_VBLANK_HZ" => normalize_unsigned(value, 0, 1_000),
+        "BB_FPS_LIMIT" => normalize_unsigned(value, 0, 1_000),
+        "BB_UPSCALER" => normalize_enum(
+            value,
+            &[
+                "off", "none", "taa", "fsr3", "fsr4", "fsr411", "dlss", "xess",
+            ],
+        ),
+        "BB_UPSCALE_QUALITY" => normalize_enum(
+            value,
+            &["off", "quality", "balanced", "performance", "ultra"],
+        ),
+        "BB_FSR_SHARPNESS" => {
+            let sharpness = value.parse::<f32>().ok()?;
+            (sharpness.is_finite() && (0.0..=2.0).contains(&sharpness))
+                .then(|| sharpness.to_string())
+        }
+        "BB_FRAME_GEN" => normalize_enum(value, &["off", "fsr3", "dlss"]),
+        "BB_PRESENT_MODE" => {
+            normalize_enum(value, &["Mailbox", "Fifo", "FifoRelaxed", "Immediate"])
+        }
+        "BB_FULLSCREEN" | "BB_TINY_READBACK" | "BB_GPU_MERGE" => normalize_unsigned(value, 0, 1),
+        "BB_READBACK_SMALL_BUFFERS" => normalize_enum(value, &["0", "1", "sync"]),
+        "BB_TOGGLE" | "BB_TOGGLE2" => normalize_mask(value),
+        "BB_SCALAR_COPY64_SYNC" => normalize_unsigned(value, 0, 2),
+        "BB_MAX_FRAMES_AHEAD" => normalize_unsigned(value, 0, u64::MAX),
+        "BB_DMEM_MB" | "BB_GAME_FREE_MB" | "BB_GAME_MOVIE_MB" | "BB_GAME_RT_MB"
+        | "BB_GAME_RT2_MB" => normalize_unsigned(value, 0, 65_536),
+        _ => None,
+    }
+}
+
+fn normalize_enum(value: &str, choices: &[&str]) -> Option<String> {
+    choices
+        .iter()
+        .find(|choice| value.eq_ignore_ascii_case(choice))
+        .map(|choice| (*choice).to_owned())
+}
+
+fn normalize_unsigned(value: &str, minimum: u64, maximum: u64) -> Option<String> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let number = value.parse::<u64>().ok()?;
+    (minimum..=maximum)
+        .contains(&number)
+        .then(|| number.to_string())
+}
+
+fn normalize_mask(value: &str) -> Option<String> {
+    let number = if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        if hex.is_empty() || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        u64::from_str_radix(hex, 16).ok()?
+    } else {
+        value.parse::<u64>().ok()?
+    };
+    Some(number.to_string())
+}
+
+fn normalize_resolution(value: &str) -> Option<String> {
+    let (width, height) = value
+        .split_once('x')
+        .or_else(|| value.split_once('X'))
+        .or_else(|| value.split_once('×'))?;
+    let width = parse_dimension(width)?;
+    let height = parse_dimension(height)?;
+    if width == 0 || height == 0 || u64::from(width) * u64::from(height) > 67_108_864 {
+        return None;
+    }
+    Some(format!("{width}x{height}"))
+}
+
+fn parse_dimension(value: &str) -> Option<u32> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 /// Which title is being benchmarked. The collection's title ID is shared by all three games.
@@ -171,7 +261,9 @@ impl Samples {
         // construct a settings map directly instead of passing through the environment parser.
         let settings = settings
             .into_iter()
-            .filter(|(key, _)| is_report_setting(key))
+            .filter_map(|(key, value)| {
+                normalize_report_setting(&key, &value).map(|value| (key, value))
+            })
             .collect();
         let mut sorted = self.frame_ms.clone();
         sorted.sort_by(f64::total_cmp);
@@ -227,8 +319,9 @@ impl Report {
         let settings: BTreeMap<_, _> = self
             .settings
             .iter()
-            .filter(|(key, _)| is_report_setting(key))
-            .map(|(key, value)| (key.clone(), value.clone()))
+            .filter_map(|(key, value)| {
+                normalize_report_setting(key, value).map(|value| (key.clone(), value))
+            })
             .collect();
         serde_json::to_vec(&serde_json::json!({
             "game": self.game.as_str(),
@@ -281,14 +374,26 @@ fn replace_report(temporary: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(windows)]
 fn replace_report(temporary: &Path, target: &Path) -> io::Result<()> {
-    match fs::rename(temporary, target) {
-        Ok(()) => Ok(()),
-        Err(_) if target.exists() => {
-            // std::fs::rename does not replace an existing destination on Windows.
-            fs::remove_file(target)?;
-            fs::rename(temporary, target)
-        }
-        Err(error) => Err(error),
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let temporary: Vec<u16> = temporary.as_os_str().encode_wide().chain([0]).collect();
+    let target: Vec<u16> = target.as_os_str().encode_wide().chain([0]).collect();
+    // Both files live in the saves directory, so this is a same-volume replacement. If Windows
+    // cannot perform it, MoveFileExW leaves the previous report in place.
+    let replaced = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            target.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 
@@ -301,14 +406,22 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
     struct TempDir(PathBuf);
 
     impl TempDir {
         fn new() -> Self {
-            let path = std::env::temp_dir().join(format!("uu-benchmark-{}", std::process::id()));
-            let _ = fs::remove_dir_all(&path);
-            fs::create_dir(&path).unwrap();
-            Self(path)
+            loop {
+                let id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+                let path =
+                    std::env::temp_dir().join(format!("uu-benchmark-{}-{id}", std::process::id()));
+                match fs::create_dir(&path) {
+                    Ok(()) => return Self(path),
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) => panic!("create test directory: {error}"),
+                }
+            }
         }
     }
 
@@ -334,6 +447,61 @@ mod tests {
             assert!(Config::from_values(Some(invalid_value), []).is_err());
         }
         assert!(Config::from_values(None, []).unwrap().is_none());
+    }
+
+    #[test]
+    fn settings_values_are_validated_and_normalized_before_reporting() {
+        let environment = vec![
+            ("BB_RESOLUTION".into(), "02560×01440".into()),
+            ("BB_PRESENT_MODE".into(), "fifo".into()),
+            ("BB_FULLSCREEN".into(), "01".into()),
+            ("BB_FSR_SHARPNESS".into(), "0.40".into()),
+            ("BB_GAME_RES".into(), "/home/user/saves".into()),
+            ("BB_TOGGLE2".into(), "0x20".into()),
+            ("PATH".into(), "/private/bin".into()),
+        ];
+        let config = Config::from_values(Some("90"), environment)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            config.settings,
+            BTreeMap::from([
+                ("BB_RESOLUTION".into(), "2560x1440".into()),
+                ("BB_PRESENT_MODE".into(), "Fifo".into()),
+                ("BB_FULLSCREEN".into(), "1".into()),
+                ("BB_FSR_SHARPNESS".into(), "0.4".into()),
+                ("BB_TOGGLE2".into(), "32".into()),
+            ])
+        );
+
+        for (key, path) in [
+            ("BB_RESOLUTION", "/home/user/1920x1080"),
+            ("BB_GAME_RES", "C:\\Users\\Alice\\saves"),
+            ("BB_RENDER_RES", "1920x1080/../../save"),
+            ("BB_OUTPUT_RES", "1920x1080\\private"),
+            ("BB_VBLANK_HZ", "/home/user/60"),
+            ("BB_FPS_LIMIT", "30/../../secret"),
+            ("BB_UPSCALER", "/private/dlss"),
+            ("BB_UPSCALE_QUALITY", "quality/secret"),
+            ("BB_FSR_SHARPNESS", "/home/user/0.4"),
+            ("BB_FRAME_GEN", "/private"),
+            ("BB_PRESENT_MODE", "Fifo/secret"),
+            ("BB_FULLSCREEN", "/private"),
+            ("BB_TINY_READBACK", "1/secret"),
+            ("BB_READBACK_SMALL_BUFFERS", "/home/user"),
+            ("BB_TOGGLE", "/home/user/0"),
+            ("BB_TOGGLE2", "0x../../secret"),
+            ("BB_SCALAR_COPY64_SYNC", "/private"),
+            ("BB_GPU_MERGE", "2"),
+            ("BB_MAX_FRAMES_AHEAD", "999999999999999999999999999"),
+            ("BB_DMEM_MB", "/private"),
+            ("BB_GAME_FREE_MB", "/private"),
+            ("BB_GAME_MOVIE_MB", "/private"),
+            ("BB_GAME_RT_MB", "/private"),
+            ("BB_GAME_RT2_MB", "/private"),
+        ] {
+            assert_eq!(normalize_report_setting(key, path), None, "{key}={path}");
+        }
     }
 
     #[test]
@@ -395,6 +563,17 @@ mod tests {
     }
 
     #[test]
+    fn failed_report_replacement_preserves_the_previous_report() {
+        let dir = TempDir::new();
+        let target = dir.0.join("benchmark.json");
+        fs::write(&target, b"previous report").unwrap();
+        let missing_temporary = dir.0.join("missing.tmp");
+
+        assert!(replace_report(&missing_temporary, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"previous report");
+    }
+
+    #[test]
     fn report_boundary_filters_settings_that_bypass_config() {
         let mut samples = Samples::default();
         samples.record_frame(16.0, 512).unwrap();
@@ -404,6 +583,7 @@ mod tests {
                 10,
                 BTreeMap::from([
                     ("BB_RESOLUTION".into(), "1280x720".into()),
+                    ("BB_RENDER_RES".into(), "/private/saves".into()),
                     ("BB_SAVE_DIR".into(), "/private/saves".into()),
                     ("PATH".into(), "/private/bin".into()),
                 ]),
@@ -424,7 +604,10 @@ mod tests {
         );
 
         let directly_constructed = Report {
-            settings: BTreeMap::from([("BB_SAVE_DIR".into(), "/private/saves".into())]),
+            settings: BTreeMap::from([
+                ("BB_RESOLUTION".into(), "/private/saves".into()),
+                ("BB_SAVE_DIR".into(), "/private/saves".into()),
+            ]),
             ..report
         };
         let json: serde_json::Value =
