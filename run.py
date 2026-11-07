@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Prepares an Uncharted executable of the Nathan Drake Collection and starts bb-probe.exe.
 
-BB_GAME_DIR   the game folder (CUSA02343, CUSA02320, ...; the one with eboot.bin)
+BB_GAME_DIR   the game folder (CUSA02343, CUSA02320, ...; the one with eboot.bin), or its fake
+              PKG: unpacked once beside it into <TITLE_ID>/ (scripts/pkg_extract.py)
 BB_GAME_DIR_U1 / _U2 / _U3   optional: the folder of a game that was dumped on its own; used for
               that game instead of BB_GAME_DIR (its executable may be that folder's eboot.bin)
 BB_EXE        u1 / u2 / u3 or an executable name (default u1: eboot.bin, the collection menu)
@@ -44,6 +45,10 @@ def fix_defaults(player_env, exe):
         if 'BB_READBACK_SMALL_BUFFERS' not in player_env:
             result['BB_READBACK_SMALL_BUFFERS'] = '1'
     elif exe == EXECUTABLES['u1']:
+        # spacepepperoni/uncharted_Linux b29aac3: busy U1 scenes on the Deck waited for the whole
+        # frame about once a frame with merging; accurate memory: 27.0 -> 28.6 FPS, fewer slow frames.
+        if 'BB_GPU_MERGE' not in player_env:
+            result['BB_GPU_MERGE'] = '0'
         if 'BB_TINY_READBACK' not in player_env:
             result['BB_TINY_READBACK'] = '0'
         if 'BB_SCALAR_COPY64_SYNC' not in player_env:
@@ -146,6 +151,27 @@ def split_saves(user_dir):
             print(f'Saves: moved {entry.name} to {target.parent.name}/')
 
 
+def unpack_pkg(pkg):
+    """Linux fork: the game folder of a fake PKG, unpacked beside it on the first start (as in the
+    MediEvil port); later starts reuse the folder."""
+    import pkg_extract
+    target = Path(pkg_extract.default_target(pkg))
+    if not pkg_extract.is_extracted(pkg, target):
+        print(f'Unpacking {pkg.name} into {target} (first start only) ...', flush=True)
+        last = [-1]
+
+        def report(done, total, rate):
+            percent = done * 100 // max(total, 1)
+            if percent != last[0]:
+                last[0] = percent
+                print(f'PKG: {percent}% ({done >> 20} of {total >> 20} MB, {rate:.0f} MB/s)', flush=True)
+        try:
+            pkg_extract.extract(str(pkg), str(target), report)
+        except (OSError, ValueError) as error:
+            fail(f'Could not unpack {pkg}: {error}')
+    return target
+
+
 def executable_name(value):
     return EXECUTABLES.get(value.lower(), value) if value else EXECUTABLES['u1']
 
@@ -175,6 +201,61 @@ def patch_arguments(env, exe, game, out):
     return ['--external-only', '--app-elf', exe, '--game-dir', str(game), '--out', str(out),
             '--patches-dir', patches_dir,
             '--patches-config', env.get('BB_PATCHES_CONFIG', str(Path(patches_dir) / 'patches.json'))]
+
+
+def update_folder(env, game):
+    """Linux fork: the game's title update (1.02), installed as its own folder: BB_GAME_UPDATE_DIR,
+    or shadPS4's <game folder>-UPDATE (or -patch) beside the game. BB_GAME_UPDATE_DIR=0: none."""
+    chosen = env.get('BB_GAME_UPDATE_DIR', '').strip()
+    if chosen == '0' or WINDOWS:
+        return None
+    candidates = [Path(chosen)] if chosen else \
+        [game.parent / f'{game.name}{suffix}' for suffix in ('-UPDATE', '-update', '-patch', '-PATCH')]
+    found = next((c for c in candidates if (c / 'sce_sys' / 'param.sfo').is_file()), None)
+    if chosen and not found:
+        print(f'Title update: {chosen} has no sce_sys/param.sfo; playing without it')
+    return found
+
+
+def merge_update(base, update, view):
+    """The game as its update leaves it, as links in `view`: a file of the update replaces the
+    game's (names compared without case, as on the PS4), folders in both are merged, everything
+    else links to where it is. Rebuilt only when either folder changes."""
+    import shutil
+
+    def signature():
+        newest, count = 0.0, 0
+        for root in (update, base):
+            for path in ([root] if root is base else [root, *root.rglob('*')]):
+                count += 1
+                newest = max(newest, path.stat().st_mtime)
+        return f'{base}\n{update}\n{count} {newest}\n'
+
+    def merge(b, u, v):
+        v.mkdir()
+        old = {p.name.lower(): p for p in b.iterdir()} if b else {}
+        new = {p.name.lower(): p for p in u.iterdir()}
+        for key in sorted(set(old) | set(new)):
+            bp, up = old.get(key), new.get(key)
+            target = v / (bp or up).name
+            if bp and up and bp.is_dir() and up.is_dir():
+                merge(bp, up, target)
+            else:
+                target.symlink_to(up or bp)
+
+    stamp = view.with_name(view.name + '.merged-from')
+    wanted = signature()
+    if stamp.is_file() and stamp.read_text(encoding='utf-8', errors='replace') == wanted:
+        return view
+    print(f'Title update: merging {update} over {base} ...')
+    building = view.with_name(view.name + '.new')
+    shutil.rmtree(building, ignore_errors=True)
+    building.parent.mkdir(parents=True, exist_ok=True)
+    merge(base, update, building)
+    shutil.rmtree(view, ignore_errors=True)
+    building.rename(view)
+    stamp.write_text(wanted, encoding='utf-8')
+    return view
 
 
 def game_cheats(enabled, exe):
@@ -422,6 +503,9 @@ def main():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
 
     game_res(env)
+    pkg = Path(env.get('BB_GAME_DIR', ''))
+    if pkg.suffix.lower() == '.pkg' and pkg.is_file():
+        env['BB_GAME_DIR'] = str(unpack_pkg(pkg))
     exe = executable_name(env.get('BB_EXE', ''))
     user_dir = Path(env.get('BB_USER_DIR', data / 'user')).resolve()
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -461,7 +545,8 @@ def main():
     # Uncharted 2 reads the results of GPU work (grenade explosions, vehicle damage, the convoy
     # of chapter 21) from memory it also writes: merging leaves them on the GPU, so it runs with
     # accurate GPU memory (BB_GPU_MERGE=0) unless the player chose otherwise. Uncharted 3 runs the
-    # same engine and showed the same floating NPCs (Linux fork), so it does too.
+    # same engine and showed the same floating NPCs (Linux fork), so it does too, and Uncharted 1
+    # (fewer whole-frame waits on the Deck, spacepepperoni/uncharted_Linux).
     # Aim and turret blur: the game reads a tiny render result (focus depth) on the CPU, so it is read back
     # (BB_TINY_READBACK). On for U2 only; U3 stays off until measured (issue #191); U1 unchanged.
     all_cheats = env.setdefault('BB_CHEATS_ALL', env.get('BB_CHEATS', ''))
@@ -489,6 +574,9 @@ def main():
         game, file = locate(env, exe)
         if not game:
             fail('Set BB_GAME_DIR to the game folder (the one with eboot.bin).')
+        if update := update_folder(env, game):  # Linux fork: title update 1.02 (issue #58)
+            game = merge_update(game, update, out_root / 'updated' / game.name)
+            print(f'Title update: {update}')
         if not (game / file).is_file():
             fail(f'No {file} in {game}.')
         out = out_root / Path(exe).stem.split('-')[0]

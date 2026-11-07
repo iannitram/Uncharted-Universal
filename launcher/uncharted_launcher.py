@@ -189,9 +189,9 @@ MOUSE_SENS_MIN, MOUSE_SENS_MAX = 0.1, 10.0  # the Controls page slider (the game
 # key -> (title, hint, {choice: {variable: value}}); 'auto' sets nothing (the game's own default).
 FIXES = {
     'fix_u2_gpu_results': (
-        'Exact GPU results (Uncharted 2)',
+        'Exact GPU results',
         'Explosions, vehicle damage and the convoy of chapter 21 read results of GPU work back. '
-        'Automatic: on in Uncharted 2 only. Costs speed in busy scenes.',
+        'Automatic: on in every game. Off can be faster in some busy scenes.',
         {'on': {'BB_GPU_MERGE': '0'}, 'off': {'BB_GPU_MERGE': '1'}}),
     'fix_u2_mesh': (
         'Mesh raycaster copies (Uncharted 2)',
@@ -480,14 +480,17 @@ def vibration_strength(s):
 def controller_probe_path():
     """The packaged or development loader, which also provides the lightweight controller probe."""
     configured = os.environ.get('BB_PROBE')
-    candidates = ([Path(configured)] if configured else []) + [PORT_DIR / 'bin' / 'bb-probe.exe',
-                                                               PORT_DIR / 'out' / 'bb-probe.exe']
+    name = 'bb-probe.exe' if WINDOWS else 'bb-probe'  # Linux fork: the Linux loader's name
+    candidates = ([Path(configured)] if configured else []) + [PORT_DIR / 'bin' / name, PORT_DIR / 'out' / name]
     return next((path for path in candidates if path.is_file()), None)
 
 
 def controller_probe_environment(probe):
     """Development builds find SDL beside MSYS2; packages already keep it beside bb-probe."""
     env = dict(os.environ)
+    if not WINDOWS:  # Linux fork: the loader's own libraries (bin/lib), as run.py starts it
+        env['LD_LIBRARY_PATH'] = os.pathsep.join(filter(None, [str(probe.parent / 'lib'), env.get('LD_LIBRARY_PATH')]))
+        return env
     if not (probe.parent / 'SDL3.dll').is_file():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
@@ -651,6 +654,7 @@ def game_environment(s, start=None):
     env['BB_FRAME_GEN'] = str(s.get('frame_generation') or 'off')
     env['BB_FRAME_GEN_MULTIPLIER'] = str(s.get('frame_gen_multiplier') or '2')
     if not WINDOWS:  # Linux fork: Steam Deck mode, before the player's own variables
+        uncharted_linux.update_environment(s, env)
         uncharted_linux.deck_environment(s, env)
     for key, (_title, _hint, choices) in FIXES.items():
         env.update(choices.get(str(s.get(key) or 'auto'), {}))
@@ -2862,7 +2866,6 @@ def main():
         settings['start'] = play
         if WINDOWS:
             sys.exit(play_without_window(settings))
-        uncharted_linux.rotate_logs(Path(settings.get('user_dir') or DATA_DIR / 'user'))
         # Before the game: a newer release is offered in a prompt the controller can answer
         # (Gaming Mode); after an update the game closes, to be started again.
         answer = uncharted_linux.startup_update_prompt(settings, latest_release, VERSION, PORT_DIR)
