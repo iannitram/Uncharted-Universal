@@ -11,9 +11,11 @@ Adopt bloodborne-native's route (bloodborne-runtime, -mac, -ios; GPL-2.0 per the
 - This is engine work for us, unlike totk-native: the recompiler and renderer are written for Bloodborne, and the collection is three executables. 8.01 measures how much is game-specific before 8.03 starts.
 - iOS signing, provisioning, executable-memory policy and device memory limits are release gates; verify current Apple requirements and measured device behavior before selecting a distribution route.
 
-## Feasibility gate (#211, 2026-11-06)
+## Feasibility assessment (#211, partial plan only; 2026-11-06)
 
-The architecture decision above is a target, not a feasibility finding. Source and synthetic evidence reviewed for #211 do **not** establish Uncharted support or justify starting a title-specific port. Status for all three games and both Apple targets is **no-go for implementation or compatibility claims; go only for the bounded synthetic and owner-run evaluation below**. There is no public evidence in this review that distinguishes U1, U2 or U3's CPU coverage, system-call needs, memory use, or graphics behavior on Apple. The unknowns must be resolved independently for each title; success on one is not transferable to another.
+The architecture decision above is a target, not a feasibility finding. This issue has completed source review and written a synthetic test plan only. The CPU and Metal synthetic probes below were **not executed**, so #211 remains partial and the Apple feasibility gate is not complete. This review does **not** establish Uncharted support or justify starting a title-specific port. Status for all three games and both Apple targets is **no-go for implementation or compatibility claims; go only to execute the bounded synthetic and owner-run evaluation below**. There is no public evidence in this review that distinguishes U1, U2 or U3's CPU coverage, system-call needs, memory use, or graphics behavior on Apple. The unknowns must be resolved independently for each title; success on one is not transferable to another.
+
+**Execution limitation:** this review ran in a Linux environment without Xcode or an Apple device. No synthetic CPU interpreter, translator, or Metal test was run. The cited peer tests and probes were inspected as source references only.
 
 | Game | macOS Apple silicon | iPhone / iPad | Evidence and condition to reconsider |
 |---|---|---|---|

@@ -137,7 +137,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 |---|---|---|---|---|
 | `gpu/` | present | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; the review's GPU bugs (#31, #37) and the equeue wait (#35, in `gpu/shim`) | M1-M3, M5, M8 |
 | `android/` | planned | revvv991/uncharted-android (GPL-2.0, credited) | APK project, FEXCore and Mesa/Turnip patches, libadrenotools glue, the `g2-arm64:` renderer changes rebased onto ours | M17 |
-| `apple/` | planned; #211 source/synthetic gate reviewed, no-go for implementation or compatibility claims on U1/U2/U3 for macOS and iOS until owner-run evidence and approval | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0 roots; exact files and dependency closure still need review before import; `bbnet20` GPL-3.0 is excluded) | target remains an x86-64-to-ARM64 AOT library, no-JIT fallback and Metal; no Uncharted executable coverage or Apple runtime is implemented | M15, M16 |
+| `apple/` | planned; #211 partial: source review and synthetic test plan only, CPU/Metal probes not executed; no-go for implementation or compatibility claims on U1/U2/U3 for macOS and iOS pending execution, owner-run evidence and approval | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0 roots; exact files and dependency closure still need review before import; `bbnet20` GPL-3.0 is excluded) | target remains an x86-64-to-ARM64 AOT library, no-JIT fallback and Metal; no Uncharted executable coverage or Apple runtime is implemented | M15, M16 |
 
 ## Legacy (removed by M20)
 
