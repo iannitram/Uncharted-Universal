@@ -93,8 +93,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install the missing CLANG64 Protobuf development package
-        run: source ./msys2-env.sh && pacman -S --needed --noconfirm mingw-w64-clang-x86_64-protobuf
+      - name: Install CLANG64 build dependencies
+        run: |
+          source ./msys2-env.sh
+          pacman -S --needed --noconfirm git patch \
+            mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
+            mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
+            mingw-w64-clang-x86_64-{sdl3,fmt,boost,robin-map,xxhash,ffmpeg,zydis} \
+            mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
+            mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
       - name: Run Python tests and enforce the Windows expected-skip list
