@@ -82,19 +82,76 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
-/* Opens the first gamepad SDL knows about; called under lock. */
+/* Linux fork: every connected gamepad stays open and the game reads the one in use: the last
+ * that had a button pressed or a stick or trigger pushed past half way, else the first. Only
+ * the first was read before, so the controller in the player's hands was ignored whenever
+ * another one came first in SDL's list (a Steam Deck's built-in controller next to a pad, or a
+ * handheld's hidden controller next to the virtual one of Bazzite's InputPlumber; issues
+ * #60, #61). Called under lock. */
+#define MAX_GAMEPADS 8
+static SDL_Gamepad *gamepads[MAX_GAMEPADS];
+static int gamepad_count;
+static uint64_t gamepads_listed_us;
+
+static int gamepad_active(SDL_Gamepad *g) {
+    for (int b=0;b<SDL_GAMEPAD_BUTTON_COUNT;++b) if (SDL_GetGamepadButton(g,(SDL_GamepadButton)b)) return 1;
+    for (int a=0;a<SDL_GAMEPAD_AXIS_COUNT;++a) {
+        const int v=SDL_GetGamepadAxis(g,(SDL_GamepadAxis)a);
+        if (v>16384 || v<-16384) return 1;
+    }
+    return 0;
+}
+
+static void list_gamepads(void) {
+    for (int i=0;i<gamepad_count;) {
+        if (SDL_GamepadConnected(gamepads[i])) { ++i; continue; }
+        if (gamepads[i]==gamepad) gamepad=NULL;
+        SDL_CloseGamepad(gamepads[i]);
+        gamepads[i]=gamepads[--gamepad_count];
+    }
+    int count=0;
+    SDL_JoystickID *ids=SDL_GetGamepads(&count);
+    for (int k=0;ids && k<count && gamepad_count<MAX_GAMEPADS;++k) {
+        int known=0;
+        for (int i=0;i<gamepad_count && !known;++i) known=SDL_GetGamepadID(gamepads[i])==ids[k];
+        if (known) continue;
+        SDL_Gamepad *g=SDL_OpenGamepad(ids[k]);
+        if (!g) continue;
+        gamepads[gamepad_count++]=g;
+        ++connected_count;
+        printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(g));
+    }
+    SDL_free(ids);
+}
+
+/* Linux fork: the controller keeps working while the game window does not have the keyboard focus.
+ * SDL drops every gamepad event while no window of the process has it, so a game window that the
+ * desktop did not focus (started from a Steam shortcut, focus stealing prevention, a launcher or
+ * Steam still in front) read a controller the launcher showed, but nothing it pressed (issue #74).
+ * The launcher's own controller code already sets this. SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=0 in
+ * the environment still turns it off. Before the gamepad subsystem starts. */
+static void pad_hints(void) {
+    SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS,"1");
+}
+
 static SDL_Gamepad *current_gamepad(void) {
+    if (!sdl_ready) pad_hints();
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
     if (sdl_ready<0) return NULL;
-    if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
-    if (!gamepad) {
-        int count=0;
-        SDL_JoystickID *ids=SDL_GetGamepads(&count);
-        if (ids && count>0) {
-            gamepad=SDL_OpenGamepad(ids[0]);
-            if (gamepad) { ++connected_count; printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(gamepad)); }
+    const uint64_t now=now_us();
+    if (!gamepad || !SDL_GamepadConnected(gamepad) || now-gamepads_listed_us>500000) {
+        gamepads_listed_us=now;
+        list_gamepads();
+    }
+    if (!gamepad && gamepad_count) gamepad=gamepads[0];
+    if (gamepad_count>1 && !gamepad_active(gamepad)) {
+        for (int i=0;i<gamepad_count;++i) {
+            if (gamepads[i]!=gamepad && gamepad_active(gamepads[i])) {
+                gamepad=gamepads[i];
+                printf("Runtime: gamepad in use: %s\n",SDL_GetGamepadName(gamepad));
+                break;
+            }
         }
-        SDL_free(ids);
     }
     return gamepad;
 }
@@ -842,6 +899,83 @@ static int prompts_pad_device(SDL_Gamepad *g) {
     return SDL_GetGamepadButtonLabel(g,SDL_GAMEPAD_BUTTON_SOUTH)==SDL_GAMEPAD_BUTTON_LABEL_CROSS ? 1 : 2;
 }
 
+/* Linux fork: a desktop that turns controller buttons into keys and clicks while the game reads the
+ * controller itself (Steam's desktop layout on a Steam Deck in Desktop Mode: B is Escape, Y is
+ * Enter, the triggers are mouse clicks) gave every press twice: B for cover also opened the
+ * game's menu (issue #66). Such a copy goes down within a few milliseconds of the real button, so
+ * while a gamepad is open a key or mouse button counts only once it has been held for
+ * BB_KEY_MIRROR_MS (default 60) with no gamepad button changing around its press; a mirrored one
+ * stays ignored until released. Real keyboard and mouse presses arrive that much later.
+ * The sticks count as gamepad changes too (each axis in steps of a quarter past a dead zone), and
+ * a wheel step is held back as long and dropped the same way: a layout that turns the stick into
+ * arrow keys or the trackpad into the wheel gave the d-pad (the weapon selection) while Drake left
+ * cover (issue #75). BB_KEY_MIRROR_MS=0: off. */
+static void filter_mirrored_input(SDL_Gamepad *g, uint64_t now, const bool **keys, uint32_t *mouse, int *wheel) {
+    static int window_us=-1;
+    if (window_us<0) {
+        const char *env=getenv("BB_KEY_MIRROR_MS");
+        window_us=(env && *env ? atoi(env) : 60)*1000;
+        if (window_us<0) window_us=0;
+    }
+    if (!g || !window_us) return;
+    /* When the gamepad's buttons, triggers or sticks last changed (a few times, for presses that
+     * arrive just after). */
+    static uint64_t pad_prev, pad_changes[8];
+    static unsigned pad_change_next;
+    uint64_t pad=0;
+    for (int b=0;b<SDL_GAMEPAD_BUTTON_COUNT && b<32;++b) if (SDL_GetGamepadButton(g,(SDL_GamepadButton)b)) pad|=1ull<<b;
+    if (SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_LEFT_TRIGGER)>8000) pad|=1ull<<62;
+    if (SDL_GetGamepadAxis(g,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)>8000) pad|=1ull<<63;
+    static const SDL_GamepadAxis sticks[4]={SDL_GAMEPAD_AXIS_LEFTX,SDL_GAMEPAD_AXIS_LEFTY,
+                                            SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY};
+    for (int a=0;a<4;++a) {
+        const int v=SDL_GetGamepadAxis(g,sticks[a]), size=v<0 ? -v : v;
+        const uint64_t step=size<10000 ? 0 : 1+(size-10000)/6000; /* 0..4 */
+        pad|=(step|(v<0 ? 8u : 0u))<<(32+4*a);
+    }
+    if (pad!=pad_prev) { pad_prev=pad; pad_changes[pad_change_next++%8]=now; }
+    #define MIRROR_SOURCES (SDL_SCANCODE_COUNT+8)
+    static bool held[MIRROR_SOURCES], muted[MIRROR_SOURCES], out[SDL_SCANCODE_COUNT];
+    static uint64_t down_at[MIRROR_SOURCES];
+    const bool *k=*keys;
+    uint32_t m=*mouse, mouse_out=0;
+    for (int i=0;i<MIRROR_SOURCES;++i) {
+        const bool down=i<SDL_SCANCODE_COUNT ? (k && k[i]) : ((m>>(i-SDL_SCANCODE_COUNT))&1u);
+        bool pass=false;
+        if (!down) { held[i]=muted[i]=false; }
+        else {
+            if (!held[i]) { held[i]=true; muted[i]=false; down_at[i]=now; }
+            if (!muted[i]) {
+                for (int c=0;c<8;++c) {
+                    const uint64_t t=pad_changes[c];
+                    if (t && t+(uint64_t)window_us>=down_at[i] && t<=down_at[i]+(uint64_t)window_us) { muted[i]=true; break; }
+                }
+            }
+            pass=!muted[i] && now-down_at[i]>=(uint64_t)window_us;
+        }
+        if (i<SDL_SCANCODE_COUNT) out[i]=pass;
+        else if (pass) mouse_out|=1u<<(i-SDL_SCANCODE_COUNT);
+    }
+    #undef MIRROR_SOURCES
+    if (k) *keys=out;
+    *mouse=mouse_out;
+    /* Wheel steps: up, down. One waits BB_KEY_MIRROR_MS; a gamepad change around it drops it. */
+    static uint64_t wheel_at[2];
+    const int w=*wheel;
+    *wheel=0;
+    for (int d=0;d<2;++d) {
+        if ((d ? w<0 : w>0) && !wheel_at[d]) wheel_at[d]=now;
+        if (!wheel_at[d]) continue;
+        int mirrored=0;
+        for (int c=0;c<8 && !mirrored;++c) {
+            const uint64_t t=pad_changes[c];
+            mirrored=t && t+(uint64_t)window_us>=wheel_at[d] && t<=wheel_at[d]+(uint64_t)window_us;
+        }
+        if (mirrored) wheel_at[d]=0;
+        else if (now-wheel_at[d]>=(uint64_t)window_us) { wheel_at[d]=0; *wheel=d ? -1 : 1; }
+    }
+}
+
 static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
@@ -864,9 +998,10 @@ static void sample_host(PadData *d) {
     }
     if (scripted) return;
     const uint64_t now=d->timestamp;
+    const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
+    filter_mirrored_input(g,now,&k,&mouse,&wheel); /* Linux fork: Steam's desktop layout (issues #66, #75) */
     if (wheel>0) wheel_until_us[0]=now+80000;
     if (wheel<0) wheel_until_us[1]=now+80000;
-    const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     static int layout_logged;
     if (k && !layout_logged) { layout_logged=1; log_layout_keys(); }
     if (g) {
@@ -1268,5 +1403,33 @@ int runtime_pad_tool(int test, int strength) {
     }
     SDL_CloseGamepad(pad);
     if (!already_ready) SDL_QuitSubSystem(SDL_INIT_GAMEPAD);
+    return 0;
+}
+
+/* Linux fork: --controller-watch SECONDS, for controller reports and tests: the gamepads SDL lists
+ * and, while the player presses buttons, the one the game reads (current_gamepad). */
+int runtime_pad_watch(int seconds) {
+    pad_hints();
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD)) {
+        fprintf(stderr,"Controller detection failed: %s\n",SDL_GetError());
+        return 1;
+    }
+    sdl_ready=1;
+    SDL_Delay(500);
+    SDL_UpdateGamepads();
+    const uint64_t end=now_us()+(uint64_t)(seconds>0 ? seconds : 5)*1000000u;
+    SDL_Gamepad *last=NULL;
+    unsigned presses=0;
+    int was_down=0;
+    while (now_us()<end) {
+        SDL_UpdateGamepads();
+        SDL_Gamepad *g=current_gamepad();
+        if (g!=last) { last=g; printf("reading=%s\n",g ? SDL_GetGamepadName(g) : "none"); }
+        const int down=g && SDL_GetGamepadButton(g,SDL_GAMEPAD_BUTTON_SOUTH);
+        if (down && !was_down) ++presses;
+        was_down=down;
+        SDL_Delay(5);
+    }
+    printf("gamepads=%d\npresses_read=%u\n",gamepad_count,presses);
     return 0;
 }
