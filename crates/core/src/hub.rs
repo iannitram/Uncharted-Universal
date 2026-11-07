@@ -28,6 +28,7 @@ const MAX_GAME_MANIFEST: usize = 1024 * 1024;
 const MAX_GAME_FILE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_GAME_TOTAL: u64 = 100 * 1024 * 1024 * 1024;
 const STAGING_MARKER: &str = ".uu-transfer-incomplete";
+const STAGING_LOCK: &str = ".uu-transfer.lock";
 const PAIRING_ID: &[u8] = b"uncharted-universal-hub-pairing-v1";
 const TRANSFER_DOMAIN: &[u8] = b"uncharted-universal-game-transfer-v1";
 const CLIENT_TO_SERVER: u8 = 1;
@@ -503,13 +504,15 @@ pub fn serve_game(
 }
 
 /// Pulls prepared game data into a disposable `staged` directory. Only authenticated, encrypted metadata is accepted;
-/// paths are relative and symlink-free, each file is capped at 32 GiB and the aggregate at 100 GiB.
+/// paths are ASCII-only, relative and symlink-free to avoid cross-platform Unicode normalization collisions,
+/// each file is capped at 32 GiB and the aggregate at 100 GiB.
 /// Existing regular files with the expected size/hash are skipped to resume completed files.
 /// A marker remains until the entire transfer verifies; callers must not expose or install this
 /// directory while `.uu-transfer-incomplete` exists.
 pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) -> Result<u64> {
     let key = peer_key(peer)?;
     prepare_staging_root(staged)?;
+    let _lock = acquire_staging_lock(staged)?;
     let marker = mark_staging_incomplete(staged)?;
     let mut session = [0u8; 16];
     getrandom::getrandom(&mut session)
@@ -842,6 +845,7 @@ fn sensitive_game_path(path: &str) -> bool {
 
 fn safe_transfer_path(path: &str) -> bool {
     !path.is_empty()
+        && path.is_ascii()
         && !path.starts_with('/')
         && !path.contains('\\')
         && !path.contains(':')
@@ -860,7 +864,8 @@ fn safe_transfer_path(path: &str) -> bool {
                 && !part.ends_with('.')
                 && !part.ends_with(' ')
                 && !reserved
-                && part != STAGING_MARKER
+                && !part.eq_ignore_ascii_case(STAGING_MARKER)
+                && !part.eq_ignore_ascii_case(STAGING_LOCK)
         })
 }
 
@@ -1033,6 +1038,43 @@ fn prepare_staging_root(root: &Path) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Keep a persistent sibling lock inode so concurrent processes cannot unlink each other's lock.
+/// The advisory lock is held for the whole pull and released automatically if the process exits.
+fn acquire_staging_lock(root: &Path) -> Result<fs::File> {
+    let parent = root
+        .parent()
+        .ok_or_else(|| Error::Hub("game-data staging root has no parent".into()))?;
+    let parent_meta = fs::symlink_metadata(parent)?;
+    if parent_meta.file_type().is_symlink() || !parent_meta.is_dir() {
+        return Err(Error::Hub(
+            "game-data staging parent must be a real directory".into(),
+        ));
+    }
+    let path = parent.join(STAGING_LOCK);
+    let file_meta = match fs::symlink_metadata(&path) {
+        Ok(meta) => Some(meta),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    if file_meta
+        .as_ref()
+        .is_some_and(|meta| meta.file_type().is_symlink() || !meta.is_file())
+    {
+        return Err(Error::Hub("game-data staging lock is unsafe".into()));
+    }
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(Error::Hub("game-data staging lock is unsafe".into()));
+    }
+    fs4::FileExt::lock(&file)?;
+    Ok(file)
 }
 
 fn mark_staging_incomplete(root: &Path) -> Result<PathBuf> {
@@ -1524,6 +1566,10 @@ mod tests {
             "NUL.txt",
             "content/trailing.",
             "content/trailing ",
+            ".UU-TRANSFER-INCOMPLETE",
+            "content/.UU-TRANSFER-INCOMPLETE",
+            ".UU-TRANSFER.LOCK",
+            "content/é.bin",
         ] {
             let text = format!(
                 "uncharted-game-data 1\ntarget linux\nfile 1 {} {path}\n",
@@ -1553,6 +1599,31 @@ mod tests {
             let text = format!("uncharted-game-data 1\ntarget linux\n{rows}");
             assert!(parse_game_manifest(text.as_bytes(), Os::Linux).is_err());
         }
+    }
+
+    #[test]
+    fn same_staging_directory_pulls_are_serialized() {
+        let root = std::env::temp_dir().join(format!("uu-hub-lock-test-{}", std::process::id()));
+        let staged = root.join("staged");
+        let _ = fs::remove_dir_all(&root);
+        prepare_staging_root(&staged).unwrap();
+        let first = acquire_staging_lock(&staged).unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let staged_second = staged.clone();
+        let second = std::thread::spawn(move || {
+            let lock = acquire_staging_lock(&staged_second).unwrap();
+            ready_tx.send(()).unwrap();
+            drop(lock);
+        });
+        assert!(matches!(
+            ready_rx.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(first);
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        second.join().unwrap();
+        assert!(root.join(STAGING_LOCK).is_file());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

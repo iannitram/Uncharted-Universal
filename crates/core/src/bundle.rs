@@ -71,6 +71,12 @@ pub fn is_forbidden(rel_path: &str) -> bool {
     {
         return true;
     }
+    if components
+        .iter()
+        .any(|part| part == ".uu-transfer-incomplete" || part == ".uu-transfer.lock")
+    {
+        return true;
+    }
     let name = components.last().map(String::as_str).unwrap_or("");
     let forbidden_suffix = [
         ".pkg", ".iso", ".elf", ".self", ".prx", ".sprx", ".nca", ".keys",
@@ -572,6 +578,8 @@ mod tests {
         assert!(is_forbidden("../outside"));
         assert!(is_forbidden("lib/../../outside"));
         assert!(is_forbidden("/absolute/path"));
+        assert!(is_forbidden(".UU-TRANSFER-INCOMPLETE"));
+        assert!(is_forbidden("content/.UU-TRANSFER.LOCK"));
         assert!(is_forbidden("C:/absolute/path"));
         assert!(is_forbidden("sce_sys/param.sfo"));
         assert!(is_forbidden("game/eboot.bin"));
