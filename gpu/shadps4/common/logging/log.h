@@ -60,8 +60,7 @@ static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "War
         if (auto logger = Common::Log::ALL_LOGGERS[class_arg];                                     \
             logger && logger->should_log(level_arg)) {                                             \
             logger->log(level_arg, "[{}] <{}> ({}) {}:{} {}: " fmt_arg, class_arg,                 \
-                        Common::Log::level_string_views.at(static_cast<std::size_t>(level_arg))     \
-                            .data(),                                                               \
+                        Common::Log::level_string_views.at(static_cast<std::size_t>(level_arg)),    \
                         Common::GetCurrentThreadName(),                                             \
                         Common::Log::basename(__FILE__), __LINE__,                                 \
                         std::string_view(__func__) == "operator()" ? "lambda" : __func__,          \
