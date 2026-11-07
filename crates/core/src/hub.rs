@@ -531,7 +531,10 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
             continue;
         }
         channel.send(format!("NEED {index}").as_bytes())?;
-        let temp = temporary_sibling(&destination)?;
+        // We hold the staging lock, so abandoned transfer temps for this exact destination
+        // cannot belong to another live pull. Replacement backups use a separate `.bak` suffix.
+        cleanup_transfer_temps(&destination)?;
+        let temp = temporary_sibling(&destination, "tmp")?;
         let result = receive_game_file(&mut channel, index, file, &temp);
         if let Err(error) = result {
             let _ = fs::remove_file(&temp);
@@ -1138,7 +1141,7 @@ fn file_matches(path: &Path, expected: &GameFile) -> Result<bool> {
     Ok(hash_file(path)? == expected.sha256)
 }
 
-fn temporary_sibling(destination: &Path) -> Result<PathBuf> {
+fn temporary_sibling(destination: &Path, suffix: &str) -> Result<PathBuf> {
     let name = destination
         .file_name()
         .ok_or_else(|| Error::Hub("invalid game-data destination".into()))?;
@@ -1147,8 +1150,47 @@ fn temporary_sibling(destination: &Path) -> Result<PathBuf> {
         .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
     let mut temp_name = std::ffi::OsString::from(".");
     temp_name.push(name);
-    temp_name.push(format!(".uu-{}.tmp", hex(&random)));
+    temp_name.push(format!(".uu-{}.{}", hex(&random), suffix));
     Ok(destination.with_file_name(temp_name))
+}
+
+/// Remove only regular files with the exact random-name shape emitted for abandoned transfer
+/// temps of this destination. Call while holding the staging lock; symlinks and malformed names
+/// are left untouched.
+fn cleanup_transfer_temps(destination: &Path) -> Result<()> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| Error::Hub("invalid game-data destination".into()))?;
+    let name = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| Error::Hub("invalid game-data destination".into()))?;
+    let prefix = format!(".{name}.uu-");
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        let Some(candidate) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Some(token) = candidate
+            .strip_prefix(&prefix)
+            .and_then(|rest| rest.strip_suffix(".tmp"))
+        else {
+            continue;
+        };
+        if token.len() != 16
+            || !token
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            continue;
+        }
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.is_file() && !metadata.file_type().is_symlink() {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn receive_game_file(
@@ -1209,7 +1251,7 @@ fn receive_game_file(
 }
 
 fn replace_verified(temp: &Path, destination: &Path) -> Result<()> {
-    let backup = temporary_sibling(destination)?;
+    let backup = temporary_sibling(destination, "bak")?;
     let had_destination = destination.exists();
     if had_destination {
         fs::rename(destination, &backup)?;
@@ -1623,6 +1665,32 @@ mod tests {
         ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         second.join().unwrap();
         assert!(root.join(STAGING_LOCK).is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn retry_cleanup_removes_only_exact_regular_transfer_temps() {
+        let root = std::env::temp_dir().join(format!("uu-hub-temp-clean-{}", std::process::id()));
+        let staged = root.join("staged");
+        let parent = staged.join("content");
+        let destination = parent.join("data.bin");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&parent).unwrap();
+        let abandoned = parent.join(".data.bin.uu-0123456789abcdef.tmp");
+        let unrelated = parent.join(".other.bin.uu-0123456789abcdef.tmp");
+        let malformed = parent.join(".data.bin.uu-not-a-random-token.tmp");
+        let backup = parent.join(".data.bin.uu-0123456789abcdef.bak");
+        fs::write(&abandoned, b"partial synthetic data").unwrap();
+        fs::write(&unrelated, b"keep").unwrap();
+        fs::write(&malformed, b"keep").unwrap();
+        fs::write(&backup, b"keep").unwrap();
+
+        cleanup_transfer_temps(&destination).unwrap();
+
+        assert!(!abandoned.exists());
+        assert!(unrelated.exists());
+        assert!(malformed.exists());
+        assert!(backup.exists());
         fs::remove_dir_all(root).unwrap();
     }
 
