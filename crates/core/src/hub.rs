@@ -1923,6 +1923,7 @@ mod tests {
         assert_eq!(limiter.failures, 0);
     }
 
+    #[cfg(unix)]
     #[test]
     fn peer_storage_round_trips_with_owner_only_unix_mode_and_redacted_debug() {
         let root = std::env::temp_dir().join(format!("uu-peers-{}", std::process::id()));
@@ -1946,6 +1947,21 @@ mod tests {
             );
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn peer_storage_fails_closed_when_protected_storage_is_unavailable() {
+        let path = std::env::temp_dir().join(format!("uu-peers-{}", std::process::id()));
+        assert!(matches!(
+            read_peers(&path),
+            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+        ));
+        assert!(matches!(
+            write_peers(&path, &[]),
+            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+        ));
+        assert!(!path.exists());
     }
 
     #[test]
