@@ -81,6 +81,9 @@ jobs:
   native-windows:
     # CLANG64 builds the Windows GPU library and portable native C harnesses; it is not a hardware GPU test.
     runs-on: [self-hosted, windows]
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
