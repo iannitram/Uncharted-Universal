@@ -284,6 +284,9 @@ target_include_directories(motion-history-test PRIVATE ..)
 add_executable(motion-shader-test EXCLUDE_FROM_ALL ../tests/test_motion_shaders.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
 target_link_libraries(motion-shader-test PRIVATE bbgpu)
+add_executable(wbinvl1-test EXCLUDE_FROM_ALL ../tests/test_wbinvl1.cpp)
+target_include_directories(wbinvl1-test PRIVATE shadps4 third_party/gcn/include)
+target_link_libraries(wbinvl1-test PRIVATE bbgpu)
 add_executable(ui-composition-test EXCLUDE_FROM_ALL ../tests/test_ui_composition.cpp)
 target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(ui-composition-test PRIVATE ..)
@@ -314,6 +317,11 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
+
+add_executable(expand-image-test EXCLUDE_FROM_ALL ../tests/test_expand_image.cpp)
+target_include_directories(expand-image-test PRIVATE shadps4)
+target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(expand-image-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
