@@ -4,15 +4,17 @@ The intended shape of the repo for 1.0 (`SPEC.md`, approved 2026-11-01): **one R
 
 Status per module: **present** (built), **stub** (the final types and signatures exist; constants and trivial pure helpers may be built, and any other function returns `Err(Error::NotBuilt(..))` or panics with "not built yet" when it cannot fail), **planned** (not in the tree), **legacy** (today's C or Python, removed when its Rust replacement is present and the game boots). "Musts" columns cite `SPEC.md` (M1-M20; the spec has no Should items); every module that replaces C or Python also serves M20. An issue that builds a module moves its status in the same PR. Integration branch: `main` (our work; `upstream-main` is a copy of Supermedo's `main`).
 
+Current source was audited on 2026-11-06: [platform readiness](audits/2026-11-06-universal-platforms.md). The diagram and target architecture below include planned work: `app/`, `android/` and `apple/` do not exist yet, the CLI is a skeleton, and `recipe::recipe_for`, preparation, linking, install and launch are stubs. Peer code has not yet been adopted for the mobile/Apple routes; see [PEERS.md](../PEERS.md).
+
 ## Platforms (R04)
 
 | Device family | 1.0 device | Game code | Renderer | Built on (hub) | Launcher | Save sync in | CI |
 |---|---|---|---|---|---|---|---|
-| Linux / SteamOS | the AMD handheld, the Strix Halo tablet | native x86-64 | shadPS4, Vulkan (RADV) | the Strix Halo tablet; the AMD handheld pulls | Slint app (AppImage), opened by the Steam shortcut | the launcher | `ubuntu-latest`: workspace (now); GPU library and boot smoke (piece 3.01) |
-| Windows | the RTX 3090 Ti desktop | native x86-64 | shadPS4, Vulkan | the desktop | Slint app | the launcher | `windows-latest`: workspace (now); GPU library (CLANG64, piece 6.01) |
-| macOS | a Mac with Apple silicon | recompiled library | Metal | the Mac | Slint app (also builds and installs the iOS app) | the launcher | `macos-latest`: workspace (now, an Apple silicon runner); the `aarch64-apple-darwin` runtime build (piece 8.02) |
-| iOS / iPadOS | iPhone or iPad + controller | recompiled library (no JIT) | Metal | the Mac, installed by cable | none: the game app | the game app (save-relay C interface) | `macos-latest`: `cargo check` for `aarch64-apple-ios` (now); a real iOS build (piece 8.02) |
-| Android | Adreno device + controller | FEXCore (x86-64 to ARM64) | shadPS4, Vulkan (Turnip) | the Strix Halo tablet | Slint app (Android) | the launcher, inside the same app | `ubuntu-latest`: `cargo build -p uncharted_runtime --target aarch64-linux-android` (now; the NDK joins at piece 3.01) |
+| Linux / SteamOS | the AMD handheld, the Strix Halo tablet | native x86-64 | shadPS4, Vulkan (RADV) | the Strix Halo tablet; the AMD handheld pulls | Slint app (AppImage), opened by the Steam shortcut | the launcher | `[self-hosted, linux]`: Rust workspace; legacy Linux package in build.yml; integrated GPU/boot smoke pending (3.01) |
+| Windows | the RTX 3090 Ti desktop | native x86-64 | shadPS4, Vulkan | the desktop | Slint app | the launcher | `[self-hosted, windows]`: Rust workspace; full GPU/runtime build pending (6.01) |
+| macOS | a Mac with Apple silicon | recompiled library | Metal | the Mac | Slint app (also builds and installs the iOS app) | the launcher | `macos-latest`: workspace on workflow_dispatch only; explicit runtime/application build pending (8.02); runner architecture must be verified |
+| iOS / iPadOS | iPhone or iPad + controller | recompiled library (no JIT) | Metal | the Mac, installed by cable | none: the game app | the game app (save-relay C interface) | `macos-latest`: runtime cargo check on workflow_dispatch only; signed application build pending (8.02) |
+| Android | Adreno device + controller | FEXCore (x86-64 to ARM64) | shadPS4, Vulkan (Turnip) | the Strix Halo tablet | Slint app (Android) | the launcher, inside the same app | `[self-hosted, linux]`: runtime static-library cross-build; NDK/GPU/APK link pending (7.02) |
 
 Rules that keep it portable: `crates/core` is pure Rust (no C library, no OpenSSL; the hub's crates are `mdns-sd`, RustCrypto `spake2`, `chacha20poly1305`, `sha2`, behind feature `hub`); no `std::os::*` outside `platform`, `steam` and the runtime's `os` module; every OS rule takes its folders from `platform::Vars`, so Linux, Windows and Mac rules are tested on every runner; tests build temporary folders under `std::env::temp_dir()`. The runtime is the only crate with `unsafe` and FFI (`crates/core` has `#![forbid(unsafe_code)]`), and each `unsafe` block carries a `// SAFETY:` line. Anything that must call a C library (the Vulkan hardware probe, SDL) lives in the runtime and reaches `crates/core` as data (a JSON report) or through a trait, never as a call.
 
@@ -49,8 +51,8 @@ flowchart TD
     Probe -.->|"report read by"| Tune
     HLE -->|"bbgpu.h C ABI"| GPU["gpu/: shadPS4 + shim (C++, kept)"]
     GPU --> VK["Vulkan, FSR, DLSS"]
-    Runtime -.Apple.-> Metal["apple/: recompiled library + Metal (adopted, ADR 0006)"]
-    Runtime -.Android.-> FEX["android/: FEXCore + Turnip (adopted, ADR 0005)"]
+    Runtime -.Apple.-> Metal["apple/ (planned): recompiled library + Metal (ADR 0006)"]
+    Runtime -.Android.-> FEX["android/ (planned): FEXCore + Turnip (ADR 0005)"]
     Saves --> SR[("iannitram/save-relay")]
     Hub <-->|"home network only"| Peers[("my other launchers")]
 ```
@@ -137,7 +139,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 |---|---|---|---|---|
 | `gpu/` | present | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; the review's GPU bugs (#31, #37) and the equeue wait (#35, in `gpu/shim`) | M1-M3, M5, M8 |
 | `android/` | planned | revvv991/uncharted-android (GPL-2.0, credited) | APK project, FEXCore and Mesa/Turnip patches, libadrenotools glue, the `g2-arm64:` renderer changes rebased onto ours | M17 |
-| `apple/` | planned | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0, licence read at the issue, credited) | the x86-64 recompiler run on the Mac from my dump, the Metal renderer, the iOS app shell with controller and touch | M15, M16 |
+| `apple/` | planned | bloodborne-native/bloodborne-recomp, bbcpu, bloodborne-runtime, -mac, -ios (root GPL-2.0; exact imported files/dependencies checked at the issue, credited) | the x86-64 recompiler run on the Mac from my dump, the Metal renderer, the iOS app shell with controller and touch | M15, M16 |
 
 ## Legacy (removed by M20)
 
@@ -159,7 +161,7 @@ cargo test --workspace
 bash build.sh && bash build.sh --test   # the C path, until src/ is gone
 ```
 
-CI (M6): `.github/workflows/check.yml` (fmt, clippy, build and test, with and without `--all-features`, on Linux, Windows and macOS; the runtime cross-builds for `aarch64-linux-android` and is checked for `aarch64-apple-ios`) and `build.yml` (the Linux package and release from `main`, until the Rust release workflow replaces it). Not in CI yet: the GPU library and its tests on Windows and macOS, and the boot smoke test.
+CI (M6, current configuration): `.github/workflows/check.yml` runs fmt, clippy, build and tests on self-hosted Linux and Windows runners; macOS workspace and iOS runtime checks are workflow_dispatch only. Android cross-builds only the runtime static library for `aarch64-linux-android`, without an NDK-linked application; iOS uses `cargo check`, not an app build. `build.yml` packages the legacy Linux build. The all-features checks do not turn stub services into implementations. The full Windows/macOS GPU/runtime checks, signed mobile applications and boot smoke tests remain acceptance work; this is not yet the M6 goal of verified full builds on every platform.
 
 ## Build hubs (ADR 0004)
 

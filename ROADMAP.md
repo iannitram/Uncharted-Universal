@@ -41,6 +41,10 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 9. **One save everywhere.** 9.01 the save-relay adapter in the launcher (#163 reworked); 9.02 the round trip across all six devices: the 1.0 sentence.
 10. **Design pass** (R04), last before 1.0. 10.01 the built screens against the Continue screen brief and the shared design system, including the Steam artwork and Game Mode; findings become `design-pass` issues.
 
+## Platform readiness evidence
+
+The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps current blockers to these existing stages. The [platform peer survey](PEERS.md) supplies pinned source entry points. Prioritize the dump/revision/recipe contracts and a wired preparation flow before advertising target builds. Stage 8.01 must evaluate bloodborne-recomp, bbcpu and the Metal runtime together for all three executables; the direct Uncharted Mac launcher is a Rosetta-based comparison, and the Uncharted iOS peer is a scaffold. No stage or acceptance gate is marked complete by the survey.
+
 ## Open-source pieces and where they fit
 
 | Project | Licence | Where | How |
@@ -49,8 +53,9 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 | Supermedo/uncharted_pc, spacepepperoni/uncharted_Linux | GPL-2.0 | upstream | syncs for `gpu/` and assets; `src/` and Python changes ported by hand as `upstream-sync` issues once moved |
 | revvv991/uncharted-android | GPL-2.0 | `android/`, 7.01 | adopt with credit |
 | eladharels/uncharted_android | GPL-2.0 | Android device notes | learn |
-| bloodborne-native/bloodborne-runtime, -mac, -ios | GPL-2.0 (to confirm at 8.01) | `apple/`, 8.03-8.06 | adopt with credit |
-| bmy/bbport-mac | not yet read | Apple notes | learn until read |
+| bloodborne-native/bloodborne-recomp, bbcpu, bloodborne-runtime, -mac, -ios | root GPL-2.0; exact files/dependencies to check at 8.01 | `apple/`, 8.03-8.06 | adopt with credit |
+| bmy/bbport-mac | root GPL-2.0 | Apple notes (Rosetta guest) | compare; check exact imported files |
+| truwa/nathan-drake-collection-macos | root license not established | direct Uncharted Mac packaging (Rosetta) | learn only |
 | iannitram/totk-native | MIT | `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `savecard`, the Continue brief | copy with credit |
 | iannitram/save-relay | MIT | `relay`, Android and iOS | link |
 | FEX-Emu/FEX | MIT | Android | through `android/` |

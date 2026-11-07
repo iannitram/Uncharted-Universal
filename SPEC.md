@@ -62,7 +62,7 @@ Device checks are `needs-owner-device`: they need my machines and my dump. IDs M
 
 ## Prior art
 
-Notes and the survey's findings: [PEERS.md](PEERS.md). The first 15 were approved 2026-10-31; the last 9 are new in this draft.
+Notes and the survey's findings: [PEERS.md](PEERS.md). The original peers were recorded during the 2026-10-31 / 2026-11-01 planning. The 2026-11-06 platform survey adds the separate Apple recompiler/CPU repositories and a direct Uncharted Mac launcher as research candidates; it changes no Must or approved platform route. Listing a peer does not approve importing its entire tree.
 
 peer: Supermedo/uncharted_pc | GPL-2.0 | upstream: Linux, handheld, resolution, frame rate and upscaler issues and PRs
 peer: spacepepperoni/uncharted_Linux | GPL-2.0 | the Linux fork we sync from: launcher, Steam Deck mode, releases
@@ -73,6 +73,8 @@ peer: Mevlock/uncharted_pc-dev | GPL-2.0 | performance builds: pools, buffer are
 peer: revvv991/uncharted-android | GPL-2.0 | the Android base: guest x86-64 through FEXCore, the rest native ARM64, Turnip on Adreno; all three games playable on a Retroid Pocket G2
 peer: shadps4-emu/shadPS4 | GPL-2.0 | texture and buffer cache fixes to back-port into gpu/shadps4
 peer: bloodborne-native/bloodborne-runtime | GPL-2.0 | the shim's ancestor; its CPU recompiler and Metal renderer are the Apple route
+peer: bloodborne-native/bloodborne-recomp | GPL-2.0 root licence | separate AOT generator for the Apple route; Bloodborne-specific executable assumptions need an Uncharted feasibility check
+peer: bloodborne-native/bbcpu | GPL-2.0 root licence | CPU support for the Apple route; iOS disables JIT and needs coverage or interpreter fallback
 peer: bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings
 peer: eladharels/uncharted_android | GPL-2.0 | a second Android port (FEX JIT + Turnip): device notes
 peer: bloodborne-native/bloodborne-mac | GPL-2.0 | native Apple Silicon port of the same bbport family: the Mac base
@@ -81,7 +83,8 @@ peer: Ryxm-a/uncharted-ios | GPL-2.0 | an Uncharted iOS scaffold (FEX with sidel
 peer: zorde23/Uncharted_Collection_PC | GPL-2.0 | independent Windows port of the collection: crash and rendering fixes to port with credit
 peer: iannitram/totk-native | MIT | our sibling: the same launcher, hubs, fleet, Steam and save-card modules in Rust, copied with credit
 peer: iannitram/save-relay | MIT | all save sync
-peer: bmy/bbport-mac | licence not yet read | a second macOS port of bbport: Apple notes
+peer: bmy/bbport-mac | GPL-2.0 root licence | second macOS bbport: Rosetta guest and native renderer process; comparison, not our no-Rosetta route
+peer: truwa/nathan-drake-collection-macos | root licence not established; learn only | direct Uncharted Mac launcher using Rosetta and KosmicKrisp; packaging comparison
 peer: FEX-Emu/FEX | MIT | x86-64 on ARM64 (Android)
 peer: K11MCH1/libadrenotools | BSD-2-Clause | loads Turnip on Android
 peer: slint-ui/slint | royalty-free licence (attribution) | the launcher UI
