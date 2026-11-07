@@ -39,9 +39,7 @@
     "id": "u2-eop-tick-framebegin",
     "signature": "GetRenderFrameParams(frameToFreeInstancesFor)->m_gfxEopTick",
     "game": "u2",
-    "locations": [
-      "FrameBegin"
-    ],
+    "locations": [],
     "summary": "U2 FrameBegin EOP-tick assertion recorded in the crash report.",
     "fixed_in": null,
     "toggle": null,
@@ -99,9 +97,7 @@
     "id": "u2-framebegin-fault-5547d5",
     "signature": "guest offset 0x5547d5",
     "game": "u2",
-    "locations": [
-      "FrameBegin"
-    ],
+    "locations": [],
     "summary": "U2 FrameBegin report records a read fault at guest offset 0x5547d5.",
     "fixed_in": null,
     "toggle": null,
@@ -147,9 +143,7 @@
     "id": "u1-fault-581aba",
     "signature": "guest offset 0x581aba",
     "game": "u1",
-    "locations": [
-      "gameplay"
-    ],
+    "locations": [],
     "summary": "U1 gameplay report records a read fault at guest offset 0x581aba.",
     "fixed_in": null,
     "toggle": null,
@@ -159,9 +153,7 @@
     "id": "u1-fault-63f61e",
     "signature": "guest offset 0x63f61e",
     "game": "u1",
-    "locations": [
-      "after several minutes"
-    ],
+    "locations": [],
     "summary": "U1 report records a read fault at guest offset 0x63f61e after several minutes of play.",
     "fixed_in": null,
     "toggle": null,
