@@ -136,7 +136,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | Path | Status | From | Owns | Musts |
 |---|---|---|---|---|
 | `gpu/` | present | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; the review's GPU bugs (#31, #37) and the equeue wait (#35, in `gpu/shim`) | M1-M3, M5, M8 |
-| `android/` | planned | revvv991/uncharted-android (GPL-2.0, credited) | APK project, FEXCore and Mesa/Turnip patches, libadrenotools glue, the `g2-arm64:` renderer changes rebased onto ours | M17 |
+| `android/` | partial: pinned dependency recipe and synthetic SDL link target | Selected FEXCore, Mesa Turnip, libadrenotools and SDL sources; recipe adapted from revvv991/uncharted-android (GPL-2.0-or-later) | `android/scripts/build_dependencies.sh` builds pinned public dependencies and links an authored smoke binary; APK project, FEX guest harness, runtime bridge and driver selection remain separate | M17 |
 | `apple/` | planned | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0, licence read at the issue, credited) | the x86-64 recompiler run on the Mac from my dump, the Metal renderer, the iOS app shell with controller and touch | M15, M16 |
 
 ## Legacy (removed by M20)
