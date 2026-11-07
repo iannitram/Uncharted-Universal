@@ -137,7 +137,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 |---|---|---|---|---|
 | `gpu/` | present | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; the review's GPU bugs (#31, #37) and the equeue wait (#35, in `gpu/shim`) | M1-M3, M5, M8 |
 | `android/` | planned | revvv991/uncharted-android (GPL-2.0, credited) | APK project, FEXCore and Mesa/Turnip patches, libadrenotools glue, the `g2-arm64:` renderer changes rebased onto ours | M17 |
-| `apple/` | planned | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0, licence read at the issue, credited) | the x86-64 recompiler run on the Mac from my dump, the Metal renderer, the iOS app shell with controller and touch | M15, M16 |
+| `apple/` | planned; #211 source/synthetic gate reviewed, no-go for implementation or compatibility claims on U1/U2/U3 for macOS and iOS until owner-run evidence and approval | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0 roots; exact files and dependency closure still need review before import; `bbnet20` GPL-3.0 is excluded) | target remains an x86-64-to-ARM64 AOT library, no-JIT fallback and Metal; no Uncharted executable coverage or Apple runtime is implemented | M15, M16 |
 
 ## Legacy (removed by M20)
 
@@ -176,6 +176,6 @@ A bundle holds the prepared install (boot image, linked modules, patches) and th
 - Which revision (`APP_VER`) of each game the port supports today; `games::SUPPORTED` is filled from the device runs.
 - Which of the four collection title ids is which region or edition (`games::title_region`); the dump check (piece 1.05) fills it from real `param.sfo` files.
 - Whether a PS4 save's `sce_sys/icon0.png` and `param.sfo` give a useful picture and detail for the save card; fallback: the game's own `icon0.png`.
-- bloodborne-native's recompiler and Metal renderer: how much is Bloodborne-specific, and their licence files (`apple/` issue 8.01).
+- Apple AOT/Metal source compatibility is still unproven per title and target; see [ADR 0006 feasibility gate](adr/0006-apple-recompiled-metal.md#feasibility-gate-211-2026-11-06) and issue #211.
 - FEXCore performance with our Rust runtime on Android (revvv991 measured the C runtime).
 - mDNS from Game Mode and on Android (multicast lock).
