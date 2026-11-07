@@ -167,6 +167,12 @@ impl Samples {
         if self.frame_ms.is_empty() {
             return Err(invalid("benchmark has no frame samples"));
         }
+        // Keep the privacy boundary here as well as in Config::from_values: callers may
+        // construct a settings map directly instead of passing through the environment parser.
+        let settings = settings
+            .into_iter()
+            .filter(|(key, _)| is_report_setting(key))
+            .collect();
         let mut sorted = self.frame_ms.clone();
         sorted.sort_by(f64::total_cmp);
         let total_ms: f64 = sorted.iter().sum();
@@ -216,10 +222,18 @@ pub struct Percentiles {
 impl Report {
     /// Serialize with the field names and enum values specified by issue #173.
     pub fn to_json(&self) -> io::Result<Vec<u8>> {
+        // Report fields are public for consumers, so enforce the allowlist again at the
+        // serialization boundary in case a Report was constructed directly.
+        let settings: BTreeMap<_, _> = self
+            .settings
+            .iter()
+            .filter(|(key, _)| is_report_setting(key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
         serde_json::to_vec(&serde_json::json!({
             "game": self.game.as_str(),
             "seconds": self.seconds,
-            "settings": self.settings,
+            "settings": settings,
             "frame_ms": {
                 "p50": self.frame_ms.p50,
                 "p95": self.frame_ms.p95,
@@ -378,6 +392,44 @@ mod tests {
             json
         );
         assert_eq!(fs::read_dir(&dir.0).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn report_boundary_filters_settings_that_bypass_config() {
+        let mut samples = Samples::default();
+        samples.record_frame(16.0, 512).unwrap();
+        let report = samples
+            .finish(
+                Game::U1,
+                10,
+                BTreeMap::from([
+                    ("BB_RESOLUTION".into(), "1280x720".into()),
+                    ("BB_SAVE_DIR".into(), "/private/saves".into()),
+                    ("PATH".into(), "/private/bin".into()),
+                ]),
+                Ended::Ok,
+            )
+            .unwrap();
+        assert_eq!(
+            report.settings,
+            BTreeMap::from([("BB_RESOLUTION".into(), "1280x720".into()),])
+        );
+
+        let json: serde_json::Value = serde_json::from_slice(&report.to_json().unwrap()).unwrap();
+        assert_eq!(
+            json["settings"],
+            serde_json::json!({
+                "BB_RESOLUTION": "1280x720",
+            })
+        );
+
+        let directly_constructed = Report {
+            settings: BTreeMap::from([("BB_SAVE_DIR".into(), "/private/saves".into())]),
+            ..report
+        };
+        let json: serde_json::Value =
+            serde_json::from_slice(&directly_constructed.to_json().unwrap()).unwrap();
+        assert_eq!(json["settings"], serde_json::json!({}));
     }
 
     #[test]
