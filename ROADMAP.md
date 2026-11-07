@@ -36,38 +36,65 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 4. **Build hubs** (Linux, Windows, macOS; Android as a client). 4.01 discovery; 4.02 pairing; 4.03 serve and pull with the shader translations; 4.04 fleet records and drift; 4.05 `hub` and `fleet` commands. CI runs a fake hub on loopback.
 5. **SteamOS handhelds** (Linux). 5.01 the Strix Halo tablet as hub: prepare all three games on itself, play an hour each from Game Mode; 5.02 the AMD handheld: install pulled from the tablet, Steam artwork, an hour each, the M5 soak; then the playthroughs #76-#78.
 6. **Windows desktop.** 6.01 the Rust workspace and the GPU library on `windows-latest` (CLANG64, Rust target chosen here); 6.02 an hour per game with a controller.
-7. **Android** (Adreno). 7.01 bring in revvv991/uncharted-android's `android/` (APK, FEXCore, Turnip patches) with credit, rebased on our tree; 7.02 the runtime cross-builds for `aarch64-linux-android` in CI; 7.03 the Slint launcher's Android build with gamepad keys; 7.04 the hub serves the APK and install, the launcher installs them; 7.05 save-relay in the Android launcher; 7.06 a session per game with a controller.
+7. **Android** (Adreno). 7.01 adapt selected reviewed Android dependency/build, FEX bridge and Turnip/libadrenotools sources from revvv991 and zenithblue with credit through #207-#210, after the runtime ABI/thread/memory prerequisites; do not graft the whole peer project. 7.02 the runtime cross-builds for `aarch64-linux-android` in CI; 7.03 the Slint launcher's Android APK build with gamepad keys; 7.04 the hub serves the APK and install, the launcher installs them; 7.05 save-relay in the Android launcher; 7.06 a session per game with a controller.
 8. **Mac, iPhone and iPad.** 8.01 study bloodborne-native's recompiler, Metal renderer and iOS shell: licence files, what is Bloodborne-specific, a written plan (docs); 8.02 the runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios` in CI; 8.03 bring in the recompiler, run on the Mac from my dump to a library per game; 8.04 the Metal renderer for the collection; 8.05 the Mac app from the launcher, then the iOS app built on the Mac and installed by cable; 8.06 iOS controller mapping, touch hidden with a controller; 8.07 save-relay in the iOS app (its C interface); 8.08 the Mac: an hour per game; 8.09 the iPhone or iPad: a session per game with a controller.
 9. **One save everywhere.** External dependency: [iannitram/save-relay](https://github.com/iannitram/save-relay) for Linux, Windows, macOS, iOS/iPadOS and Android. Reference it for now; integration waits for its relevant platform support and interface to be ready. 9.01 attaches the adapter in the launcher (#163 reworked), with 7.05 and 8.07 covering the mobile integration; 9.02 verifies the round trip across all six devices: the 1.0 sentence. This project does not build a separate sync service.
 10. **Design pass** (R04), last before 1.0. 10.01 the built screens against the Continue screen brief and the shared design system, including the Steam artwork and Game Mode; findings become `design-pass` issues.
 
 ## Platform readiness evidence
 
-The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps current blockers to these existing stages. The [platform peer survey](PEERS.md) supplies pinned source entry points. Prioritize the dump/revision/recipe contracts and a wired preparation flow before advertising target builds. Stage 8.01 must evaluate bloodborne-recomp, bbcpu and the Metal runtime together for all three executables; the direct Uncharted Mac launcher is a Rosetta-based comparison, and the Uncharted iOS peer is a scaffold. No stage or acceptance gate is marked complete by the survey.
+The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps current blockers to these existing stages. The [platform peer survey](PEERS.md) supplies frozen source and file-level license links; the [issue-disposition ledger](docs/audits/2026-11-06-issue-dispositions.md) records the full open-issue review. Prioritize the dump/revision/recipe contracts and a wired preparation flow before advertising target builds. Stage 8.01 is a hard source/synthetic feasibility gate (#211): it does not inspect or retain game dumps. It must assess the bloodborne-recomp, bbcpu and Metal route before downstream Apple implementation; the direct Uncharted Mac launcher is a Rosetta-based comparison, and the Uncharted iOS peer is a scaffold. No stage or acceptance gate is marked complete by the survey.
+
+
+### Issue-backed peer import sequence
+
+These issues refine work inside the existing platform stages; they do not close
+or replace stage commitments. Issue #207 builds pinned Android dependencies and
+a synthetic native artifact only, not the full game APK/engine. #208 depends on
+#207 and adapts the Linux ARM64/glibc donor smoke harness to Android NDK/bionic
+and Android execution. #209 depends on #208 plus the runtime C ABI scaffold
+(3.01), memory (3.12), and thread/fiber (3.13); the Windows OS shims in 3.15
+are not an Android prerequisite. #210 is a standalone native Turnip/libadrenotools
+bootstrap after #207, before Slint app wiring: only explicitly selected,
+validated drivers may start; invalid custom selection must fail closed and may
+not silently fall back to an unvalidated stock Adreno driver. App wiring remains
+inside 7.03. The exact source boundaries are in [PEERS.md](PEERS.md#issue-backed-platform-survey-2026-11-06).
+
+For Apple, #211 gates implementation on source/synthetic coverage and a
+file-level license/dependency map; it creates no game-dump inspection. #212 is
+synthetic no-JIT CPU coverage after #211. Existing #31 and #37 remain the
+small, issue-scoped shadPS4 import candidates; link to their pinned upstream changes in
+PEERS.md rather than creating duplicates. The former upstream head is already
+an ancestor of production `main`, so no sync batch is planned. #206 carries the
+separate Rust SELF/plain-ELF loader-parity obligation from the closure of #66.
+Save-relay stays reference-only until its platform support and interface are
+ready; there is no new sync implementation issue.
 
 ## Open-source pieces and where they fit
 
-| Project | Licence | Where | How |
+| Project | Licence evidence | Where | How |
 |---|---|---|---|
-| shadPS4 | GPL-2.0 | `gpu/` | kept, back-ports continue (bug reports only: anti-AI) |
-| Supermedo/uncharted_pc, spacepepperoni/uncharted_Linux | GPL-2.0 | upstream | syncs for `gpu/` and assets; `src/` and Python changes ported by hand as `upstream-sync` issues once moved |
-| revvv991/uncharted-android | GPL-2.0 | `android/`, 7.01 | adopt with credit |
-| eladharels/uncharted_android | GPL-2.0 | Android device notes | learn |
-| bloodborne-native/bloodborne-recomp, bbcpu, bloodborne-runtime, -mac, -ios | root GPL-2.0; exact files/dependencies to check at 8.01 | `apple/`, 8.03-8.06 | adopt with credit |
-| bmy/bbport-mac | root GPL-2.0 | Apple notes (Rosetta guest) | compare; check exact imported files |
-| truwa/nathan-drake-collection-macos | root license not established | direct Uncharted Mac packaging (Rosetta) | learn only |
-| iannitram/totk-native | MIT | `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `savecard`, the Continue brief | copy with credit |
-| iannitram/save-relay | MIT | `relay`, Android and iOS | link |
-| FEX-Emu/FEX | MIT | Android | through `android/` |
-| K11MCH1/libadrenotools | BSD-2-Clause | Android | through `android/` |
-| slint-ui/slint | royalty-free (attribution) | `app/` | dependency; About carries the notice |
+| shadPS4 | GPL-2.0 | `gpu/` | kept in our fork; read-only source research only; no reports or PRs to shadPS4 (anti-AI) |
+| Supermedo/uncharted_pc, spacepepperoni/uncharted_Linux | GPL-2.0 roots | current C/C++ lineage and Linux base | former-upstream head is already an ancestor of production `main`; no sync batch now. Port behavior into Rust modules as separate issues. |
+| zorde23/Uncharted_Collection_PC and older community forks | GPL-2.0 roots | Windows/Linux comparisons | targeted fixes only when an open bug has the same cause; no broad engine graft |
+| revvv991/uncharted-android | GPL-2.0-or-later root; [`android/LICENSES.md`](https://github.com/revvv991/uncharted-android/blob/847faf5a802253cf90664144765f0e5d12eb410e/android/LICENSES.md#L1-L30) inventories dependencies | Android, #207-#210 | selected build/bridge references; exclude recipes, byte patches, generated game output and assets |
+| zenithblue-oss/shadps4-arm64 | per-file SPDX MIT for selected FEX source; transitive `hle_trace.h` is GPL-2.0-or-later | Android FEX, #208/#209 | experimental synthetic harness/context/HLE reference, not a drop-in engine; preserve exact file and dependency notices |
+| FEX-Emu/FEX | MIT root; bundled components have individual notices | Android, #207-#209 | FEXCore dependency through a pinned build recipe |
+| bylaws/libadrenotools | BSD-2-Clause root and loader files | Android, #210 | verified original API/implementation; use explicit choice and verify loaded driver before Vulkan startup |
+| JICA98/libadrenotools | BSD-2-Clause | Android dependency comparison | peer's exact pinned variant; prefer bylaws source unless its fork-specific patch is required |
+| SDL3 (`sdl3` crate) | zlib | runtime input/window/audio | existing dependency; launcher UI remains Slint |
+| eladharels/uncharted_android | GPL-2.0 root | Android device notes | learn; incomplete coverage and no additional import identified |
+| bloodborne-native/bloodborne-recomp, bbcpu, bloodborne-runtime, -mac, -ios | mostly GPL-2.0 roots; exact files/dependencies vary; [`bbnet20` is GPL-3.0](https://github.com/bloodborne-native/bloodborne-runtime/blob/42736cf7ca7704b087e847482417d9f475bb2dd7/gpu/bbnet20/LICENSE.GPL-3.0#L1-L8) | Apple, #211/#212 before 8.03-8.06 | hard feasibility/license gate; no blanket adoption, no Bloodborne annotations/generated output, exclude GPL-3.0 component |
+| Ryxm-a/uncharted-ios | GPL-2.0 root | iOS scaffold | learn only; default lite build does not run engine; conflicts with no-JIT route |
+| bmy/bbport-mac | GPL-2.0 root | Apple comparison | Rosetta guest is outside approved no-Rosetta route |
+| truwa/nathan-drake-collection-macos | no root license/API identifier established | Mac packaging comparison | learn only; Rosetta and different engine; no source copy until terms established |
+| iannitram/totk-native | MIT | `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `savecard`, Continue brief | copy with credit as already planned |
+| iannitram/save-relay | MIT | `relay` and cross-platform saves | external reference only; #163 waits for relevant platform support/interface; no new sync task |
+| slint-ui/slint | royalty-free (attribution) | `app/` | dependency; About carries notice |
 | gilrs, mdns-sd, spake2, chacha20poly1305, sha2, cbindgen, cmake | MIT or Apache-2.0 | `app/`, `hub`, `runtime` | dependencies |
-| SDL3 (`sdl3` crate) | Zlib | `runtime::pad`, window | dependency, as today |
-| zorde23/Uncharted_Collection_PC, Mevlock, drakolordx7, Pepin208, AdilDevStuff forks | GPL-2.0 | fixes | adopt with credit through `from-peer` issues |
 | Revivedx/SavageWindRecomp | MIT | packaging | learn, for 2.10 |
 | bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings | learn, for 1.16 and 2.06 |
-| Ryxm-a/uncharted-ios | GPL-2.0 | iOS notes (FEX with sideload JIT) | watch, for 8.01 |
-| GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS | GPL-2.0 | a sibling PS4 port | watch |
+| GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS | GPL-2.0 | sibling PS4 port | watch |
 
 ## After 1.0
 
