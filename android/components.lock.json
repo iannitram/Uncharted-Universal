@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "host": {
+    "os": "linux-x86_64",
+    "ndk": "r30",
+    "sdkPlatform": 35,
+    "buildTools": "35.0.1",
+    "androidApi": 33,
+    "abi": "arm64-v8a"
+  },
+  "components": [
+    {
+      "name": "fex",
+      "url": "https://github.com/FEX-Emu/FEX.git",
+      "revision": "f2b679f6028ce1c38875233aecfcf5d3f8ebecec",
+      "license": "MIT",
+      "build": "FEXCore"
+    },
+    {
+      "name": "mesa-turnip",
+      "url": "https://gitlab.freedesktop.org/mesa/mesa.git",
+      "revision": "ddaf85e353442d9d7f192fdcf1823e652e3f2ee3",
+      "ref": "mesa-26.2.5",
+      "license": "MIT",
+      "build": "freedreno Vulkan driver with KGSL"
+    },
+    {
+      "name": "libadrenotools",
+      "url": "https://github.com/bylaws/libadrenotools.git",
+      "revision": "8fae8ce254dfc1344527e05301e43f37dea2df80",
+      "license": "BSD-2-Clause",
+      "build": "Android arm64"
+    },
+    {
+      "name": "sdl3",
+      "url": "https://github.com/libsdl-org/SDL.git",
+      "revision": "829a65d769d935c4852f8159e964312c0957260a",
+      "ref": "release-3.4.18",
+      "license": "Zlib",
+      "build": "Android arm64 shared library"
+    }
+  ]
+}
