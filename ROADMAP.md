@@ -45,6 +45,12 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 
 The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps current blockers to these existing stages. The [platform peer survey](PEERS.md) supplies frozen source and file-level license links; the [issue-disposition ledger](docs/audits/2026-11-06-issue-dispositions.md) records the full open-issue review. Prioritize the dump/revision/recipe contracts and a wired preparation flow before advertising target builds. Stage 8.01 is a hard source/synthetic feasibility gate (#211): it does not inspect or retain game dumps. It must assess the bloodborne-recomp, bbcpu and Metal route before downstream Apple implementation; the direct Uncharted Mac launcher is a Rosetta-based comparison, and the Uncharted iOS peer is a scaffold. No stage or acceptance gate is marked complete by the survey.
 
+### Current implementation checkpoint (2026-11-06)
+
+Five roadmap issues have local implementation branches from the prior build wave: #188 dump identity refusal, #189 hub data transfer foundations, #206 bounded SELF/plain-ELF parsing, #207 Android dependency recipe, and #211 Apple feasibility. These branches are not merged into `main`; the code map records their exact scope and remaining acceptance below. In particular, #189 still needs listener/discovery/CLI wiring and device acceptance; #207 has not been built with the Android SDK/NDK; and #211 is plan-only because CPU/Metal probes were not run on Apple hardware. No platform application or gameplay milestone is complete from this work.
+
+The next implementation wave is five independent, open issues: #31 ExpandImage stale-cache fix, #35 equeue lost-request fix, #37 shader barrier decode/lowering, #175 known-issue data, and #190 Rust artwork generator. The first three address tracked play-breaking GPU/runtime defects; #175 and #190 advance the Rust port. Luna worktrees have produced local commits for #31, #35, #37 and #175; #190 remains underway. #175 currently has three evidence-backed matcher contexts and cannot meet its 15-entry acceptance count from the verified public `Crash:` text alone. Their issue-level checks and device/visual acceptance remain required; taking these steps does not mark their containing roadmap stages complete.
+
 
 ### Issue-backed peer import sequence
 
