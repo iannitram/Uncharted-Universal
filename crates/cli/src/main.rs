@@ -29,6 +29,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("patches", "list the third-party patches for this dump"),
     ("hub", "serve, pair with or pull from a build hub"),
     ("fleet", "show the paired devices and their builds"),
+    ("generate-art", "write the collection artwork to a folder"),
 ];
 
 /// Exit status of a command that is not built yet.
@@ -76,6 +77,22 @@ fn run(args: &[String]) -> Outcome {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|s| s == "generate-art") {
+        let out = args
+            .get(1)
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| "launcher/covers".into());
+        return match uncharted_core::artwork::generate_collection_art(&out) {
+            Ok(()) => {
+                println!("wrote launcher artwork to {}", out.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("could not write launcher artwork: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let outcome = run(&args);
     print!("{}", outcome.stdout);
     eprint!("{}", outcome.stderr);

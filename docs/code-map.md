@@ -87,7 +87,7 @@ flowchart TD
 | `fleet` | stub | `DeviceRecord`, `drift` warning | | M12 |
 | `vdf` | stub | Steam binary KeyValues `read`, `write` | `launcher/bbport_steam.py` | M13, M20 |
 | `steam` | stub | `shortcut_app_id`, `Shortcut`, `upsert`, `userdata_roots`, `write_shortcut` (Steam closed, `.bak` kept), `write_artwork`; the shortcut opens the launcher's Continue screen (M13) | `launcher/bbport_steam.py`, the file writing of `launcher/uncharted_art.py` | M13, M20 |
-| `artwork` | stub | Steam grid, wide grid, hero, logo, icon from each game's `sce_sys/pic0.png`, `pic1.png`, `icon0.png`; nothing downloaded | `launcher/uncharted_art.py` (`steam_artwork`, `cover`; the SteamGridDB download `steamgriddb_artwork` is dropped) | M13, M20 |
+| `artwork` | stub | Rust collection-art generator outputs `launcher/covers`; Steam grid, wide grid, hero, logo, icon come from each game's `sce_sys/pic0.png`, `pic1.png`, `icon0.png`; nothing downloaded | `crates/core/src/artwork.rs`; Steam preview in `launcher/uncharted_art.py` | M13, M20 |
 | `relay` | planned (feature `relay`) | save-relay adapter: links its library, maps outcomes to `launch::Sync` | #163 (reworked for Rust) | M18 |
 | `tune` | present | parses the hardware report JSON (#171: GPU name/vendor/generation, dedicated/shared memory, selected integrated GPU and hybrid topology, refresh rate, CPU cores/instruction support); gates frame generation and sizes above 1080p below 6 GiB, DLSS on RTX, and warns on integrated selection in a hybrid machine; the three cards Handheld 30, Balanced 60, Max quality (#174). Live `uncharted-run --probe` collection awaits the runtime loader; benchmark report reading awaits #173 | the report consumes the future runtime replacement of `launcher/bbport_vulkan.py`; the picker is new | M5, M13, M20 |
 
@@ -146,7 +146,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `launcher/` (Python, Tk and GTK, about 11.7k lines), `launcher/bb-launcher.sh` | the Slint app has parity: Continue, first run, Settings, Add to Steam, update |
 | `scripts/*.py`, `run.py`, `run.sh`, `install.sh` | every `crates/core` module listed above is present |
 | `src/*.c`, `src/*.h` | `crates/runtime::loader` is present and the game boots |
-| `packaging/windows/` PyInstaller, `packaging/linux/package.sh`, `packaging/appimage.sh`, `packaging/default.nix` | the release workflow builds the Rust app (piece 2.10) |
+| `crates/core/src/artwork.rs` | Rust collection cover and emblem output used by `packaging/windows/package.sh` and `packaging/linux/package.sh` |
 | C of ours that ships today: `packaging/bbport-entry.c` (the AppImage entry that clears Steam's `LD_PRELOAD`), `packaging/windows/play.c` (`Play Uncharted.exe`), `tools/gpu_capabilities.c` (`bb-gpu-capabilities`) | the Rust app cleans the environment itself (2.10), `uncharted-universal play` takes over `play.c`, `uncharted-run --probe` takes over `gpu_capabilities.c` (M20 allows no C of ours; `gpu/` stays) |
 | `tests/test_*.py` (34 files), the C tests in `tests/` | their Rust ports are present; the `tests/*.cpp` files belong to `gpu/` and stay |
 

@@ -2,7 +2,7 @@
 """Pictures for the Uncharted launcher (Pillow).
 
 - card_scene() / banner_scene(): the three game scenes in launcher/covers (u1, u2, u3), original
-  art drawn by packaging/windows/make_uncharted_art.py (no game images). card_scene shows the
+  art drawn by the Rust generator in crates/core/src/artwork.rs (no game images). card_scene shows the
   whole scene, banner_scene blurs it into a wide header. If a file is missing, card_scene falls
   back to a simpler painted scene;
 - cover(): the collection's box art from the player's own game folder (sce_sys/icon0.png);
