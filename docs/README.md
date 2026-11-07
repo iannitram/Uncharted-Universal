@@ -1,6 +1,11 @@
 # Documentation
 
-Start with the [roadmap](ROADMAP.md). The research behind it is in [`../Research/`](../Research/README.md).
+Start with the [Universal README](../README.md), [approved spec](../SPEC.md),
+[implementation roadmap](../ROADMAP.md) and [code map](code-map.md).
+The [platform peer survey](../PEERS.md) records head starts for Linux, Windows,
+macOS, iOS/iPadOS and Android; the
+[2026-11-06 readiness audit](audits/2026-11-06-universal-platforms.md) records
+what is actually implemented. Earlier research is in [`../Research/`](../Research/README.md).
 
 Most of the design notes below come from the Bloodborne port (bbport) that this project grew
 out of. The engine code they describe (loader, runtime, renderer, upscalers) is the same one
@@ -13,7 +18,8 @@ are in [`ru/`](ru/), at the same paths.
 
 ## Plans
 
-- [ROADMAP.md](ROADMAP.md): goals, phases and open items (Uncharted on Linux, on spacepepperoni's fork).
+- [../ROADMAP.md](../ROADMAP.md): Universal implementation stages for all five platforms.
+- [ROADMAP.md](ROADMAP.md): historical Linux-fork goals and phases, retained from upstream.
 - [history/BLOODBORNE_ROADMAP_2026-09-30.md](history/BLOODBORNE_ROADMAP_2026-09-30.md): the
   Bloodborne-era plan, with the state of the renderer and upscaler at the end of September.
 

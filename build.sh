@@ -117,4 +117,6 @@ if [[ ${1:-} == --test ]]; then
     out/settings-default-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test
     out/cpu-patch-test
+    "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -I. tests/test_equeue_request_gate.cpp -o out/equeue-request-gate-test
+    out/equeue-request-gate-test
 fi
