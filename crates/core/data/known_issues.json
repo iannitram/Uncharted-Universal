@@ -1,213 +1,32 @@
 [
   {
-    "id": "u2-submesh-695",
+    "id": "u2-submesh-assertion",
     "signature": "iSubMesh < m_numSubMeshInstances",
     "game": "u2",
     "locations": [],
     "summary": "The U2 mesh-instance assertion has been reported during streaming; its cause remains under investigation.",
     "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/Supermedo/uncharted_pc/issues/695"
-  },
-  {
-    "id": "u2-submesh-479",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u2",
-    "locations": [],
-    "summary": "The U2 mesh-instance assertion has been reported during streaming; its cause remains under investigation.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/Supermedo/uncharted_pc/issues/479"
-  },
-  {
-    "id": "u2-submesh-401",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u2",
-    "locations": [],
-    "summary": "The U2 mesh-instance assertion has been reported during streaming; its cause remains under investigation.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/Supermedo/uncharted_pc/issues/401"
-  },
-  {
-    "id": "u2-submesh-109",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u2",
-    "locations": [],
-    "summary": "The U2 mesh-instance assertion has been reported during streaming; its cause remains under investigation.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
+    "toggle": null,
     "issue": "https://github.com/iannitram/Uncharted-Universal/issues/109"
   },
   {
-    "id": "u1-submesh-ch4",
+    "id": "u1-submesh-assertion",
     "signature": "iSubMesh < m_numSubMeshInstances",
     "game": "u1",
-    "locations": [
-      "chapter 4"
-    ],
-    "summary": "The U1 mesh-instance assertion has been reported after a cutscene or checkpoint.",
+    "locations": ["chapter 4", "chapter 10", "chapter 11"],
+    "summary": "The U1 mesh-instance assertion has been reported after a cutscene or checkpoint in these chapters.",
     "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
+    "toggle": null,
     "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
   },
   {
-    "id": "u1-submesh-ch10",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 10"
-    ],
-    "summary": "The U1 mesh-instance assertion has been reported after a cutscene or checkpoint.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u1-submesh-ch11",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 11"
-    ],
-    "summary": "The U1 mesh-instance assertion has been reported after a cutscene or checkpoint.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u2-legik-127",
+    "id": "u2-legik-finite-assertion",
     "signature": "IsFinite(deltaTransform)",
     "game": "u2",
-    "locations": [
-      "train wreck"
-    ],
+    "locations": ["train wreck"],
     "summary": "The leg-IK finite-value assertion was reported at the train wreck; the source of the non-finite value is unknown.",
     "fixed_in": null,
-    "toggle": {
-      "key": "BB_NAN_GUARD",
-      "value": "1"
-    },
+    "toggle": null,
     "issue": "https://github.com/iannitram/Uncharted-Universal/issues/127"
-  },
-  {
-    "id": "shared-fault-cartagena",
-    "signature": "0x11cff83f88",
-    "game": "u3",
-    "locations": [
-      "Cartagena"
-    ],
-    "summary": "A read fault at this address was reported in the Cartagena square; its cause is unresolved.",
-    "fixed_in": null,
-    "toggle": null,
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/121"
-  },
-  {
-    "id": "shared-fault-uboat",
-    "signature": "0x581a90",
-    "game": "u1",
-    "locations": [
-      "U-boat"
-    ],
-    "summary": "A read fault at this guest offset was reported at the U-boat; its cause is unresolved.",
-    "fixed_in": null,
-    "toggle": null,
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/121"
-  },
-  {
-    "id": "u1-submesh-checkpoint- 4",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 4"
-    ],
-    "summary": "The U1 mesh-instance assertion was reported after a cutscene or checkpoint in this chapter.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u1-submesh-checkpoint-10",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 10"
-    ],
-    "summary": "The U1 mesh-instance assertion was reported after a cutscene or checkpoint in this chapter.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u1-submesh-checkpoint-11",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 11"
-    ],
-    "summary": "The U1 mesh-instance assertion was reported after a cutscene or checkpoint in this chapter.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u1-submesh-ch4-cutscene",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 4"
-    ],
-    "summary": "The U1 mesh-instance assertion was reported after a cutscene in chapter 4.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
-  },
-  {
-    "id": "u1-submesh-ch4-checkpoint",
-    "signature": "iSubMesh < m_numSubMeshInstances",
-    "game": "u1",
-    "locations": [
-      "chapter 4"
-    ],
-    "summary": "The U1 mesh-instance assertion was reported after a checkpoint in chapter 4.",
-    "fixed_in": null,
-    "toggle": {
-      "key": "BB_SCALAR_COPY64_SYNC",
-      "value": "2"
-    },
-    "issue": "https://github.com/iannitram/Uncharted-Universal/issues/110"
   }
 ]

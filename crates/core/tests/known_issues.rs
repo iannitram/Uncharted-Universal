@@ -73,7 +73,7 @@ fn load_reads_a_valid_file_in_order() {
 fn load_reads_the_shipped_known_issues_file() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("data/known_issues.json");
     let issues = load_known_issues(&path);
-    assert!(issues.len() >= 15, "shipped known-issues data is incomplete");
+    assert_eq!(issues.len(), 3, "shipped entries should reflect verified crash contexts");
     assert!(issues.iter().all(|issue| issue.issue.starts_with("https://github.com/")));
 }
 
