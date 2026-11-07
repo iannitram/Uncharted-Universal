@@ -15,6 +15,8 @@ jobs:
     name: Linux GPU and C tests
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: write
     with:
       ref: ${{ github.sha }}
 
