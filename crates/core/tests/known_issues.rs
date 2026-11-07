@@ -75,7 +75,7 @@ fn load_reads_the_shipped_known_issues_file() {
     let issues = load_known_issues(&path);
     assert_eq!(
         issues.len(),
-        18,
+        19,
         "shipped entries should reflect verified crash contexts"
     );
     assert!(issues

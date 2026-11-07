@@ -70,13 +70,14 @@
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/288"
   },
   {
-    "id": "u2-trainwreck-null-call-6be567",
+    "id": "u2-steamvalve-null-call-6be567",
     "signature": "guest offset 0x6be567",
     "game": "u2",
     "locations": [
-      "train wreck"
+      "museum sewer after turning the steam valve",
+      "alarm panel"
     ],
-    "summary": "A follow-up to the U2 train-wreck report records a null-call crash at guest offset 0x6be567.",
+    "summary": "U2 reports record a null-call crash at guest offset 0x6be567 after turning the museum-sewer steam valve and later at the alarm panel.",
     "fixed_in": null,
     "toggle": null,
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/88"
@@ -160,13 +161,11 @@
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/298"
   },
   {
-    "id": "u1-chapter11-fault-581ade",
-    "signature": "guest offset 0x581ade",
+    "id": "u1-repeated-submesh-fault-74d488",
+    "signature": "guest offset 0x74d488",
     "game": "u1",
-    "locations": [
-      "chapter 11"
-    ],
-    "summary": "U1 chapter 11 follow-up records repeated read faults at guest offset 0x581ade.",
+    "locations": [],
+    "summary": "U1 report records the same SubMesh assertion and read fault at guest offset 0x74d488 across several chapters.",
     "fixed_in": null,
     "toggle": null,
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/299"
@@ -184,13 +183,13 @@
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/124"
   },
   {
-    "id": "u3-cartagena-fault-8df3e0",
-    "signature": "guest offset 0x8df3e0",
-    "game": "u3",
+    "id": "u1-boat-framebegin-fault-4d27ba",
+    "signature": "guest offset 0x4d27ba",
+    "game": "u1",
     "locations": [
-      "Cartagena square"
+      "after leaving Elena with the boat"
     ],
-    "summary": "U3 Cartagena report records a read fault at guest offset 0x8df3e0.",
+    "summary": "U1 report after leaving Elena with the boat records a FrameBegin EOP-tick assertion and read fault at guest offset 0x4d27ba.",
     "fixed_in": null,
     "toggle": null,
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/121"
@@ -206,5 +205,17 @@
     "fixed_in": null,
     "toggle": null,
     "issue": "https://github.com/Supermedo/uncharted_pc/issues/71"
+  },
+  {
+    "id": "u3-main-menu-fault-8df3e0",
+    "signature": "guest offset 0x8df3e0",
+    "game": "u3",
+    "locations": [
+      "main menu"
+    ],
+    "summary": "U3 report records a read fault at guest offset 0x8df3e0 in the main menu.",
+    "fixed_in": null,
+    "toggle": null,
+    "issue": "https://github.com/Supermedo/uncharted_pc/issues/253"
   }
 ]
