@@ -1179,23 +1179,64 @@ fn prepare_transfer_work_dir(root: &Path) -> Result<PathBuf> {
 fn ensure_transfer_work_owner(work_dir: &Path) -> Result<()> {
     let owner = work_dir.join(TRANSFER_WORK_OWNER);
     match fs::symlink_metadata(&owner) {
-        Ok(_) => verify_transfer_work_owner(work_dir),
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_file() {
+                return Err(Error::Hub("game-data transfer work owner is unsafe".into()));
+            }
+            if meta.len() > TRANSFER_WORK_OWNER_CONTENT.len() as u64 {
+                return Err(Error::Hub(
+                    "game-data transfer work owner is invalid".into(),
+                ));
+            }
+            let contents = fs::read(&owner)?;
+            if contents == TRANSFER_WORK_OWNER_CONTENT {
+                return verify_transfer_work_owner(work_dir);
+            }
+            if !TRANSFER_WORK_OWNER_CONTENT.starts_with(&contents)
+                || !transfer_work_dir_contains_only_owner(work_dir)?
+            {
+                return Err(Error::Hub(
+                    "game-data transfer work owner is invalid".into(),
+                ));
+            }
+            // Creation and repair are restartable: a crash during this write leaves only a prefix
+            // of the expected marker, which the next pull can safely rewrite under the lock.
+            write_transfer_work_owner(&owner)?;
+            verify_transfer_work_owner(work_dir)
+        }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if fs::read_dir(work_dir)?.next().is_some() {
                 return Err(Error::Hub(
                     "unowned game-data transfer work directory is not empty".into(),
                 ));
             }
-            let mut file = fs::OpenOptions::new()
+            fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
-                .open(owner)?;
-            io::Write::write_all(&mut file, TRANSFER_WORK_OWNER_CONTENT)?;
-            file.sync_all()?;
+                .open(&owner)?;
+            write_transfer_work_owner(&owner)?;
             verify_transfer_work_owner(work_dir)
         }
         Err(error) => Err(error.into()),
     }
+}
+
+fn transfer_work_dir_contains_only_owner(work_dir: &Path) -> Result<bool> {
+    let mut entries = fs::read_dir(work_dir)?;
+    let Some(entry) = entries.next() else {
+        return Ok(false);
+    };
+    Ok(entry?.file_name() == TRANSFER_WORK_OWNER && entries.next().is_none())
+}
+
+fn write_transfer_work_owner(owner: &Path) -> Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(owner)?;
+    io::Write::write_all(&mut file, TRANSFER_WORK_OWNER_CONTENT)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn verify_transfer_work_owner(work_dir: &Path) -> Result<()> {
@@ -1802,6 +1843,24 @@ mod tests {
         fs::write(work_dir.join("unexpected"), b"preserve").unwrap();
         assert!(prepare_transfer_work_dir(&staged).is_err());
         assert_eq!(fs::read(work_dir.join("unexpected")).unwrap(), b"preserve");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_work_dir_recovers_truncated_owner_marker() {
+        let root =
+            std::env::temp_dir().join(format!("uu-work-owner-partial-{}", std::process::id()));
+        let staged = root.join("staged");
+        let work_dir = staged.join(TRANSFER_WORK_DIR);
+        let owner = work_dir.join(TRANSFER_WORK_OWNER);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&work_dir).unwrap();
+        fs::write(&owner, &TRANSFER_WORK_OWNER_CONTENT[..8]).unwrap();
+
+        prepare_transfer_work_dir(&staged).unwrap();
+
+        assert_eq!(fs::read(&owner).unwrap(), TRANSFER_WORK_OWNER_CONTENT);
+        verify_transfer_work_owner(&work_dir).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 
