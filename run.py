@@ -18,6 +18,7 @@ The in-game "Apply and restart" runs this script again through BB_RESTART_COMMAN
 `--after PID` waits for the previous game process to end first (its GPU device and memory).
 """
 import ctypes
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -200,14 +201,17 @@ def merge_update(base, update, view):
     game's (names compared without case, as on the PS4), folders in both are merged, everything
     else links to where it is. Rebuilt only when either folder changes."""
     import shutil
+    from itertools import chain
 
     def signature():
-        newest, count = 0.0, 0
+        digest = hashlib.sha256()
         for root in (update, base):
-            for path in ([root] if root is base else [root, *root.rglob('*')]):
-                count += 1
-                newest = max(newest, path.stat().st_mtime)
-        return f'{base}\n{update}\n{count} {newest}\n'
+            for path in chain((root,), sorted(root.rglob('*'), key=lambda p: p.as_posix())):
+                info = path.stat()
+                relative = '.' if path == root else path.relative_to(root).as_posix()
+                digest.update(f'{root}\0{relative}\0{info.st_mode}\0{info.st_size}\0{info.st_mtime_ns}\n'
+                              .encode('utf-8', errors='surrogateescape'))
+        return f'{base}\n{update}\n{digest.hexdigest()}\n'
 
     def merge(b, u, v):
         v.mkdir()
