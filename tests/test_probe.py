@@ -2,11 +2,12 @@
 from paths import ROOT
 from pathlib import Path
 import struct
+import os
 import subprocess
 import tempfile
 import unittest
 
-EXE = ROOT / 'out/bb-probe'
+EXE = ROOT / 'out/bb-probe'+('.exe' if os.name=='nt' else '')
 
 
 def package(code, relocs=(), names=(), capabilities=None):

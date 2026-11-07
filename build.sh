@@ -29,6 +29,22 @@ MINGW*|MSYS*)
     fi
     cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/gpu/bb-play.exe out/
     echo "Built $PWD/out/bb-probe.exe"
+    if [[ ${1:-} == --test ]]; then
+        tests=(motion-history-test motion-shader-test wbinvl1-test ui-composition-test upscaler-support-test expand-image-test)
+        ninja_jobs=()
+        if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
+        if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
+            grep -v '^\[' out/gpu-tests-build.log | tail -40 >&2
+            echo 'GPU unit test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
+        fi
+        for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_file_mods.c -o out/file-mods-test.exe
+        out/file-mods-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c src/runtime_speakers.c -lm -o out/speakers-test.exe
+        out/speakers-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
+        out/cpu-patch-test.exe
+    fi
     exit 0
     ;;
 esac
@@ -97,6 +113,18 @@ echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
+    tests=(motion-history-test motion-shader-test wbinvl1-test ui-composition-test upscaler-support-test expand-image-test scene-resolution-test taa-shader-test camera-motion-test)
+    ninja_jobs=()
+    if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
+    if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
+        grep -v '^\[' out/gpu-tests-build.log | tail -40 >&2
+        echo 'GPU test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
+    fi
+    for test in "${tests[@]:0:6}"; do "out/gpu/$test"; done
+    if [[ -s /usr/share/vulkan/icd.d/lvp_icd.x86_64.json ]]; then
+        export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+    fi
+    for test in scene-resolution-test taa-shader-test camera-motion-test; do "out/gpu/$test"; done
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test

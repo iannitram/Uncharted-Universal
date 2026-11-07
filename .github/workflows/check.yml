@@ -11,10 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-linux:
+    name: Linux GPU and C tests
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+
   rust:
-    # A private repo: CI runs on our own self-hosted runners (R29). The Rust workspace is built and
-    # tested on Linux and Windows on every push; macOS is in rust-macos (dispatch only).
-    # The C and GPU build stays in build.yml.
+    # A private repo: CI runs on our own self-hosted runners (R29). The Rust workspace runs on
+    # Linux and Windows here; macOS workspace checks and native platform checks have separate jobs.
     strategy:
       fail-fast: false
       matrix:
@@ -52,9 +58,7 @@ jobs:
       - run: cargo test --workspace --all-features
 
   rust-macos:
-    # macOS is dispatch-only: it bills at 10x on GitHub-hosted runners. It moves to
-    # [self-hosted, macos] when the Mac mini runner is online (R29).
-    if: github.event_name == 'workflow_dispatch'
+    # Workspace check only. GPU, Vulkan and hardware validation remain platform-specific jobs.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -73,6 +77,21 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+
+  native-windows:
+    # CLANG64 builds the Windows GPU library and portable native C harnesses; it is not a hardware GPU test.
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build GPU library and run portable C harnesses
+        run: BB_JOBS=2 bash build.sh --test
+      - name: Run Python tests and enforce the Windows expected-skip list
+        run: python tools/ci_unittest.py --platform windows
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
