@@ -20,7 +20,7 @@ hub = []
 
 # Core dependencies are pure Rust and add no native libraries or platform SDK requirements.
 [dependencies]
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 imageproc = { version = "0.25", default-features = false }
 serde_json = "1"
 roxmltree = { version = "=0.21.1", default-features = false, features = ["std"] }

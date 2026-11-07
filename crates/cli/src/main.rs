@@ -11,9 +11,10 @@
 //! uncharted-universal patches
 //! uncharted-universal hub        serve|pair|pull
 //! uncharted-universal fleet
+//! uncharted-universal generate-art [<output folder>]
 //! ```
 //!
-//! Skeleton: every command says it is not built yet and exits 2.
+//! Most commands are still skeletons; `generate-art` writes the launcher collection art.
 
 use std::process::ExitCode;
 
@@ -40,7 +41,7 @@ fn usage() -> String {
     for (name, about) in COMMANDS {
         text.push_str(&format!("  {name:<10} {about}\n"));
     }
-    text.push_str("\nEvery command is a skeleton so far and exits 2.\n");
+    text.push_str("\nCommands still in progress report that they are not built yet.\n");
     text
 }
 
@@ -121,6 +122,9 @@ mod tests {
     #[test]
     fn every_command_says_not_built_and_exits_two() {
         for (name, _) in COMMANDS {
+            if *name == "generate-art" {
+                continue;
+            }
             let out = run(&args(&[name, "u1"]));
             assert_eq!(out.code, 2);
             assert!(out.stderr.contains("not built yet"));
