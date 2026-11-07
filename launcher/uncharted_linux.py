@@ -302,6 +302,51 @@ def steam_command(steam, launcher_file, game):
     return str(exe), options
 
 
+def clear_compat_tool(steam, appid):
+    """Removes the compatibility tool (Proton) Steam keeps for the shortcut `appid` in
+    <Steam>/config/config.vdf (CompatToolMapping). Steam keeps it by app id, and a shortcut added
+    again gets the same id, so a Proton chosen once stayed: Proton cannot start the AppImage, and
+    Play stopped after a second with nothing in the logs (issue #73). Steam must be closed (it
+    writes the file when it exits). Returns whether an entry was removed."""
+    path = Path(steam) / 'config' / 'config.vdf'
+    try:
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return False
+    tokens = [(m.start(), m.end(), m.group(1) if m.group(1) is not None else m.group(0))
+              for m in re.finditer(r'"((?:[^"\\]|\\.)*)"|[{}]', text)]
+    for i, (_s, _e, value) in enumerate(tokens):
+        if value.lower() != 'compattoolmapping' or i + 1 >= len(tokens) or tokens[i + 1][2] != '{':
+            continue
+        depth, j = 0, i + 1
+        while j < len(tokens):
+            value = tokens[j][2]
+            if value == '{':
+                depth += 1
+            elif value == '}':
+                depth -= 1
+                if depth == 0:
+                    break
+            elif depth == 1 and value == str(appid) and j + 1 < len(tokens) and tokens[j + 1][2] == '{':
+                level, k = 0, j + 1
+                while k < len(tokens):
+                    level += {'{': 1, '}': -1}.get(tokens[k][2], 0)
+                    if level == 0:
+                        break
+                    k += 1
+                start = text.rfind('\n', 0, tokens[j][0]) + 1
+                end = text.find('\n', tokens[k][1])
+                end = len(text) if end < 0 else end + 1
+                try:
+                    path.with_name('config.vdf.bak').write_text(text, encoding='utf-8')
+                    path.write_text(text[:start] + text[end:], encoding='utf-8')
+                except OSError:
+                    return False
+                return True
+            j += 1
+    return False
+
+
 REPO_URL = 'https://github.com/spacepepperoni/uncharted_Linux'
 
 
@@ -408,6 +453,7 @@ def apply_defaults(ns):
     """Linux settings the Windows launcher does not have: Steam Deck mode (on by default on
     SteamOS) and a 30 FPS frame rate."""
     ns['APP_DEFAULTS'].setdefault('steam_deck', steam_deck())
+    ns['APP_DEFAULTS'].setdefault('update_dir', '')  # the title update's folder (Files page)
     # No Fixes page: each fix stays automatic (run.py turns it on where it helps), whatever an
     # earlier version saved for it.
     for key, (title, hint, _choices) in ns['FIXES'].items():
@@ -482,6 +528,14 @@ def deck_allows(key, value):
     return value not in DECK_UNAVAILABLE.get(key, ())
 
 
+def update_environment(settings, env):
+    """The title update (1.02) as its own folder: run.py merges it over the game. Empty: the
+    <game folder>-UPDATE folder beside the game (shadPS4's layout), when there is one."""
+    folder = str(settings.get('update_dir') or '').strip()
+    if folder:
+        env['BB_GAME_UPDATE_DIR'] = folder
+
+
 def deck_environment(settings, env):
     """Steam Deck mode: the Deck's screen and presentation, 30 or 60 FPS, and nothing its GPU
     cannot run. Applied before the player's own Environment entries, which can override any of it.
@@ -501,19 +555,6 @@ def deck_environment(settings, env):
                       ('frame_gen_multiplier', 'BB_FRAME_GEN_MULTIPLIER')):
         if not deck_allows(key, str(settings.get(key) or '')):
             env[name] = DECK_FALLBACK[key]
-
-
-def rotate_logs(folder, keep=5):
-    """last_run.log -> last_run.1.log ... (the previous runs stay readable)."""
-    folder = Path(folder)
-    for n in range(keep - 1, 0, -1):
-        older = folder / f'last_run.{n}.log'
-        newer = folder / ('last_run.log' if n == 1 else f'last_run.{n - 1}.log')
-        if newer.is_file():
-            try:
-                os.replace(newer, older)
-            except OSError:
-                pass
 
 
 def plain_info_dialogs(root):
@@ -1179,6 +1220,9 @@ def launcher_class(base, ns):
             self.folder(f, 'game_dir', _('Game folder'), _('The folder with eboot.bin'),
                         _('The folder with eboot.bin, big2-ps4_Shipping.elf and big3-ps4_Shipping.elf.'),
                         on_change=self.refresh)
+            self.folder(f, 'update_dir', _('Update folder'), _('The folder of the game update (1.02)'),
+                        _('Optional: the game update (1.02) as its own folder. Empty: the folder named like the '
+                          'game folder with -UPDATE, when there is one beside it.'))
             self.folder(f, 'user_dir', _('Saves folder'), _('Where saves and the shader cache are kept'),
                         _('Empty: a Saves folder in the game folder.'))
             self.section(f, _('Saves'))
@@ -1400,7 +1444,8 @@ def launcher_class(base, ns):
             info = self.info
             for key, (play, steam, shortcut, note, exe) in getattr(self, 'game_rows', {}).items():
                 present = bool(info) and key in info['games']
-                play.configure(state='normal' if present and not self.process else 'disabled')
+                play.configure(state='normal' if present and not self.process
+                               else 'disabled')
                 for button in (steam, shortcut):
                     button.configure(state='normal' if present else 'disabled')
                 if not info:
@@ -1433,11 +1478,6 @@ def launcher_class(base, ns):
             if self.can_start(key):
                 self.var('start').set(key)
                 self.play()
-
-        def play(self):
-            if not self.process:
-                rotate_logs(Path(self.app.get('user_dir') or ns['DATA_DIR'] / 'user'))
-            super().play()
 
         def game_shortcut(self, key):
             if not self.can_start(key):
@@ -1524,9 +1564,11 @@ def launcher_class(base, ns):
                 for config in configs:
                     bbport_steam.add_shortcut(config / 'shortcuts.vdf', name, exe, str(start_dir),
                                               str(icon) if icon.is_file() else '', options, match_options=True)
+                    appid = bbport_steam.shortcut_id(f'"{exe}"', name)
+                    if clear_compat_tool(steam, appid):  # a Proton chosen before (issue #73)
+                        uncharted_logs.note(f'Steam: compatibility tool removed from {name} ({appid})')
                     try:  # library pictures: SteamGridDB's, else the player's own game folder's
                         import uncharted_art
-                        appid = bbport_steam.shortcut_id(f'"{exe}"', name)
                         if not uncharted_art.steamgriddb_artwork(key, config / 'grid', appid):
                             uncharted_art.steam_artwork(self.app['game_dir'], config / 'grid', appid)
                     except Exception:

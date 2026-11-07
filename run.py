@@ -18,6 +18,7 @@ The in-game "Apply and restart" runs this script again through BB_RESTART_COMMAN
 `--after PID` waits for the previous game process to end first (its GPU device and memory).
 """
 import ctypes
+import hashlib
 import os
 from pathlib import Path
 import shlex
@@ -44,6 +45,10 @@ def fix_defaults(player_env, exe):
         if 'BB_READBACK_SMALL_BUFFERS' not in player_env:
             result['BB_READBACK_SMALL_BUFFERS'] = '1'
     elif exe == EXECUTABLES['u1']:
+        # spacepepperoni/uncharted_Linux b29aac3: busy U1 scenes on the Deck waited for the whole
+        # frame about once a frame with merging; accurate memory: 27.0 -> 28.6 FPS, fewer slow frames.
+        if 'BB_GPU_MERGE' not in player_env:
+            result['BB_GPU_MERGE'] = '0'
         if 'BB_TINY_READBACK' not in player_env:
             result['BB_TINY_READBACK'] = '0'
         if 'BB_SCALAR_COPY64_SYNC' not in player_env:
@@ -175,6 +180,64 @@ def patch_arguments(env, exe, game, out):
     return ['--external-only', '--app-elf', exe, '--game-dir', str(game), '--out', str(out),
             '--patches-dir', patches_dir,
             '--patches-config', env.get('BB_PATCHES_CONFIG', str(Path(patches_dir) / 'patches.json'))]
+
+
+def update_folder(env, game):
+    """Linux fork: the game's title update (1.02), installed as its own folder: BB_GAME_UPDATE_DIR,
+    or shadPS4's <game folder>-UPDATE (or -patch) beside the game. BB_GAME_UPDATE_DIR=0: none."""
+    chosen = env.get('BB_GAME_UPDATE_DIR', '').strip()
+    if chosen == '0' or WINDOWS:
+        return None
+    candidates = [Path(chosen)] if chosen else \
+        [game.parent / f'{game.name}{suffix}' for suffix in ('-UPDATE', '-update', '-patch', '-PATCH')]
+    found = next((c for c in candidates if (c / 'sce_sys' / 'param.sfo').is_file()), None)
+    if chosen and not found:
+        print(f'Title update: {chosen} has no sce_sys/param.sfo; playing without it')
+    return found
+
+
+def merge_update(base, update, view):
+    """The game as its update leaves it, as links in `view`: a file of the update replaces the
+    game's (names compared without case, as on the PS4), folders in both are merged, everything
+    else links to where it is. Rebuilt only when either folder changes."""
+    import shutil
+    from itertools import chain
+
+    def signature():
+        digest = hashlib.sha256()
+        for root in (update, base):
+            for path in chain((root,), sorted(root.rglob('*'), key=lambda p: p.as_posix())):
+                info = path.stat()
+                relative = '.' if path == root else path.relative_to(root).as_posix()
+                digest.update(f'{root}\0{relative}\0{info.st_mode}\0{info.st_size}\0{info.st_mtime_ns}\n'
+                              .encode('utf-8', errors='surrogateescape'))
+        return f'{base}\n{update}\n{digest.hexdigest()}\n'
+
+    def merge(b, u, v):
+        v.mkdir()
+        old = {p.name.lower(): p for p in b.iterdir()} if b else {}
+        new = {p.name.lower(): p for p in u.iterdir()}
+        for key in sorted(set(old) | set(new)):
+            bp, up = old.get(key), new.get(key)
+            target = v / (bp or up).name
+            if bp and up and bp.is_dir() and up.is_dir():
+                merge(bp, up, target)
+            else:
+                target.symlink_to(up or bp)
+
+    stamp = view.with_name(view.name + '.merged-from')
+    wanted = signature()
+    if stamp.is_file() and stamp.read_text(encoding='utf-8', errors='replace') == wanted:
+        return view
+    print(f'Title update: merging {update} over {base} ...')
+    building = view.with_name(view.name + '.new')
+    shutil.rmtree(building, ignore_errors=True)
+    building.parent.mkdir(parents=True, exist_ok=True)
+    merge(base, update, building)
+    shutil.rmtree(view, ignore_errors=True)
+    building.rename(view)
+    stamp.write_text(wanted, encoding='utf-8')
+    return view
 
 
 def game_cheats(enabled, exe):
@@ -461,7 +524,8 @@ def main():
     # Uncharted 2 reads the results of GPU work (grenade explosions, vehicle damage, the convoy
     # of chapter 21) from memory it also writes: merging leaves them on the GPU, so it runs with
     # accurate GPU memory (BB_GPU_MERGE=0) unless the player chose otherwise. Uncharted 3 runs the
-    # same engine and showed the same floating NPCs (Linux fork), so it does too.
+    # same engine and showed the same floating NPCs (Linux fork), so it does too, and Uncharted 1
+    # (fewer whole-frame waits on the Deck, spacepepperoni/uncharted_Linux).
     # Aim and turret blur: the game reads a tiny render result (focus depth) on the CPU, so it is read back
     # (BB_TINY_READBACK). On for U2 only; U3 stays off until measured (issue #191); U1 unchanged.
     all_cheats = env.setdefault('BB_CHEATS_ALL', env.get('BB_CHEATS', ''))
@@ -489,6 +553,9 @@ def main():
         game, file = locate(env, exe)
         if not game:
             fail('Set BB_GAME_DIR to the game folder (the one with eboot.bin).')
+        if update := update_folder(env, game):  # Linux fork: title update 1.02 (issue #58)
+            game = merge_update(game, update, out_root / 'updated' / game.name)
+            print(f'Title update: {update}')
         if not (game / file).is_file():
             fail(f'No {file} in {game}.')
         out = out_root / Path(exe).stem.split('-')[0]

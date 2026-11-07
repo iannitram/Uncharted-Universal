@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include "../src/runtime_pad.c"
 
+_Thread_local int runtime_ndgi_open; /* runtime_fiber.c */
 static int capture;
 static int rumble_calls;
 static uint16_t rumble_low, rumble_high;
@@ -116,12 +117,80 @@ int main(void) {
     SDL_UpdateJoysticks();
     SDL_UpdateGamepads();
     assert(pad_read_state(1,&data)==0 && data.touch_count==1 && data.touches[0].x==480);
+    /* Linux fork: a second gamepad; pressing a button on it makes it the one the game reads. */
+    assert(SDL_SetJoystickVirtualButton(joystick,SDL_GAMEPAD_BUTTON_TOUCHPAD,false));
+    assert(SDL_SetJoystickVirtualTouchpad(joystick,0,0,false,0,0,0));
+    SDL_VirtualJoystickDesc second=desc;
+    second.name="bbport second test controller";
+    second.ntouchpads=0;
+    second.touchpads=NULL;
+    SDL_JoystickID second_id=SDL_AttachVirtualJoystick(&second);
+    assert(second_id!=0);
+    SDL_Joystick *second_joystick=SDL_OpenJoystick(second_id);
+    assert(second_joystick);
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    gamepads_listed_us=0;
+    assert(pad_read_state(1,&data)==0 && !(data.buttons & BTN_CROSS) && gamepad_count==2);
+    assert(SDL_SetJoystickVirtualButton(second_joystick,SDL_GAMEPAD_BUTTON_SOUTH,true));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    assert(pad_read_state(1,&data)==0 && (data.buttons & BTN_CROSS));
+    assert(gamepad && SDL_GetGamepadID(gamepad)==second_id);
+    /* Linux fork: keys, clicks and wheel steps that a desktop layout makes from the controller
+     * (issues #66, #75): a press next to a gamepad change is ignored, one on its own counts after
+     * BB_KEY_MIRROR_MS (60). The stick counts as a gamepad change. */
+    assert(SDL_SetJoystickVirtualButton(second_joystick,SDL_GAMEPAD_BUTTON_SOUTH,false));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    static bool keys[SDL_SCANCODE_COUNT];
+    const uint64_t t=1000000000000ull;
+    uint32_t mouse=0;
+    int wheel=0;
+    const bool *k=keys;
+    filter_mirrored_input(gamepad,t,&k,&mouse,&wheel);
+    assert(SDL_SetJoystickVirtualAxis(second_joystick,SDL_GAMEPAD_AXIS_LEFTY,30000)); /* stick back */
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    k=keys; filter_mirrored_input(gamepad,t+1000000,&k,&mouse,&wheel);
+    keys[SDL_SCANCODE_DOWN]=true; /* the layout's arrow key, 5 ms later */
+    k=keys; filter_mirrored_input(gamepad,t+1005000,&k,&mouse,&wheel);
+    assert(!k[SDL_SCANCODE_DOWN]);
+    k=keys; filter_mirrored_input(gamepad,t+1200000,&k,&mouse,&wheel);
+    assert(!k[SDL_SCANCODE_DOWN]); /* held on: still ignored */
+    keys[SDL_SCANCODE_DOWN]=false;
+    wheel=1; /* the trackpad's wheel step, then the stick returns 10 ms later */
+    k=keys; filter_mirrored_input(gamepad,t+1300000,&k,&mouse,&wheel);
+    assert(wheel==0);
+    assert(SDL_SetJoystickVirtualAxis(second_joystick,SDL_GAMEPAD_AXIS_LEFTY,0));
+    SDL_UpdateJoysticks();
+    SDL_UpdateGamepads();
+    for (uint64_t at=t+1310000; at<=t+1500000; at+=10000) {
+        wheel=0; k=keys; filter_mirrored_input(gamepad,at,&k,&mouse,&wheel);
+        assert(wheel==0);
+    }
+    keys[SDL_SCANCODE_W]=true; /* the real keyboard, the controller untouched */
+    k=keys; filter_mirrored_input(gamepad,t+3000000,&k,&mouse,&wheel);
+    assert(!k[SDL_SCANCODE_W]);
+    k=keys; filter_mirrored_input(gamepad,t+3060000,&k,&mouse,&wheel);
+    assert(k[SDL_SCANCODE_W]);
+    keys[SDL_SCANCODE_W]=false;
+    wheel=-1; /* the real wheel */
+    k=keys; filter_mirrored_input(gamepad,t+4000000,&k,&mouse,&wheel);
+    assert(wheel==0);
+    k=keys; filter_mirrored_input(gamepad,t+4060000,&k,&mouse,&wheel);
+    assert(wheel==-1);
+    wheel=0; k=keys; filter_mirrored_input(gamepad,t+4070000,&k,&mouse,&wheel);
+    assert(wheel==0); /* one step, once */
+    SDL_CloseJoystick(second_joystick);
     SDL_CloseJoystick(joystick);
-    if (gamepad) SDL_CloseGamepad(gamepad);
+    for (int i=0;i<gamepad_count;++i) SDL_CloseGamepad(gamepads[i]);
+    gamepad_count=0;
     gamepad=NULL;
+    assert(SDL_DetachVirtualJoystick(second_id));
     assert(SDL_DetachVirtualJoystick(id));
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch, vibration controls, overlay capture");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch, vibration controls, overlay capture, second gamepad, mirrored keys and wheel");
 }
