@@ -29,6 +29,9 @@ const MAX_GAME_FILE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_GAME_TOTAL: u64 = 100 * 1024 * 1024 * 1024;
 const STAGING_MARKER: &str = ".uu-transfer-incomplete";
 const STAGING_LOCK: &str = ".uu-transfer.lock";
+const TRANSFER_WORK_DIR: &str = ".uu-transfer-work";
+const TRANSFER_WORK_OWNER: &str = ".owner";
+const TRANSFER_WORK_OWNER_CONTENT: &[u8] = b"uncharted-universal-transfer-work-v1\n";
 const PAIRING_ID: &[u8] = b"uncharted-universal-hub-pairing-v1";
 const TRANSFER_DOMAIN: &[u8] = b"uncharted-universal-game-transfer-v1";
 const CLIENT_TO_SERVER: u8 = 1;
@@ -522,6 +525,8 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
     channel.send(request.as_bytes())?;
     let manifest = channel.receive()?;
     let files = parse_game_manifest(&manifest, target)?;
+    let work_dir = prepare_transfer_work_dir(staged)?;
+    cleanup_transfer_temps(&work_dir)?;
     let mut received = 0u64;
 
     for (index, file) in files.iter().enumerate() {
@@ -531,10 +536,7 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
             continue;
         }
         channel.send(format!("NEED {index}").as_bytes())?;
-        // We hold the staging lock, so abandoned transfer temps for this exact destination
-        // cannot belong to another live pull. Replacement backups use a separate `.bak` suffix.
-        cleanup_transfer_temps(&destination)?;
-        let temp = temporary_sibling(&destination, "tmp")?;
+        let temp = temporary_work_file(&work_dir)?;
         let result = receive_game_file(&mut channel, index, file, &temp);
         if let Err(error) = result {
             let _ = fs::remove_file(&temp);
@@ -551,6 +553,7 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
             "the game-data transfer ended unexpectedly".into(),
         ));
     }
+    finish_transfer_work_dir(&work_dir)?;
     fs::remove_file(marker)?;
     Ok(received)
 }
@@ -869,6 +872,7 @@ fn safe_transfer_path(path: &str) -> bool {
                 && !reserved
                 && !part.eq_ignore_ascii_case(STAGING_MARKER)
                 && !part.eq_ignore_ascii_case(STAGING_LOCK)
+                && !part.eq_ignore_ascii_case(TRANSFER_WORK_DIR)
         })
 }
 
@@ -1154,25 +1158,75 @@ fn temporary_sibling(destination: &Path, suffix: &str) -> Result<PathBuf> {
     Ok(destination.with_file_name(temp_name))
 }
 
-/// Remove only regular files with the exact random-name shape emitted for abandoned transfer
-/// temps of this destination. Call while holding the staging lock; symlinks and malformed names
-/// are left untouched.
-fn cleanup_transfer_temps(destination: &Path) -> Result<()> {
-    let parent = destination
-        .parent()
-        .ok_or_else(|| Error::Hub("invalid game-data destination".into()))?;
-    let name = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::Hub("invalid game-data destination".into()))?;
-    let prefix = format!(".{name}.uu-");
-    for entry in fs::read_dir(parent)? {
+fn prepare_transfer_work_dir(root: &Path) -> Result<PathBuf> {
+    let work_dir = root.join(TRANSFER_WORK_DIR);
+    match fs::symlink_metadata(&work_dir) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_dir() => {
+            return Err(Error::Hub("game-data transfer work path is unsafe".into()))
+        }
+        Ok(_) => ensure_transfer_work_owner(&work_dir)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            fs::create_dir(&work_dir)?;
+            ensure_transfer_work_owner(&work_dir)?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(work_dir)
+}
+
+/// Recover a crash between creating/removing the reserved directory and writing/removing its
+/// owner marker. An unowned directory is claimed only when it is empty.
+fn ensure_transfer_work_owner(work_dir: &Path) -> Result<()> {
+    let owner = work_dir.join(TRANSFER_WORK_OWNER);
+    match fs::symlink_metadata(&owner) {
+        Ok(_) => verify_transfer_work_owner(work_dir),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if fs::read_dir(work_dir)?.next().is_some() {
+                return Err(Error::Hub(
+                    "unowned game-data transfer work directory is not empty".into(),
+                ));
+            }
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(owner)?;
+            io::Write::write_all(&mut file, TRANSFER_WORK_OWNER_CONTENT)?;
+            file.sync_all()?;
+            verify_transfer_work_owner(work_dir)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn verify_transfer_work_owner(work_dir: &Path) -> Result<()> {
+    let meta = fs::symlink_metadata(work_dir)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(Error::Hub("game-data transfer work path is unsafe".into()));
+    }
+    let owner = work_dir.join(TRANSFER_WORK_OWNER);
+    let meta = fs::symlink_metadata(&owner)?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(Error::Hub("game-data transfer work owner is unsafe".into()));
+    }
+    if fs::read(owner)? != TRANSFER_WORK_OWNER_CONTENT {
+        return Err(Error::Hub(
+            "game-data transfer work owner is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Remove only generated regular temp files from the ownership-marked work directory. Call while
+/// holding the staging lock; arbitrary staged paths cannot collide with this namespace.
+fn cleanup_transfer_temps(work_dir: &Path) -> Result<()> {
+    verify_transfer_work_owner(work_dir)?;
+    for entry in fs::read_dir(work_dir)? {
         let entry = entry?;
         let Some(candidate) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
         let Some(token) = candidate
-            .strip_prefix(&prefix)
+            .strip_prefix(".uu-")
             .and_then(|rest| rest.strip_suffix(".tmp"))
         else {
             continue;
@@ -1190,6 +1244,31 @@ fn cleanup_transfer_temps(destination: &Path) -> Result<()> {
             fs::remove_file(path)?;
         }
     }
+    Ok(())
+}
+
+fn temporary_work_file(work_dir: &Path) -> Result<PathBuf> {
+    let mut random = [0u8; 8];
+    getrandom::getrandom(&mut random)
+        .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
+    Ok(work_dir.join(format!(".uu-{}.tmp", hex(&random))))
+}
+
+fn finish_transfer_work_dir(work_dir: &Path) -> Result<()> {
+    cleanup_transfer_temps(work_dir)?;
+    let mut entries = fs::read_dir(work_dir)?;
+    let Some(owner) = entries.next() else {
+        return Err(Error::Hub(
+            "game-data transfer work owner is missing".into(),
+        ));
+    };
+    if owner?.file_name() != TRANSFER_WORK_OWNER || entries.next().is_some() {
+        return Err(Error::Hub(
+            "game-data transfer work directory contains unexpected files".into(),
+        ));
+    }
+    fs::remove_file(work_dir.join(TRANSFER_WORK_OWNER))?;
+    fs::remove_dir(work_dir)?;
     Ok(())
 }
 
@@ -1485,6 +1564,7 @@ mod tests {
         assert!(fs::read(staged.join("content/empty")).unwrap().is_empty());
         assert_eq!(serving.join().unwrap().unwrap(), 27);
         assert!(!staged.join(STAGING_MARKER).exists());
+        assert!(!staged.join(TRANSFER_WORK_DIR).exists());
 
         let (mut server, mut client) = MemoryTransport::pair();
         let serving =
@@ -1548,6 +1628,7 @@ mod tests {
             b"synthetic TCP loopback data"
         );
         assert!(!staged.join(STAGING_MARKER).exists());
+        assert!(!staged.join(TRANSFER_WORK_DIR).exists());
         assert_eq!(serving.join().unwrap().unwrap(), 27);
         fs::remove_dir_all(root).unwrap();
     }
@@ -1611,6 +1692,7 @@ mod tests {
             ".UU-TRANSFER-INCOMPLETE",
             "content/.UU-TRANSFER-INCOMPLETE",
             ".UU-TRANSFER.LOCK",
+            "content/.UU-TRANSFER-WORK/data.bin",
             "content/é.bin",
         ] {
             let text = format!(
@@ -1669,28 +1751,57 @@ mod tests {
     }
 
     #[test]
-    fn retry_cleanup_removes_only_exact_regular_transfer_temps() {
+    fn retry_cleanup_isolated_from_valid_manifest_paths() {
         let root = std::env::temp_dir().join(format!("uu-hub-temp-clean-{}", std::process::id()));
         let staged = root.join("staged");
         let parent = staged.join("content");
-        let destination = parent.join("data.bin");
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&parent).unwrap();
-        let abandoned = parent.join(".data.bin.uu-0123456789abcdef.tmp");
-        let unrelated = parent.join(".other.bin.uu-0123456789abcdef.tmp");
-        let malformed = parent.join(".data.bin.uu-not-a-random-token.tmp");
-        let backup = parent.join(".data.bin.uu-0123456789abcdef.bak");
+        let work_dir = prepare_transfer_work_dir(&staged).unwrap();
+        let abandoned = work_dir.join(".uu-0123456789abcdef.tmp");
+        let unrelated = work_dir.join(".other.bin.uu-0123456789abcdef.tmp");
+        let malformed = work_dir.join(".uu-not-a-random-token.tmp");
+        let backup = work_dir.join(".uu-0123456789abcdef.bak");
+        let legitimate = parent.join(".data.bin.uu-0123456789abcdef.tmp");
+        fs::write(parent.join("data.bin"), b"synthetic data").unwrap();
         fs::write(&abandoned, b"partial synthetic data").unwrap();
         fs::write(&unrelated, b"keep").unwrap();
         fs::write(&malformed, b"keep").unwrap();
         fs::write(&backup, b"keep").unwrap();
+        fs::write(&legitimate, b"legitimate staged data").unwrap();
 
-        cleanup_transfer_temps(&destination).unwrap();
+        let hash = hex(&Sha256::digest(b"legitimate staged data"));
+        let manifest = format!(
+            "uncharted-game-data 1\ntarget linux\nfile 22 {hash} content/.data.bin.uu-0123456789abcdef.tmp\n"
+        );
+        assert!(parse_game_manifest(manifest.as_bytes(), Os::Linux).is_ok());
+
+        cleanup_transfer_temps(&work_dir).unwrap();
 
         assert!(!abandoned.exists());
         assert!(unrelated.exists());
         assert!(malformed.exists());
         assert!(backup.exists());
+        assert_eq!(fs::read(&legitimate).unwrap(), b"legitimate staged data");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn transfer_work_dir_recovers_only_empty_unowned_directories() {
+        let root = std::env::temp_dir().join(format!("uu-work-owner-{}", std::process::id()));
+        let staged = root.join("staged");
+        let work_dir = staged.join(TRANSFER_WORK_DIR);
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir(&work_dir).unwrap();
+
+        assert_eq!(prepare_transfer_work_dir(&staged).unwrap(), work_dir);
+        verify_transfer_work_owner(&work_dir).unwrap();
+
+        fs::remove_file(work_dir.join(TRANSFER_WORK_OWNER)).unwrap();
+        fs::write(work_dir.join("unexpected"), b"preserve").unwrap();
+        assert!(prepare_transfer_work_dir(&staged).is_err());
+        assert_eq!(fs::read(work_dir.join("unexpected")).unwrap(), b"preserve");
         fs::remove_dir_all(root).unwrap();
     }
 

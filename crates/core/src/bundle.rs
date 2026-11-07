@@ -71,10 +71,11 @@ pub fn is_forbidden(rel_path: &str) -> bool {
     {
         return true;
     }
-    if components
-        .iter()
-        .any(|part| part == ".uu-transfer-incomplete" || part == ".uu-transfer.lock")
-    {
+    if components.iter().any(|part| {
+        part == ".uu-transfer-incomplete"
+            || part == ".uu-transfer.lock"
+            || part == ".uu-transfer-work"
+    }) {
         return true;
     }
     let name = components.last().map(String::as_str).unwrap_or("");
@@ -580,6 +581,7 @@ mod tests {
         assert!(is_forbidden("/absolute/path"));
         assert!(is_forbidden(".UU-TRANSFER-INCOMPLETE"));
         assert!(is_forbidden("content/.UU-TRANSFER.LOCK"));
+        assert!(is_forbidden("content/.UU-TRANSFER-WORK/data.tmp"));
         assert!(is_forbidden("C:/absolute/path"));
         assert!(is_forbidden("sce_sys/param.sfo"));
         assert!(is_forbidden("game/eboot.bin"));
