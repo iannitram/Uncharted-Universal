@@ -82,8 +82,8 @@ flowchart TD
 | `launch` | stub | `Relay` and `Runner` traits, `play` (pull, conflict with both `SaveCard`s, run `uncharted-run` with `run_env`, push) | `main` of `run.py` | M7, M10, M18, M20 |
 | `logs` | present: `crash_line`, known-issues matcher, playthrough; other functions stub | `redact` (no game paths or hex keys in logs), `crash_line` (reads the `Crash:` line the runtime prints, #168), the known-issues matcher over `crates/core/data/known_issues.json` (#169, seeded by #175), `playthrough.jsonl` (#170), log rotation, health and the report bundle | `launcher/uncharted_logs.py` and `crash_signature()` in `launcher/uncharted_linux.py`; the matcher and the playthrough log are new | M1-M3, M9, M20 |
 | `recipe` | stub | `Target` (linux, windows, mac, ios, android), `Hub` (strix-halo, desktop, mac), `hub_for`, `serves`; `Recipe` and `recipe_for` (the prepare steps per target, including the Mac's recompile and the iOS build and cable install); the per-chapter fix list of #178 | | M11, M15 |
-| `bundle` | stub | `Bundle` (target, build id, patch level, files with size and SHA-256, shader translations), `manifest`, `verify`, `install`; never the dump folder's own files (`is_forbidden`, a test enforces it); game data never travels in the bundle (ruling (d), 2026-11-02); the hub copies the prepared game data folder to the player's own devices over the home network (SPEC.md M11, M12; ADR 0004) | | M9, M11, M12 |
-| `hub` | stub (feature `hub`) | `discover` (mDNS `_uncharted-universal._tcp`, private ranges only), `pair` (six-digit code, SPAKE2), `serve`, `pull` (sealed, resumable), `Transport` trait for loopback tests | | M11, M12 |
+| `bundle` | present | `Bundle`, text manifest, sorted file hashing, verification and install; rejects game/dump content, device-owned data and unsafe relative paths; separate game-data transfer is still unimplemented (#189) | | M9, M11, M12 |
+| `hub` | partial (feature `hub`) | `is_home_network` and checked `TcpTransport` enforce loopback/private/link-local address scope; discovery, pairing, sealed/resumable bundle and player-data transfer remain stubs | | M11, M12 |
 | `fleet` | stub | `DeviceRecord`, `drift` warning | | M12 |
 | `vdf` | stub | Steam binary KeyValues `read`, `write` | `launcher/bbport_steam.py` | M13, M20 |
 | `steam` | stub | `shortcut_app_id`, `Shortcut`, `upsert`, `userdata_roots`, `write_shortcut` (Steam closed, `.bak` kept), `write_artwork`; the shortcut opens the launcher's Continue screen (M13) | `launcher/bbport_steam.py`, the file writing of `launcher/uncharted_art.py` | M13, M20 |
@@ -91,7 +91,7 @@ flowchart TD
 | `relay` | planned (feature `relay`) | save-relay adapter: links its library, maps outcomes to `launch::Sync` | #163 (reworked for Rust) | M18 |
 | `tune` | present | parses the hardware report JSON (#171: GPU name/vendor/generation, dedicated/shared memory, selected integrated GPU and hybrid topology, refresh rate, CPU cores/instruction support); gates frame generation and sizes above 1080p below 6 GiB, DLSS on RTX, and warns on integrated selection in a hybrid machine; the three cards Handheld 30, Balanced 60, Max quality (#174). Live `uncharted-run --probe` collection awaits the runtime loader; benchmark report reading awaits #173 | the report consumes the future runtime replacement of `launcher/bbport_vulkan.py`; the picker is new | M5, M13, M20 |
 
-`vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `backup`, `update`, `launch` and the shape of `savecard` are copied from iannitram/totk-native (MIT) with credit in the file header, once built there.
+`vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `backup`, `update`, `launch` and the shape of `savecard` follow iannitram/totk-native (MIT) with credit in the file header.
 
 ## Modules: `crates/runtime` (`uncharted_runtime`)
 
