@@ -8,6 +8,7 @@ static int capture;
 static int rumble_calls;
 static uint16_t rumble_low, rumble_high;
 int bbgpu_overlay_captures_input(void) { return capture; }
+void bbgpu_input_sample(void) {} /* low latency mode (upstream 0.3.14): nothing to wait for */
 void bbgpu_mouse_configure(int look) { (void)look; }
 int bbgpu_mouse_sample(float *dx, float *dy, uint32_t *buttons, int *wheel) {
     *dx=*dy=0; *buttons=0; *wheel=0;
