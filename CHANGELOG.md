@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-11 Roadmap map: the roadmap now opens with a dated features block of 15 feature ids (campaign, gpu, perf, crash-help, prep, launcher, runtime, hubs, steamos, windows, android, apple, saves, builds, later), taken from its existing Musts and stages; each issue gets one feature label and the 1.0 or After 1.0 milestone. No scope changed.
 - 2026-11-11 Docs: added CLAUDE.md pointing to AGENTS.fork.md and replaced a home-folder path in docs/maps/overview.md (repo-lint, R01); upstream-owned docs left as they are.
 - 2026-11-06 PM peer/import review (#205): PEERS.md now records 17 frozen survey repositories with file-level license boundaries and source links; SPEC.md and ROADMAP.md map the selected imports to #207-#212. Android work is split into dependency build, Android-specific synthetic FEX validation, later Rust ABI bridge, and a standalone fail-closed driver loader. Apple remains gated by source/synthetic feasibility; GPL-3.0 bbnet20 and all game-derived data are excluded. Existing #31/#37 links are preserved rather than duplicated. No code or platform milestone is marked complete; save-relay remains reference-only. See [issue-disposition ledger](docs/audits/2026-11-06-issue-dispositions.md).
 - 2026-11-06 Owner clarification: save sync on all five target platforms belongs to iannitram/save-relay; reference it now and attach its integration when ready. No sync dependency or implementation added here.

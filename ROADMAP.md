@@ -1,5 +1,24 @@
 # Roadmap
 
+Updated: 2026-11-11
+
+features:
+- campaign: Uncharted 1, 2 and 3 play start to finish on the AMD handheld (M1-M3): the playthroughs, progress blockers, crashes, physics, input and audio in today's runtime
+- gpu: The graphics library draws each game correctly (M8): play-breaking renderer bugs, shadPS4 fixes, upscalers and GPU vendor workarounds
+- perf: Power and frame rate (M5): render size, run settings, the benchmark and auto-tune
+- crash-help: Crash help: the crash line, the known-issues list, the playthrough log and the after-crash screen
+- prep: Stage 1, the prep tools in Rust: dump check, revision gate, package, patches, link, prepare, mods, and no game files (M9, M11)
+- launcher: Stage 2 and stage 10, the faces: the CLI, the Slint app, the Continue screen, first run, Saves and Settings, About and languages, the design pass (M7, M10)
+- runtime: Stage 3, the runtime to Rust, one module per piece, then the C build path deleted (M20)
+- hubs: Stage 4, build hubs: discovery, pairing, serve and pull, fleet records (M12)
+- steamos: Stage 5, SteamOS handhelds: Steam shortcut, artwork, handheld profile, Game Mode, the device hours (M13)
+- windows: Stage 6, the Windows desktop: the build, the Windows shims, an hour per game (M14)
+- android: Stage 7, Android on Adreno through FEXCore and Turnip (M17)
+- apple: Stage 8, Mac, iPhone and iPad through a recompiled library and Metal (M15, M16)
+- saves: Saves work, one save everywhere through save-relay, and updates keep saves (M4, M18, M19, stage 9)
+- builds: Stage 0 and every build verified: housekeeping, CI, release builds, upstream syncs, project rules (M6)
+- later: After 1.0 only, the new features among the Won'ts: in-game graphics menu, Game Mode menu, Xbox prompts, launcher trophies, aspect ratios, AI beta testers, shader preload, FSR 4, stereo, plain ELF input, Mali GPUs
+
 From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet, the RTX 3090 Ti desktop, a Mac, an iPhone or iPad, and an Adreno Android device, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
 
 ## Features, by Must
