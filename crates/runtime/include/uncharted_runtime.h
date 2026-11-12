@@ -9,7 +9,8 @@
 // The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 // its copy of the header has and refuses to start on a mismatch (a stale static library).
 // Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-#define UNCHARTED_RUNTIME_ABI_VERSION 1
+// 2: the Windows shims of `src/compat_win.c` moved to `os` (3.15).
+#define UNCHARTED_RUNTIME_ABI_VERSION 2
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -92,6 +93,66 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 // # Safety
 // `name` is null or a NUL-terminated string.
 const char *runtime_import_name(const char *name);
+
+#if defined(_WIN32)
+// The C library's `errno` for a Win32 error code.
+int compat_errno_from_win32(unsigned long error);
+#endif
+
+#if defined(_WIN32)
+// `pread` on a CRT descriptor: reads up to `size` bytes at `offset` into `buffer` and leaves
+// the descriptor's offset where it was. 0 at the end of the file; -1 with `errno` set.
+//
+// # Safety
+// `buffer` is `size` writable bytes.
+intptr_t compat_pread(int fd, void *buffer, uintptr_t size, int64_t offset);
+#endif
+
+#if defined(_WIN32)
+// `pwrite` on a CRT descriptor: writes `size` bytes of `buffer` at `offset` and leaves the
+// descriptor's offset where it was. -1 with `errno` set.
+//
+// # Safety
+// `buffer` is `size` readable bytes.
+intptr_t compat_pwrite(int fd, const void *buffer, uintptr_t size, int64_t offset);
+#endif
+
+#if defined(_WIN32)
+// Seconds east of UTC at time `t` (Windows' `struct tm` has no `tm_gmtoff`).
+long compat_utc_offset(int64_t t);
+#endif
+
+#if defined(_WIN32)
+// Fills `buffer` with `size` cryptographically secure random bytes; 0, or -1 on failure.
+//
+// # Safety
+// `buffer` is `size` writable bytes (or `size` is 0).
+int compat_random(void *buffer, uintptr_t size);
+#endif
+
+#if defined(_WIN32)
+// Sleeps `ns` nanoseconds with sub-millisecond precision (a high-resolution waitable timer;
+// winpthreads' `nanosleep` rounds up to the 15.6 ms scheduler tick).
+void compat_sleep_ns(uint64_t ns);
+#endif
+
+#if defined(_WIN32)
+// `rm -rf` of a UTF-8 path: 0 when the tree is gone (or never existed), -1 when something
+// stayed (or the path is not UTF-8).
+//
+// # Safety
+// `path` is null or a NUL-terminated string.
+int compat_remove_tree(const char *path);
+#endif
+
+#if defined(_WIN32)
+// User and kernel CPU time of the process (`who` 0) or the calling thread (any other
+// `who`), in microseconds; 0, or -1 when the host would not say.
+//
+// # Safety
+// `user_us` and `kernel_us` are writable.
+int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
+#endif
 
 #ifdef __cplusplus
 }  // extern "C"

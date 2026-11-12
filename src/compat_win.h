@@ -1,7 +1,12 @@
 /* Windows (MSYS2 CLANG64, MinGW-w64 + winpthreads) counterparts of the POSIX calls the
  * runtime uses. Included through runtime.h after the C library headers, so the macros below
  * only replace calls in this project's own sources. Paths are UTF-8: the executable's
- * manifest selects the UTF-8 code page (packaging/windows/bb-probe.manifest). */
+ * manifest selects the UTF-8 code page (packaging/windows/bb-probe.manifest).
+ *
+ * The compat_* functions themselves are Rust since piece 3.15 (crates/runtime/src/os/ffi.rs),
+ * declared by crates/runtime/include/uncharted_runtime.h, which runtime.h includes after this
+ * file; bb_setjmp and bb_longjmp are in crates/runtime/src/os/jump.rs. This file keeps the
+ * macros, the inline shims and the bb_jmp_buf declarations cbindgen cannot write. */
 #ifndef BB_COMPAT_WIN_H
 #define BB_COMPAT_WIN_H
 #ifdef _WIN32
@@ -52,8 +57,6 @@ static inline int compat_mkdir(const char *path, int mode) { (void)mode; return 
 #define mkdir(path, mode) compat_mkdir(path, mode)
 
 /* pread/pwrite on CRT descriptors: positioned I/O that leaves the file offset unchanged. */
-ssize_t compat_pread(int fd, void *buffer, size_t size, int64_t offset);
-ssize_t compat_pwrite(int fd, const void *buffer, size_t size, int64_t offset);
 #define pread compat_pread
 #define pwrite compat_pwrite
 static inline int compat_fsync(int fd) { return _commit(fd); }
@@ -74,22 +77,10 @@ static inline int compat_setenv(const char *name, const char *value, int overwri
 }
 #define setenv compat_setenv
 
-/* Seconds east of UTC at time t (struct tm has no tm_gmtoff on Windows). */
-long compat_utc_offset(time_t t);
-/* Cryptographic random bytes; 0 or -1. */
-int compat_random(void *buffer, size_t size);
-/* Sleeps with sub-millisecond precision (high-resolution waitable timer; winpthreads'
- * nanosleep rounds up to the 15.6 ms scheduler tick). */
-void compat_sleep_ns(uint64_t ns);
-/* rm -rf: 0 when the tree is gone (or never existed). */
-int compat_remove_tree(const char *path);
-/* errno for a Win32 error code. */
-int compat_errno_from_win32(unsigned long error);
-/* User and kernel CPU time of the process (who=0) or calling thread (who=1), microseconds. */
-int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
 /* setjmp/longjmp without SEH unwinding (guest frames have no unwind data) that saves every
  * Win64 callee-saved register, xmm6-15 included. clang's __builtin_longjmp restores a wrong
- * frame pointer on Win64. bb_longjmp may also be entered from the exception handler. */
+ * frame pointer on Win64. bb_longjmp may also be entered from the exception handler.
+ * Defined in crates/runtime/src/os/jump.rs; tests/test_os_shims.c checks them. */
 typedef unsigned long long bb_jmp_buf[32];
 __attribute__((returns_twice)) int bb_setjmp(bb_jmp_buf buffer);
 __attribute__((noreturn)) void bb_longjmp(bb_jmp_buf buffer, int value);

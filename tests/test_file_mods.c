@@ -5,10 +5,14 @@
 static int32_t guest_errno;
 int32_t *runtime_errno(void) { return &guest_errno; }
 int32_t runtime_guest_errno(int e) { return e; }
+#ifndef _WIN32
+/* On Windows the crate's static library is linked for the compat_* shims (3.15) and brings
+ * the real runtime_lookup; nothing here resolves a symbol. */
 uintptr_t runtime_lookup(const RuntimeExport *table,size_t n,const char *name) {
     for (size_t i=0;i<n;++i) if (!strcmp(table[i].name,name)) return (uintptr_t)table[i].function;
     return 0;
 }
+#endif
 int main(void) {
     /* bb_mkdtemp picks a scratch directory on both platforms (tests/portable.h). */
     char root[BB_TEST_PATH_MAX]="/tmp/bbport-mod-files-XXXXXX"; /* the template mkdtemp needs; Windows overwrites it */

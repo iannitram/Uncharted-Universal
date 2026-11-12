@@ -111,8 +111,15 @@ MINGW*|MSYS*)
             echo 'GPU unit test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
         fi
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c src/compat_win.c -lbcrypt -lws2_32 -lonecore -o out/file-mods-test.exe
+        # The compat_* shims and bb_setjmp/bb_longjmp are Rust (crates/runtime `os`, piece 3.15):
+        # the C tests link the crate's static library, built without the loader cfg (no C calls).
+        CARGO_TARGET_DIR=out/rust-tests cargo build -q -p uncharted_runtime --lib --release --target x86_64-pc-windows-gnullvm
+        rust_tests=(out/rust-tests/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a
+                    -lkernel32 -lntdll -luserenv -lws2_32 -ldbghelp -lsynchronization -lunwind)
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c "${rust_tests[@]}" -lonecore -o out/file-mods-test.exe
         out/file-mods-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_os_shims.c "${rust_tests[@]}" -o out/os-shims-test.exe
+        out/os-shims-test.exe
         clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test.exe
         out/speakers-test.exe
         clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe

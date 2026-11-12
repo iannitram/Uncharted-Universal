@@ -9,8 +9,11 @@
 //! and loader are still pending.
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
 //! wiring it into the fault/assertion handlers remains part of the loader port.
-//! [`os`] has the open file description whose positioned reads and writes never touch the
-//! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
+//! [`os`] is `src/compat_win.c` in Rust (3.15): the Win32 error map, positioned I/O, the zone
+//! offset, random bytes, the fine sleep, `rm -rf` and CPU times, exported to the Windows C
+//! runtime under their `compat_*` names, with `bb_setjmp`/`bb_longjmp`; and the open file
+//! description whose positioned reads and writes never touch the shared position (#39), which
+//! the guest file layer takes up when it moves (3.09).
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
 //!
@@ -19,7 +22,7 @@
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
-//! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
+//! `cpu_patch` and `red_zone`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
 // Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.

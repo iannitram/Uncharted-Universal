@@ -8,7 +8,7 @@
 #include <cstdlib>
 #ifdef _WIN32
 // bbport (Windows): no signals. The loader's exception handler resumes the faulting thread
-// in bb_longjmp (src/compat_win.c: no unwinding through the faulting frames).
+// in bb_longjmp (crates/runtime/src/os/jump.rs: no unwinding through the faulting frames).
 typedef unsigned long long sigjmp_buf[32];
 extern "C" __attribute__((returns_twice)) int bb_setjmp(sigjmp_buf buffer);
 #define sigsetjmp(buffer, save) bb_setjmp(buffer)

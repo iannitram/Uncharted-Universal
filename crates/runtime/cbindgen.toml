@@ -12,6 +12,8 @@ no_includes = true
 [defines]
 # Only x86-64 hosts run guest code (src/abi.rs).
 "target_arch = x86_64" = "__x86_64__"
+# The Windows shims of src/os/ffi.rs (3.15).
+"windows" = "_WIN32"
 
 [export]
 # The benchmark glue keeps its own declarations (src/runtime_benchmark.c, #173).

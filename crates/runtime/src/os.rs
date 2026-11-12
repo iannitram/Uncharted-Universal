@@ -1,13 +1,34 @@
-//! Host OS shims (roadmap 3.15; replaces `src/compat_win.c` piece by piece, #39).
+//! Host OS shims (roadmap 3.15): `src/compat_win.c` ported to Rust, and the open file
+//! description that replaces its `pread`/`pwrite` (#39).
 //!
 //! [`Description`] is one open file description: a host file plus the position that
 //! sequential reads and writes share. Every host call is positioned, so the host's own file
 //! pointer never carries state; positioned calls leave the position alone, as POSIX
 //! `pread` and `pwrite` do, without the save-and-restore that raced in `compat_win.c`.
 //! Duplicated descriptors share one `Description` (an `Arc`), and so share its position.
+//! The guest file layer (`file`, roadmap 3.09) routes its descriptors through this type when
+//! it moves; until then the C runtime's `pread` is [`ffi`]'s `compat_pread`.
 //!
-//! Not yet wired into the legacy C runtime: the guest file layer (`file`, roadmap 3.09)
-//! routes its descriptors through this type when it moves.
+//! The rest of `compat_win.c`, each with a Unix form for the Rust modules to come:
+//! [`errno_from_win32`] (the Win32 error to `errno` table), [`utc_offset`], [`random`],
+//! [`sleep_ns`] (finer than the Windows scheduler tick), [`remove_tree`] (`rm -rf`) and
+//! [`cpu_times`]. On Windows, [`ffi`] exports them to C under their `compat_win.h` names
+//! (declared in `include/uncharted_runtime.h`) and `jump` holds `bb_setjmp`/`bb_longjmp`.
+//! `compat_win.h` keeps the macros and inline shims that point the POSIX names at them.
+
+mod clock;
+mod errno;
+#[cfg(windows)]
+pub mod ffi;
+#[cfg(all(windows, target_arch = "x86_64"))]
+mod jump;
+mod random;
+mod tree;
+
+pub use clock::{cpu_times, sleep_ns, utc_offset, CpuClock, CpuTimes};
+pub use errno::errno_from_win32;
+pub use random::random;
+pub use tree::remove_tree;
 
 use std::fs::File;
 use std::io::{self, SeekFrom};
