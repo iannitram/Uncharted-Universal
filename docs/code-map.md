@@ -4,7 +4,7 @@ The intended shape of the repo for 1.0 (`SPEC.md`, approved 2026-11-01): **one R
 
 Status per module: **present** (implemented in the tree), **partial** (only named functions/metadata exist; remaining behavior is listed), **stub** (types/signatures exist but behavior is `NotBuilt` or unimplemented), **planned** (not in the tree), **legacy** (today's C or Python, removed when its Rust replacement is present and the game boots). Synthetic tests exercise stated test seams only; they do not prove device or game behavior. "Musts" columns cite `SPEC.md` (M1-M20; the spec has no Should items); every module that replaces C or Python also serves M20. An issue that implements a module moves its status in the same PR. Integration branch: `main` (our work; `upstream-main` is a copy of Supermedo's `main`).
 
-Source baseline: production `main` at [`ef27c862`](https://github.com/iannitram/Uncharted-Universal/tree/ef27c862dd15f60e64c51a1d285b96dec1be13b9); former upstream `8b66edc` is already its ancestor. The target architecture below includes planned work: runtime ABI version is still 0, `crates/runtime/build.rs` is absent, and `app/`, `android/` and `apple/` do not exist. The CLI is a skeleton; `recipe::recipe_for`, preparation, linking, install and launch are stubs. Rust test fixtures and source-level checks do not establish Android, Apple, or full-game execution. See the [platform readiness audit](audits/2026-11-06-universal-platforms.md) and [PEERS.md](../PEERS.md).
+Source baseline: production `main` at [`ef27c862`](https://github.com/iannitram/Uncharted-Universal/tree/ef27c862dd15f60e64c51a1d285b96dec1be13b9); former upstream `8b66edc` is already its ancestor. The target architecture below includes planned work: runtime ABI version is still 0, `crates/runtime/build.rs` is absent, `app/` is a scaffold only (an empty Slint window, two placeholder buttons, keyboard and gilrs focus; piece 2.03), and `android/` and `apple/` do not exist. The CLI is a skeleton; `recipe::recipe_for`, preparation, linking, install and launch are stubs. Rust test fixtures and source-level checks do not establish Android, Apple, or full-game execution. See the [platform readiness audit](audits/2026-11-06-universal-platforms.md) and [PEERS.md](../PEERS.md).
 
 ## Current local implementation branches (2026-11-06)
 
@@ -42,7 +42,7 @@ Rules that keep it portable: `crates/core` is pure Rust (no C library, no OpenSS
 ```mermaid
 flowchart TD
     subgraph Faces
-      App["app/: planned Rust + Slint<br/>Continue, first run, Saves, Settings, Fleet, About"]
+      App["app/: scaffold (2.03), rest planned; Rust + Slint<br/>Continue, first run, Saves, Settings, Fleet, About"]
       CLI["crates/cli: uncharted-universal check | prepare | play | steam-add | patches | hub | fleet"]
     end
     Steam["Steam Game Mode shortcut + artwork"] -->|"opens the Continue screen"| App
@@ -158,9 +158,9 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | Path | Status | Owns | Replaces | Musts |
 |---|---|---|---|---|
 | `crates/cli` (`uncharted-universal`) | stub | `check`, `prepare`, `play <game>`, `steam-add`, `patches`, `hub serve/pair/pull`, `fleet` (the Windows `Play Uncharted.exe`, `packaging/windows/play.c`, becomes `play`) | `run.py` command line, `packaging/windows/play.c` | M7, M11-M13, M18, M20 |
-| `app/` (`uncharted-app`) | planned | the launcher, Rust + Slint, Linux, Windows, macOS, Android; links `uncharted_core` | `launcher/*.py` | M7, M10-M13, M15, M17-M20 |
+| `app/` (`uncharted-app`) | partial: scaffold only (2.03): Slint window titled "Uncharted Universal", a held place for the Continue screen (2.04), two placeholder buttons, the Slint royalty-free notice; builds and lints in CI on Linux, Windows and macOS; the full launcher is Rust + Slint for Linux, Windows, macOS and Android and will link `uncharted_core`, which the scaffold does not yet call | `launcher/*.py` | M7, M10-M13, M15, M17-M20 |
 | `app/src/vm/` | planned | view models: `continue_page`, `first_run`, `saves`, `settings` (display cards from auto-tune #174), `fleet`, `about`, `after_crash` (closed #176 is replaced by roadmap 2.07) | | M1-M3, M10-M12, M18, M19 |
-| `app/src/input.rs` | planned | `Nav` from gilrs (desktop) and Android key events | | M10, M17 |
+| `app/src/input.rs`, `app/src/focus.rs` | partial: gilrs d-pad/left stick/South button to `Nav` and activate, and the `FocusRing` the two buttons use; Android key events not yet | | M10, M17 |
 | `app/ui/` | planned | `.slint` pages, controller first; texts in Slint's translation files (from `uncharted_i18n*.py`, `bbport_lang*.py`, seven languages) | `launcher/uncharted_widgets.py`, i18n files | M10, M20 |
 | `docs/design/continue-screen.md` | planned | the Continue screen brief, shared with totk-native, for three games | | M10 |
 | `docs/shadps4-triage.md` | present | per-game changes in `gpu/shadps4` against base `b4e7ae7`, with the hook each needs in the shared core (private half of shadPS4#17) | | M8 |
