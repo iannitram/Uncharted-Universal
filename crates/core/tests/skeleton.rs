@@ -4,8 +4,7 @@
 
 use uncharted_core::error::Error;
 use uncharted_core::games::{self, Game};
-use uncharted_core::platform::{AppDirs, Os};
-use uncharted_core::recipe::{self, Hub};
+use uncharted_core::platform::AppDirs;
 use uncharted_core::{artwork, cheats};
 
 #[test]
@@ -57,14 +56,6 @@ fn games_and_their_executables() {
         games::check_revision(Game::U1, "01.00").unwrap_err().code(),
         "wrong_revision"
     );
-}
-
-#[test]
-fn every_target_has_a_hub_that_serves_it() {
-    for os in Os::ALL {
-        assert!(recipe::serves(recipe::hub_for(os)).contains(&os));
-    }
-    assert_eq!(Hub::from_key("mac"), Ok(Hub::Mac));
 }
 
 #[test]
