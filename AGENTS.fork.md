@@ -1,6 +1,6 @@
 # Rules for agents in this fork (our pipeline)
 
-This fork has its own pipeline files beside upstream's. README.md describes Uncharted-Universal and its current implementation; the inherited Linux README is preserved at docs/original-readme/README-linux-fork.md. Keep docs/ROADMAP.md as upstream history. The full pipeline and rules live in the pipeline repo (private); this is the short copy.
+This fork has its own pipeline files beside upstream's. README.md describes Uncharted-Universal and its current implementation; the inherited Linux README is preserved at docs/original-readme/README-linux-fork.md. docs/ROADMAP.md stays a one-line pointer to the root ROADMAP.md, and an upstream sync takes our side of it (decided 2026-11-12: "Keep the pointer"). The full pipeline and rules live in the pipeline repo (private); this is the short copy.
 
 1. **Find the stage** in `PIPELINE.md`. The spec is `SPEC.md`, the plan `ROADMAP.md`, the code map `docs/code-map.md`, and the platform sources to inspect are in `PEERS.md`. The goals and standing rules are the pinned issue #23.
 2. **Build on `main`.** It is the integration branch; open PRs against it. `upstream-main` is the upstream copy, not our integration target.
