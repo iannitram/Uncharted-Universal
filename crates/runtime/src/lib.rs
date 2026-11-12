@@ -2,7 +2,9 @@
 //! (ADR 0002, docs/code-map.md "Modules: crates/runtime"). Built as `rlib` and `staticlib`; the
 //! static library is linked into the C loader until the loader itself is Rust.
 //!
-//! [`abi`] has one exported symbol, plus stubs for `runtime_resolve` and the NID table.
+//! [`abi`] is the first ported module (piece 3.01): the NID table, `runtime_resolve` and the libc
+//! contracts of the deleted `src/runtime.c`, exporting its C symbols (declared for C in
+//! `include/uncharted_runtime.h`, written by `cbindgen`; `tests/header.rs` keeps it current).
 //! [`savedata`] has the local save-location metadata commit (#168); the guest savedata ABI
 //! and loader are still pending.
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
@@ -21,8 +23,7 @@
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
-//! The `gpu` build script (CMake over `gpu/`, piece 3.01) and the `cbindgen` header come
-//! with the scaffold piece, not here.
+//! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
 // Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.
 #![allow(unused_variables)]
@@ -31,8 +32,13 @@ pub mod abi;
 pub mod benchmark;
 pub mod benchmark_run;
 pub mod crash;
+// `cbindgen:ignore`: their constants are Rust-only, not part of the C header. `memory`'s
+// symbols stay declared in `src/runtime.h` (its constants share names with `<sys/mman.h>`).
+/// cbindgen:ignore
 pub mod memory;
 pub mod os;
+/// cbindgen:ignore
 pub mod pad;
+/// cbindgen:ignore
 pub mod probe;
 pub mod savedata;

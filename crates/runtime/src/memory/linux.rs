@@ -5,7 +5,7 @@
 //! C ones were `static`: [`runtime_memory_resolve`] hands out their addresses by NID. The
 //! `runtime_memory_*`, `runtime_*_map` and `runtime_disabled_optimizations*` symbols are the
 //! loader's and the GPU library's (`gpu/shim/bbgpu.cpp`). `runtime_fault_recover` is a C
-//! thread-local, which Rust cannot export: it moved to `src/runtime.c`.
+//! thread-local, which Rust cannot export: it moved to `src/runtime_tls.c`.
 
 use super::*;
 use std::ffi::{c_char, c_int, c_void, CStr};

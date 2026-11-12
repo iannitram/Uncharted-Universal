@@ -856,7 +856,7 @@ void *runtime_image_map(size_t size, int prot) {
 uint64_t runtime_disabled_optimizations;
 /* A second number in the file: more toggles (gpu/shim/bbport_toggles.h, BbToggle::Disabled2). */
 uint64_t runtime_disabled_optimizations2;
-/* runtime_fault_recover, the speculative readers' recovery point, is in runtime.c. */
+/* runtime_fault_recover, the speculative readers' recovery point, is in runtime_tls.c. */
 static void *toggle_watcher(void *path) {
     for (unsigned long long last=ULLONG_MAX,last2=ULLONG_MAX;;) {
         FILE *f=fopen(path,"r");
