@@ -60,9 +60,20 @@ jobs:
             apt-get update -q
             DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends               git ca-certificates curl build-essential cmake ninja-build pkgconf file binutils               python3 python3-venv python3-dev python3-tk               libsdl3-dev libvulkan-dev mesa-vulkan-drivers libfmt-dev libboost-dev robin-map-dev               libvulkan-memory-allocator-dev libxxhash-dev libx11-dev libzydis-dev libzycore-dev               libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev               libprotobuf-dev protobuf-compiler nlohmann-json3-dev libssl-dev zlib1g-dev               libminiupnpc-dev glslang-tools glslang-dev spirv-headers
           '
+          # rustup-init needs /proc/self/exe, which is intentionally not mounted in this
+          # unprivileged chroot. Run its installer on the host, targeting the chroot's /root.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
+          sudo env RUSTUP_HOME="$CHROOT/root/.rustup" CARGO_HOME="$CHROOT/root/.cargo" \
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain 1.88.0
+          rm -f "$RUNNER_TEMP/rustup-init.sh"
+          # Rustup's proxy and the toolchain's $ORIGIN rpath both need /proc/self/exe; call the
+          # toolchain binaries directly with LD_LIBRARY_PATH.
+          sudo chroot "$CHROOT" env LD_LIBRARY_PATH=/root/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib /root/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --version
       - name: Build
         run: |
           sudo chroot "$CHROOT" bash -euc '
+            export PATH="$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:$PATH"
+            export LD_LIBRARY_PATH="$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib"
             git config --global --add safe.directory "*"
             # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
             mkdir -p "$HOME/.local/share"
@@ -113,6 +124,8 @@ jobs:
           version=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)
           echo "TAG=v$version-linux.${{ github.run_number }}" >> "$GITHUB_ENV"
           sudo chroot "$CHROOT" bash -euc "
+            export PATH=\$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:\$PATH
+            export LD_LIBRARY_PATH=\$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib
             git config --global --add safe.directory '*'
             cd /work
             APPIMAGETOOL=/work/out/appimagetool-extracted/AppRun LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh

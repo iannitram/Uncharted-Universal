@@ -6,6 +6,7 @@
 # overrides) and a private venv in out/pyenv with PyInstaller and Pillow.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
+cargo run --release -p uncharted_cli -- generate-art "$PWD/launcher/covers"
 source ./msys2-env.sh
 [[ -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe && -f out/bb-play.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 

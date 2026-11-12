@@ -55,6 +55,12 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+      - name: Run the DLSS settings fallback regression test
+        if: matrix.os == 'linux'
+        run: |
+          c++ -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim \
+            tests/test_upscaler_support.cpp gpu/shim/bbport_settings.cpp -o /tmp/upscaler-support-test
+          /tmp/upscaler-support-test
 
   native-windows:
     # CLANG64 builds the Windows GPU library and runs the GPU unit targets and portable native C harnesses (the Python suite is not yet Windows-ready); it is not a hardware GPU test.

@@ -22,8 +22,9 @@ pub struct Settings {
 /// Defaults for `game` that the player has not set. `player_env` holds the variables the player
 /// already set; a name in it is never returned. U2: `BB_GPU_MERGE=0`, `BB_TINY_READBACK=1`,
 /// `BB_SCALAR_COPY64_SYNC=2` with `_DEFER=1`, `BB_READBACK_SMALL_BUFFERS=1`. U1: `BB_TINY_READBACK=0`,
-/// the same copy64 pair, `BB_TOGGLE2=12`. U3: `BB_GPU_MERGE=0`, `BB_TINY_READBACK=0`, copy64
-/// `0`/`0`, `BB_TOGGLE2=12`. Setting `BB_SCALAR_COPY64_SYNC` drops both copy64 defaults.
+/// the same copy64 pair, `BB_READBACK_SMALL_BUFFERS=0`, `BB_TOGGLE2=12`. U3: `BB_GPU_MERGE=0`,
+/// `BB_TINY_READBACK=0`, copy64 `0`/`0`, `BB_READBACK_SMALL_BUFFERS=0`, `BB_TOGGLE2=12`. Setting
+/// `BB_SCALAR_COPY64_SYNC` drops both copy64 defaults.
 pub fn fix_defaults(player_env: &BTreeMap<String, String>, game: Game) -> BTreeMap<String, String> {
     let mut defaults = BTreeMap::new();
 
@@ -47,11 +48,16 @@ pub fn fix_defaults(player_env: &BTreeMap<String, String>, game: Game) -> BTreeM
         defaults.insert("BB_SCALAR_COPY64_DEFER".to_owned(), copy64_defer.to_owned());
     }
 
-    if game == Game::U2 {
-        if !player_env.contains_key("BB_READBACK_SMALL_BUFFERS") {
-            defaults.insert("BB_READBACK_SMALL_BUFFERS".to_owned(), "1".to_owned());
-        }
-    } else if !player_env.contains_key("BB_TOGGLE2") {
+    // Brightness flicker fix: on for U2 only; U1 and U3 are explicitly off (issue #192).
+    let small_buffers = if game == Game::U2 { "1" } else { "0" };
+    if !player_env.contains_key("BB_READBACK_SMALL_BUFFERS") {
+        defaults.insert(
+            "BB_READBACK_SMALL_BUFFERS".to_owned(),
+            small_buffers.to_owned(),
+        );
+    }
+
+    if game != Game::U2 && !player_env.contains_key("BB_TOGGLE2") {
         defaults.insert("BB_TOGGLE2".to_owned(), "12".to_owned());
     }
 
