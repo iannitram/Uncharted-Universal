@@ -134,8 +134,8 @@ jobs:
         run: |
           sudo chroot "$CHROOT" bash -euc '
             cd /work
-            test -s /usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json out/bb-probe --vulkan-only > dist/vulkan-smoke.txt
+            test -s /usr/share/vulkan/icd.d/lvp_icd.json
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json out/bb-probe --vulkan-only > dist/vulkan-smoke.txt
           '
       - name: Copy dist back to the workspace
         run: |
