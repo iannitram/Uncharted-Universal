@@ -31,5 +31,8 @@ int runtime_memory_write_backing(uintptr_t, const void*, uint64_t) { std::abort(
 // matter to the linker for extern "C" names, and no renderer test starts one.
 int32_t runtime_thread_spawn(void**, void*, void*, uint64_t, const char*) { std::abort(); }
 int32_t runtime_thread_join_spawned(void*, void**) { std::abort(); }
+// BB_BENCHMARK (videoout driver): the renderer tests never run a benchmark.
+int runtime_benchmark_active() { return 0; }
+void runtime_benchmark_frame(std::uint64_t) {}
 }
 

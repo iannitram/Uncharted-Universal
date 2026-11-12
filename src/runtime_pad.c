@@ -1382,6 +1382,16 @@ static void sample(PadData *d) {
     }
     mouse_inject_us=inject_now;
     replay_sample(d);
+    /* BB_BENCHMARK: the scripted menu and camera path are the only input (benchmark_run.rs). */
+    RuntimeBenchmarkPad benchmark;
+    if (runtime_benchmark_pad(&benchmark)) {
+        d->buttons=benchmark.buttons;
+        d->left_x=benchmark.left_x; d->left_y=benchmark.left_y;
+        d->right_x=benchmark.right_x; d->right_y=benchmark.right_y;
+        d->l2=d->r2=0;
+        aim_held=0;
+        return;
+    }
     d->buttons|=injected.buttons;
     aim_held=(d->buttons & BTN_L2)!=0;
     if (injected.touch_side>=0) touch_click(d,injected.touch_side);

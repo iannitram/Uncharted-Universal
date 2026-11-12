@@ -334,6 +334,7 @@ static LONG fatal_exception(EXCEPTION_POINTERS *info) {
     }
     scan_stack((uintptr_t)c->Rsp);
     fflush(NULL);
+    runtime_benchmark_crash();
     write_crash_dump(info);
     fflush(NULL);
     TerminateProcess(GetCurrentProcess(),3);
@@ -515,6 +516,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
             snprintf(line, sizeof(line), "  #%d %p\n", i, frames[i]);
         ssize_t written_=write(2, line, strlen(line)); (void)written_;
     }
+    runtime_benchmark_crash();
     _exit(128 + sig);
 }
 #endif
@@ -1592,6 +1594,7 @@ int main(int argc, char **argv) {
         bbnet_configure(app0,serial,title,version);
     }
     if (trophy_dir) runtime_trophy_configure(trophy_dir);
+    if (runtime_benchmark_start(user_dir ? user_dir : "user") < 0) return 2; /* BB_BENCHMARK set but unusable */
     bbgpu_register_kernel();
 #ifdef _WIN32
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;

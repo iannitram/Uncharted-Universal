@@ -14,6 +14,7 @@
 #include <sys/resource.h>
 #endif
 #include "common/assert.h"
+#include "bbport_overlay.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
@@ -28,6 +29,9 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+
+extern "C" int runtime_benchmark_active(void);
+extern "C" void runtime_benchmark_frame(std::uint64_t vram_mib);
 
 extern std::unique_ptr<Vulkan::Presenter> presenter;
 extern std::unique_ptr<AmdGpu::Liverpool> liverpool;
@@ -301,6 +305,13 @@ void VideoOutDriver::Flip(const Request& req) {
     });
     Vulkan::FrameCapture::OnFlip(req.index >= 0 ? req.port->buffer_slots[req.index].address_left
                                                 : 0);
+
+    // bbport: BB_BENCHMARK=<seconds> feeds one frame sample (frame time and video memory) per
+    // flip, then writes benchmark.json and exits when the time is up. Off otherwise.
+    static const bool benchmark_active = runtime_benchmark_active() != 0;
+    if (benchmark_active) {
+        runtime_benchmark_frame(BbOverlay::DeviceLocalMemoryMiB());
+    }
 
     // bbport: BB_FRAME_STATS=1 prints flip rate and frame time spread every 5 seconds.
     static const bool frame_stats = EmulatorSettingsImpl::Flag("BB_FRAME_STATS", false);
