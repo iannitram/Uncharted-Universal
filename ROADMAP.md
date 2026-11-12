@@ -58,7 +58,7 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 6. **Windows desktop.** 6.01 the Rust workspace and the GPU library on `windows-latest` (CLANG64, Rust target chosen here); 6.02 an hour per game with a controller.
 7. **Android** (Adreno). 7.01 adapt selected reviewed Android dependency/build, FEX bridge and Turnip/libadrenotools sources from revvv991 and zenithblue with credit through #207-#210, after the runtime ABI/thread/memory prerequisites; do not graft the whole peer project. 7.02 the runtime cross-builds for `aarch64-linux-android` in CI; 7.03 the Slint launcher's Android APK build with gamepad keys; 7.04 the hub serves the APK and install, the launcher installs them; 7.05 save-relay in the Android launcher; 7.06 a session per game with a controller.
 8. **Mac, iPhone and iPad.** 8.01 study bloodborne-native's recompiler, Metal renderer and iOS shell: licence files, what is Bloodborne-specific, a written plan (docs); 8.02 the runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios` in CI; 8.03 bring in the recompiler, run on the Mac from my dump to a library per game; 8.04 the Metal renderer for the collection; 8.05 the Mac app from the launcher, then the iOS app built on the Mac and installed by cable; 8.06 iOS controller mapping, touch hidden with a controller; 8.07 save-relay in the iOS app (its C interface); 8.08 the Mac: an hour per game; 8.09 the iPhone or iPad: a session per game with a controller.
-9. **One save everywhere.** External dependency: [iannitram/save-relay](https://github.com/iannitram/save-relay) for Linux, Windows, macOS, iOS/iPadOS and Android. Reference it for now; integration waits for its relevant platform support and interface to be ready. 9.01 attaches the adapter in the launcher (#163 reworked), with 7.05 and 8.07 covering the mobile integration; 9.02 verifies the round trip across all six devices: the 1.0 sentence. This project does not build a separate sync service.
+9. **One save everywhere.** External dependency: [iannitram/save-relay](https://github.com/iannitram/save-relay) for Linux, Windows, macOS, iOS/iPadOS and Android. Save Relay reached 1.0 on 2026-11-11, so it is now adopted, not just referenced: every build carries it (tracker #249). Desktop integration (9.01, #163) waits on its rc.1 release cut (save-relay#205); Android and iOS (7.05, 8.07) wait on its C-interface libraries (save-relay#49); the Mac waits on a supported macOS build (8.05). Save slots move the save folders, so the save-relay manifest and adapter follow the selected slot. 9.01 attaches the adapter in the launcher (#163 reworked), with 7.05 and 8.07 covering the mobile integration; 9.02 verifies the round trip across all six devices: the 1.0 sentence. This project does not build a separate sync service.
 10. **Design pass** (R04), last before 1.0. 10.01 the built screens against the Continue screen brief and the shared design system, including the Steam artwork and Game Mode; findings become `design-pass` issues.
 
 ## Platform readiness evidence
@@ -93,8 +93,8 @@ small, issue-scoped shadPS4 import candidates; link to their pinned upstream cha
 PEERS.md rather than creating duplicates. The former upstream head is already
 an ancestor of production `main`, so no sync batch is planned. #206 carries the
 separate Rust SELF/plain-ELF loader-parity obligation from the closure of #66.
-Save-relay stays reference-only until its platform support and interface are
-ready; there is no new sync implementation issue.
+Save Relay reached 1.0 on 2026-11-11 and is folded into every build; tracker #249
+holds one row per build. This project still builds no sync service of its own.
 
 ## Open-source pieces and where they fit
 
@@ -115,7 +115,7 @@ ready; there is no new sync implementation issue.
 | bmy/bbport-mac | GPL-2.0 root | Apple comparison | Rosetta guest is outside approved no-Rosetta route |
 | truwa/nathan-drake-collection-macos | no root license/API identifier established | Mac packaging comparison | learn only; Rosetta and different engine; no source copy until terms established |
 | iannitram/totk-native | MIT | `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `savecard`, Continue brief | copy with credit as already planned |
-| iannitram/save-relay | MIT | `relay` and cross-platform saves | external reference only; #163 waits for relevant platform support/interface; no new sync task |
+| iannitram/save-relay | MIT | `relay` and cross-platform saves | adopted at 1.0 (2026-11-11) in every build, tracker #249; #163 is the desktop adapter; no separate sync service |
 | slint-ui/slint | royalty-free (attribution) | `app/` | dependency; About carries notice |
 | gilrs, mdns-sd, spake2, chacha20poly1305, sha2, cbindgen, cmake | MIT or Apache-2.0 | `app/`, `hub`, `runtime` | dependencies |
 | Revivedx/SavageWindRecomp | MIT | packaging | learn, for 2.10 |
