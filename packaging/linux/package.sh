@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Linux fork: builds dist/uncharted-linux.tar.gz after `bash build.sh`. Uncharted is the
-# launcher (frozen with PyInstaller, so no Python is needed), bin/ holds bb-probe, its GPU library
+# Linux fork: builds dist/uncharted-linux.tar.gz and the AppImage after `bash build.sh`. The
+# AppImage opens uncharted-app, the Rust launcher (roadmap 2.10), with uncharted-universal (the
+# command line Steam shortcuts run: `play u1`) and uncharted-run beside it; the three clean
+# Steam's LD_PRELOAD out of their own environment (crates/core host_env). Uncharted is the
+# classic launcher (frozen with PyInstaller, so no Python is needed; `--classic`, and the
+# `--play` shortcuts it wrote, until roadmap 2.11 retires it), bin/ holds bb-probe, its GPU library
 # and the libraries a Steam Deck or another distribution may lack (bin/lib), the preparation
 # scripts and run.py. Graphics-driver, glibc and libstdc++ libraries come from the system.
 # LINUX_BUILD (e.g. 0.3.1-linux.4) is written into the package for the launcher's update check.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 cargo run --release -p uncharted_cli -- generate-art "$PWD/launcher/covers"
+# shellcheck source=packaging/rust_faces.sh
+source packaging/rust_faces.sh
 [[ -f out/bb-probe && -f out/gpu/libbbgpu.so && -f out/bb-gpu-capabilities ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 python=${PYTHON:-python3}
@@ -36,6 +42,7 @@ dest=out/stage/uncharted-linux
 rm -rf -- out/stage
 mkdir -p "$dest/bin/gpu" "$dest/bin/lib" "$dest/launcher" "$dest/scripts" "$dest/licenses"
 cp -r out/pyi-dist/Uncharted/. "$dest/"
+for face in "${faces[@]}"; do strip --strip-debug -o "$dest/$face" "$faces_dir/$face"; done
 strip --strip-debug -o "$dest/bin/bb-probe" out/bb-probe
 strip --strip-debug -o "$dest/bin/bb-gpu-capabilities" out/bb-gpu-capabilities
 strip --strip-debug -o "$dest/bin/gpu/libbbgpu.so" out/gpu/libbbgpu.so
@@ -54,6 +61,15 @@ if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; echo 'FSR 4: assets 
 # needs libva 2.21+ (vaMapBuffer2) and Ubuntu 24.04 / Mint 22 / Pop!_OS 24.04 have 2.20, so no game
 # started there. The game decodes in software and never loads a VA driver.
 system='^(ld-linux|libc\.|libm\.|libdl\.|libpthread|librt\.|libresolv|libutil\.|libgcc_s|libstdc\+\+|libvulkan|libX|libxcb|libxkb|libwayland|libdrm|libGL|libEGL|libgbm|libasound|libpulse|libpipewire|libdbus|libudev|libsystemd|libz\.|libzstd|libexpat|libelf|libLLVM|libffi|libcap\.|libgcrypt|libgpg-error|liblzma|libmount|libblkid|libglib|libgobject|libgio|libgmodule|libpcre2|libdecor|libxshmfence|libsensors|libfontconfig|libfreetype)'
+# The Rust faces have no RUNPATH to bin/lib: everything they load must be a system library
+# (Slint opens X11, Wayland, xkbcommon and GL itself; fontconfig and udev are linked).
+for face in "${faces[@]}"; do
+    foreign=$(ldd "$dest/$face" | awk '/=> \// {print $1}' | while read -r name; do
+        name=$(basename -- "$name")
+        [[ $name =~ $system ]] || echo "$name"
+    done)
+    [[ -z $foreign ]] || { echo "$face links libraries a player's system may lack: $foreign" >&2; exit 1; }
+done
 ldd out/bb-probe out/gpu/libbbgpu.so out/bb-gpu-capabilities | awk '/=> \// {print $1, $3}' | sort -u |
     while read -r name path; do
         # Arch and SteamOS list the loader as /lib64/ld-linux-x86-64.so.2 => ...: match by file name.
@@ -80,12 +96,16 @@ for library in "$dest"/bin/lib/*; do
     [[ -e $library ]] && bundled+=("/usr/lib/x86_64-linux-gnu/$(basename "$library")")
 done
 "$python" packaging/licence_check.py linux "$dest/licenses" "${bundled[@]}"
+# The crates statically linked into the Rust faces.
+"$python" packaging/rust_licences.py "$dest/licenses/rust-crates.txt"
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 mkdir -p dist
 tar -C out/stage -czf dist/uncharted-linux.tar.gz uncharted-linux
 
 # The AppImage: the same files in one executable. Saves, settings and generated files go to
-# ~/.local/share/uncharted-linux, since the AppImage itself is read-only.
+# ~/.local/share/uncharted-linux, since the AppImage itself is read-only. AppRun opens
+# uncharted-app, hands the command line's commands to uncharted-universal, and the classic
+# launcher's flags to Uncharted.
 appdir=out/stage/Uncharted.AppDir
 cp -a "$dest" "$appdir"
 cp packaging/linux/AppRun "$appdir/AppRun"
