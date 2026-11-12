@@ -3,11 +3,21 @@
 //! hub that serves each target, and `recipe_for`: the prepare steps for a target, in order, and
 //! whether its install carries a recompiled library (ADR 0006). New module, no Python
 //! counterpart: the step order is the preparation in `run.py` (`prepare`, `link_modules`,
-//! `render_resolution`, `content_profile.py`, `trophies.py`, `patch_files_for`). The chapter
-//! list of #178 is piece 1.27 (`tune`), not here.
+//! `render_resolution`, `content_profile.py`, `trophies.py`, `patch_files_for`).
+//!
+//! # Per-chapter fixes (#178, piece 1.27)
+//! Some fixes cost frame rate everywhere but help only in a few chapters. Each
+//! [`ChapterFix`] carries the chapter names, as the save shows them, where it is on (or off);
+//! [`fixes_at`] reads the current chapter from the runtime's `where.json` (#168) and says
+//! which fixes are on and which are off there, and [`chapter_env`] turns that into `BB_*`
+//! values on top of `run_env::fix_defaults`. Pure functions: the runtime reading `where.json`
+//! on each save and the live toggles (`BB_TOGGLE_FILE`, roadmap 3.06) are not here.
 
 use crate::error::{Error, Result};
+use crate::games::Game;
 use crate::platform::Os;
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// A target is a device family: the `Os` the install runs on.
 pub type Target = Os;
@@ -155,4 +165,152 @@ pub fn recipe_for(target: Target) -> Recipe {
         steps: prepare.iter().chain(finish).copied().collect(),
         recompiled_library,
     }
+}
+
+/// One fix whose on/off state follows the chapter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChapterFix {
+    /// The fix's key on the launcher's Fixes page (`FIXES` in `launcher/uncharted_launcher.py`).
+    pub key: &'static str,
+    pub game: Game,
+    /// The variables that turn it on, and the ones that turn it off (the Fixes page's values).
+    pub on: &'static [(&'static str, &'static str)],
+    pub off: &'static [(&'static str, &'static str)],
+    /// Chapter names as the save shows them; each matches as a case-insensitive part of the
+    /// chapter (the same rule as `logs::match_known` uses for locations).
+    pub chapters: &'static [&'static str],
+    /// True: on in `chapters`, off elsewhere. False: off in `chapters`, on elsewhere (a fix
+    /// that is needed in general but costs too much frame rate there).
+    pub on_in_chapters: bool,
+    /// The issue that measured it.
+    pub issue: &'static str,
+}
+
+/// The fixes that follow the chapter. Seeded with Uncharted 2's brightness flicker fix
+/// (on in Nepal, where it removes the darkening and black weapons, #192) and its glitch fixes
+/// (aim focus and exact GPU results, which cost most of the frame rate in the Borneo jungle,
+/// #157). The chapter names are a seed until a real U2 save confirms them (#178).
+pub const CHAPTER_FIXES: &[ChapterFix] = &[
+    ChapterFix {
+        key: "fix_small_buffers",
+        game: Game::U2,
+        on: &[("BB_READBACK_SMALL_BUFFERS", "1")],
+        off: &[("BB_READBACK_SMALL_BUFFERS", "0")],
+        chapters: &["Nepal", "Urban Warfare", "Desperate Times"],
+        on_in_chapters: true,
+        issue: "#192",
+    },
+    ChapterFix {
+        key: "fix_tiny_readback",
+        game: Game::U2,
+        on: &[("BB_TINY_READBACK", "1")],
+        off: &[("BB_TINY_READBACK", "0")],
+        chapters: &["Borneo", "Getting Warmer"],
+        on_in_chapters: false,
+        issue: "#157",
+    },
+    ChapterFix {
+        key: "fix_u2_gpu_results",
+        game: Game::U2,
+        on: &[("BB_GPU_MERGE", "0")],
+        off: &[("BB_GPU_MERGE", "1")],
+        chapters: &["Borneo", "Getting Warmer"],
+        on_in_chapters: false,
+        issue: "#157",
+    },
+];
+
+impl ChapterFix {
+    /// Whether this fix is on in `chapter`.
+    pub fn on_in(&self, chapter: &str) -> bool {
+        let chapter = chapter.to_lowercase();
+        let listed = self
+            .chapters
+            .iter()
+            .any(|name| !name.is_empty() && chapter.contains(&name.to_lowercase()));
+        listed == self.on_in_chapters
+    }
+
+    /// The variables this fix sets in that state.
+    pub fn values(&self, on: bool) -> &'static [(&'static str, &'static str)] {
+        if on {
+            self.on
+        } else {
+            self.off
+        }
+    }
+}
+
+/// The chapter in a `where.json` (#168): the subtitle, else the title (as `logs::record`
+/// takes it), trimmed. `None` when the file is damaged, belongs to another game or names no
+/// place. The file is the runtime's own; its text is never echoed.
+pub fn chapter_of(game: Game, where_json: &str) -> Option<String> {
+    let place: Value = serde_json::from_str(where_json).ok()?;
+    if place.get("game")?.as_str()? != game.key() {
+        return None;
+    }
+    ["subtitle", "title"]
+        .iter()
+        .filter_map(|key| place.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|text| !text.is_empty())
+        .map(str::to_owned)
+}
+
+/// One fix and whether it is on at the current place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixState {
+    pub fix: &'static ChapterFix,
+    pub on: bool,
+}
+
+/// Which of `game`'s [`CHAPTER_FIXES`] are on and which are off at the place `where_json`
+/// names, in list order. With no `where.json`, or one that names no chapter of `game`, the
+/// list is empty: every fix keeps its `run_env::fix_defaults` value.
+pub fn fixes_at(game: Game, where_json: Option<&str>) -> Vec<FixState> {
+    fixes_in(CHAPTER_FIXES, game, where_json)
+}
+
+/// [`fixes_at`] over another list of fixes.
+pub fn fixes_in(
+    fixes: &'static [ChapterFix],
+    game: Game,
+    where_json: Option<&str>,
+) -> Vec<FixState> {
+    let Some(chapter) = where_json.and_then(|json| chapter_of(game, json)) else {
+        return Vec::new();
+    };
+    fixes
+        .iter()
+        .filter(|fix| fix.game == game)
+        .map(|fix| FixState {
+            fix,
+            on: fix.on_in(&chapter),
+        })
+        .collect()
+}
+
+/// The `BB_*` values the chapter sets for `game`, to lay over `run_env::fix_defaults`. A fix
+/// any of whose variables is in `player_env` is left out: the player's own choice wins.
+pub fn chapter_env(
+    player_env: &BTreeMap<String, String>,
+    game: Game,
+    where_json: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::new();
+    for state in fixes_at(game, where_json) {
+        let fix = state.fix;
+        let chosen = fix
+            .on
+            .iter()
+            .chain(fix.off)
+            .any(|(name, _)| player_env.contains_key(*name));
+        if chosen {
+            continue;
+        }
+        for (name, value) in fix.values(state.on) {
+            env.insert((*name).to_owned(), (*value).to_owned());
+        }
+    }
+    env
 }
