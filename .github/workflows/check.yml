@@ -46,7 +46,6 @@ jobs:
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
 
-
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
     # target linker, so no NDK is installed yet; host build scripts (serde_json's) use the
