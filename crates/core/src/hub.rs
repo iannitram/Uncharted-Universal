@@ -3,8 +3,9 @@
 //! Nothing here reads the dump, keys or a save; it moves only what `bundle` lists. Home network
 //! only: an address outside the private ranges is refused. The shape is copied from
 //! iannitram/totk-native's `hub.rs` (MIT); SPAKE2 and RustCrypto AEAD are used for pairing and
-//! game-data transfer. A limiter and Unix peer-file storage helper exist, but no accept loop wires
-//! them to a remote address. mDNS discovery and bundle serving remain unimplemented.
+//! game-data transfer. mDNS discovery and the announce side live in `hub/discovery.rs` (roadmap
+//! 4.01; `mdns-sd`). A limiter and Unix peer-file storage helper exist, but no accept loop wires
+//! them to a remote address. Bundle serving remains unimplemented.
 
 use crate::bundle::Bundle;
 use crate::error::{not_built, Error, Result};
@@ -18,6 +19,12 @@ use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
+
+mod discovery;
+pub use discovery::{
+    announce, discover, discover_on, found, parse_txt, txt, withdraw, Announcement, Mdns,
+    MdnsDaemon, MemoryMdns, Record, TXT_HUB, TXT_TARGETS,
+};
 
 /// The mDNS service a hub announces.
 pub const SERVICE: &str = "_uncharted-universal._tcp.local.";
@@ -184,11 +191,6 @@ pub fn is_home_network(addr: IpAddr) -> bool {
                 || (s[0] & 0xffc0) == 0xfe80 // fe80::/10
         }
     }
-}
-
-/// Hubs announcing `SERVICE`, waited for up to `wait_ms`.
-pub fn discover(wait_ms: u64) -> Result<Vec<Found>> {
-    not_built("hub::discover")
 }
 
 /// Pairs over `t` with the six-digit `code` shown on both screens (SPAKE2), confirms possession
