@@ -10,7 +10,8 @@
 //! `parse_probe` reads one JSON object describing the GPU selected for the game, rather
 //! than the GPU driving the launcher window. The future runtime probe owns Vulkan device
 //! enumeration, generation detection, `BB_GPU_ID`, refresh-rate and CPU feature queries.
-//! No game files are needed. `choices` supplies gates; DLSS/FSR feature rules belong to #147.
+//! No game files are needed. `choices` supplies the memory, RTX and laptop gates;
+//! `upscalers` adds the DLSS and FSR rules and the default upscaler on top of them (#147).
 
 use crate::error::{Error, Result};
 use serde_json::Value;
@@ -168,6 +169,123 @@ pub fn choices(report: &HardwareReport) -> Choices {
             "The game would use the integrated GPU. Select the discrete GPU for better performance.",
         ),
     }
+}
+
+/// Device names (Vulkan `deviceName`, as the driver reports it) that FSR 3.1 was measured
+/// clean on. The same list as `FsrDeviceValidated` in `gpu/shim/bbport_settings.cpp`, which
+/// a test keeps in step: RADV gives every AMD GPU one driver id, so the name tells them apart.
+pub const FSR3_VALIDATED_DEVICES: &[&str] = &["(RADV PHOENIX)", "(RADV STRIX_HALO)"];
+
+/// A setting value the Display page leaves out on this GPU, with the line it shows instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hidden {
+    /// `anti_aliasing` or `frame_generation`.
+    pub setting: &'static str,
+    pub value: &'static str,
+    pub reason: &'static str,
+}
+
+/// The upscaler and frame-generation rules for the selected GPU (#147).
+///
+/// The game keeps the final word: its own probe falls back to FSR 3.1 when DLSS cannot load
+/// and when the FSR 4 shaders cannot run, and says why in the overlay. FSR 4.1.1 and XeSS are
+/// offered by whoever knows their files are installed; they are not GPU rules.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upscalers {
+    /// `anti_aliasing` values offered, in the page's order: `off`, `taa`, `fsr1` and `fsr3`
+    /// everywhere, `fsr4` on RDNA 3 and 4 and on RTX 40 and 50 (where the launcher says FSR 4
+    /// runs best), `dlss` on any RTX.
+    pub offered: Vec<&'static str>,
+    /// `frame_generation` values offered, in the page's order: `off`, `fsr3` with 6 GB of video
+    /// memory (#171's gate), `dlss` with that and an RTX 40 or 50 (an RTX 30 such as the
+    /// 3090 Ti has no DLSS Frame Generation; it gets FSR 3's).
+    pub frame_generation: Vec<&'static str>,
+    /// `frame_gen_multiplier` values for DLSS Frame Generation: 2 on an RTX 40, 2, 3 and 4 on
+    /// an RTX 50, empty when it is hidden. FSR 3 Frame Generation is always 2.
+    pub dlss_multipliers: &'static [u32],
+    /// Every value left out of either list, `anti_aliasing` first, each in the page's order.
+    pub hidden: Vec<Hidden>,
+    /// The profile's default `anti_aliasing`: `dlss` on an RTX; `fsr3` on a GPU whose name
+    /// holds one of [`FSR3_VALIDATED_DEVICES`]; else `off`, as the game itself starts an
+    /// unmeasured FSR 3.1 (`DriverDefaultUpscaler`).
+    pub default: &'static str,
+}
+
+/// What the Display page offers on this GPU. `report.name` is the driver's device name.
+pub fn upscalers(report: &HardwareReport) -> Upscalers {
+    use Generation::*;
+    let gates = choices(report);
+    let fsr4 = matches!(report.generation, Rdna3 | Rdna4 | Rtx40 | Rtx50);
+    let dlss_fg = matches!(report.generation, Rtx40 | Rtx50);
+
+    let mut rules = Upscalers {
+        offered: Vec::new(),
+        frame_generation: Vec::new(),
+        dlss_multipliers: &[],
+        hidden: Vec::new(),
+        default: "off",
+    };
+    let mut offer =
+        |setting: &'static str, value: &'static str, refused: Option<&'static str>| match refused {
+            None if setting == "anti_aliasing" => rules.offered.push(value),
+            None => rules.frame_generation.push(value),
+            Some(reason) => rules.hidden.push(Hidden {
+                setting,
+                value,
+                reason,
+            }),
+        };
+    // `None` offers the value; `Some(reason)` hides it, with that line on the page.
+    let unless = |ok: bool, reason: &'static str| (!ok).then_some(reason);
+    const NEEDS_6_GB: &str = "needs 6 GB of video memory";
+
+    for value in ["off", "taa", "fsr1", "fsr3"] {
+        offer("anti_aliasing", value, None);
+    }
+    offer(
+        "anti_aliasing",
+        "fsr4",
+        unless(
+            fsr4,
+            "needs a Radeon RX 7000 or 9000, or a GeForce RTX 40 or 50",
+        ),
+    );
+    offer(
+        "anti_aliasing",
+        "dlss",
+        unless(gates.dlss, "needs a GeForce RTX"),
+    );
+    offer("frame_generation", "off", None);
+    offer(
+        "frame_generation",
+        "fsr3",
+        unless(gates.frame_generation, NEEDS_6_GB),
+    );
+    offer(
+        "frame_generation",
+        "dlss",
+        unless(dlss_fg, "needs a GeForce RTX 40 or 50")
+            .or(unless(gates.frame_generation, NEEDS_6_GB)),
+    );
+
+    if rules.frame_generation.contains(&"dlss") {
+        rules.dlss_multipliers = if report.generation == Rtx50 {
+            &[2, 3, 4]
+        } else {
+            &[2]
+        };
+    }
+    rules.default = if gates.dlss {
+        "dlss"
+    } else if FSR3_VALIDATED_DEVICES
+        .iter()
+        .any(|device| report.name.contains(device))
+    {
+        "fsr3"
+    } else {
+        "off"
+    };
+    rules
 }
 
 /// Average frames per second the benchmark measured on each card; `None` for a card not
