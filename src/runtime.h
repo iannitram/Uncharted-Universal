@@ -13,7 +13,9 @@ typedef bb_jmp_buf sigjmp_buf;
 #endif
 /* The runtime's own exports (runtime_start, runtime_resolve, runtime_report, runtime_finalize,
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
- * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header. */
+ * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header. So are
+ * the mutex, semaphore and rwlock resolvers and reports (runtime_mutex_resolve, runtime_sema_report,
+ * runtime_sema_waiters, ...): crates/runtime/src/sync.rs. */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
@@ -23,8 +25,6 @@ void runtime_restart(void);
 void runtime_display_patch(unsigned char *image, uint64_t image_size);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
-uintptr_t runtime_mutex_resolve(const char *name);
-void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
@@ -32,16 +32,11 @@ int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
  * code (TerminateProcess; ExitProcess could hang in libsrt's detach, and exit()'s destructors
  * waited for the GPU). Every exit of the game and every STOP go through it. */
 __attribute__((noreturn)) void runtime_quit(int code);
-uintptr_t runtime_rwlock_resolve(const char *name);
-void runtime_rwlock_report(void);
 uintptr_t runtime_thread_resolve(const char *name);
 void runtime_thread_report(void);
 void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
-uintptr_t runtime_sema_resolve(const char *name);
-void runtime_sema_report(void);
-unsigned runtime_sema_waiters(uint32_t id);
 uintptr_t runtime_time_resolve(const char *name);
 void runtime_content_configure(const uint32_t values[5]);
 uintptr_t runtime_content_resolve(const char *name);

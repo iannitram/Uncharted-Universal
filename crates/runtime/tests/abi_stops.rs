@@ -1,9 +1,10 @@
 //! The guest requests that end the process (`tests/test_runtime.c`'s `--guard-recursion`,
-//! `--bad-tls` and `--stack-failure`): each case runs in a child copy of this test binary, which
+//! `--bad-tls` and `--stack-failure`, and the sync module's unimplemented semaphore options and
+//! rwlock attributes): each case runs in a child copy of this test binary, which
 //! must exit with the loader's code and its `STOP` line on stderr.
 #![cfg(target_arch = "x86_64")]
 
-use std::ffi::{c_int, c_void, CStr};
+use std::ffi::{c_char, c_int, c_void, CStr};
 use std::process::Command;
 use uncharted_runtime::abi::{libc, runtime_resolve};
 
@@ -111,5 +112,47 @@ fn guest_exit_runs_handlers_reports_and_quits_with_its_status() {
         },
         7,
         "exit handler ran",
+    );
+}
+
+#[test]
+fn semaphore_options_stop() {
+    expect_stop(
+        "semaphore_options_stop",
+        || {
+            type Create =
+                extern "sysv64" fn(*mut u32, *const c_char, u32, i32, i32, *const c_void) -> i32;
+            // SAFETY: the `sceKernelCreateSema` contract.
+            let create: Create = unsafe { std::mem::transmute(get(c"188x57JYp0g#p#J")) };
+            let (mut id, options) = (0u32, [0u64; 4]);
+            create(
+                &mut id,
+                c"options".as_ptr(),
+                1,
+                0,
+                1,
+                options.as_ptr().cast(),
+            );
+        },
+        21,
+        "STOP: semaphore options are not implemented",
+    );
+}
+
+#[test]
+fn rwlock_attributes_stop() {
+    expect_stop(
+        "rwlock_attributes_stop",
+        || {
+            type Init = extern "sysv64" fn(*mut usize, *const *mut c_void, *const c_char) -> i32;
+            // SAFETY: the `scePthreadRwlockInit` contract.
+            let init: Init = unsafe { std::mem::transmute(get(c"6ULAa0fq4jA#p#J")) };
+            let mut attribute = 0u64;
+            let attr: *mut c_void = std::ptr::addr_of_mut!(attribute).cast();
+            let mut lock = 0usize;
+            init(&mut lock, &attr, std::ptr::null());
+        },
+        21,
+        "STOP: non-default PS4 rwlock attributes are not implemented",
     );
 }

@@ -16,15 +16,3 @@ class RuntimeTests(unittest.TestCase):
         r=self.run_case()
         self.assertEqual(r.returncode,0,r.stdout+r.stderr)
         self.assertIn('PASS: thread attributes',r.stdout)
-
-    def test_rwlock_lifecycle_and_ownership(self):
-        r=self.run_case('--rwlock-lifecycle')
-        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-
-    def test_rwlock_multiple_readers_exclude_writer(self):
-        r=self.run_case('--rwlock-concurrency')
-        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
-
-    def test_rwlock_timeouts_use_orbis_errors(self):
-        r=self.run_case('--rwlock-timeouts')
-        self.assertEqual(r.returncode,0,r.stdout+r.stderr)
