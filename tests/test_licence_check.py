@@ -33,5 +33,62 @@ class CheckLicencesTest(unittest.TestCase):
         self.assertIn('c.dll', problems[1])
 
 
+PACMAN_LISTING = '''mingw-w64-clang-x86_64-sdl3 /clang64/
+mingw-w64-clang-x86_64-sdl3 /clang64/bin/SDL3.dll
+mingw-w64-clang-x86_64-sdl3 /clang64/share/licenses/
+mingw-w64-clang-x86_64-sdl3 /clang64/share/licenses/SDL3/
+mingw-w64-clang-x86_64-sdl3 /clang64/share/licenses/SDL3/LICENSE.txt
+'''
+
+
+class LookupTest(unittest.TestCase):
+    def test_licence_paths_ignores_folders_and_other_files(self):
+        self.assertEqual(licence_check.licence_paths(PACMAN_LISTING), ['SDL3/LICENSE.txt'])
+
+    def test_licence_paths_folder_name_differs_from_package(self):
+        listing = 'pkg /clang64/share/licenses/libc++/LICENSE\npkg /clang64/share/licenses/libc++/NOTICE\n'
+        self.assertEqual(licence_check.licence_paths(listing), ['libc++/LICENSE', 'libc++/NOTICE'])
+
+    def test_licence_paths_none_listed(self):
+        self.assertEqual(licence_check.licence_paths('ffmpeg /clang64/bin/avcodec-63.dll\n'), [])
+        self.assertEqual(licence_check.licence_paths(''), [])
+
+    def test_blank_library_names_are_skipped(self):
+        import subprocess
+        from unittest import mock
+        done = subprocess.CompletedProcess([], 1, stdout='')
+        with mock.patch.object(licence_check.subprocess, 'run', return_value=done) as run:
+            self.assertEqual(licence_check.run('windows', 'unused', ['', '']), 0)
+            run.assert_not_called()
+
+    def test_short_name(self):
+        self.assertEqual(licence_check.short_name('mingw-w64-clang-x86_64-ffmpeg'), 'ffmpeg')
+        self.assertEqual(licence_check.short_name('other'), 'other')
+
+    def test_fallback_used_when_pacman_lists_nothing(self):
+        import subprocess, tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'ffmpeg-LICENSE.txt').write_text('text')
+            done = subprocess.CompletedProcess([], 0, stdout='ffmpeg /clang64/bin/x.dll\n')
+            with mock.patch.object(licence_check, 'FALLBACK_DIR', Path(tmp)),                     mock.patch.object(licence_check.subprocess, 'run', return_value=done):
+                found = licence_check._windows_files('mingw-w64-clang-x86_64-ffmpeg')
+                self.assertEqual([t for _, t in found], [Path('ffmpeg-LICENSE.txt')])
+                self.assertEqual(licence_check._windows_files('mingw-w64-clang-x86_64-nothing'), [])
+
+    def test_pacman_files_win_over_fallback(self):
+        import subprocess, tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'SDL3').mkdir()
+            (Path(tmp) / 'SDL3' / 'LICENSE.txt').write_text('zlib')
+            done = subprocess.CompletedProcess([], 0, stdout=PACMAN_LISTING)
+            with mock.patch.object(licence_check, 'MSYS2_LICENSES', Path(tmp)),                     mock.patch.object(licence_check, 'FALLBACK_DIR', Path(tmp) / 'none'),                     mock.patch.object(licence_check.subprocess, 'run', return_value=done):
+                found = licence_check._windows_files('mingw-w64-clang-x86_64-sdl3')
+                self.assertEqual(found, [(Path(tmp) / 'SDL3' / 'LICENSE.txt', Path('LICENSE.txt'))])
+
+
 if __name__ == '__main__':
     unittest.main()

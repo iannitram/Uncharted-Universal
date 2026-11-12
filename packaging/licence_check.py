@@ -5,7 +5,9 @@ check_licences() is the pure rule: every bundled library has an owning package a
 licence file. The two commands below resolve owners with the system package manager, copy the
 licence files into the package, and exit 1 naming each library that breaks the rule.
 
-  licence_check.py windows <licenses dir> <dll>...   MSYS2: pacman -Qqo, /clang64/share/licenses/<package>/
+  licence_check.py windows <licenses dir> <dll>...   MSYS2: pacman -Qqo, then the files `pacman -Ql` lists under
+                                                     /clang64/share/licenses/ (the folder is not always named
+                                                     after the package); if none, packaging/windows/licenses/<short name>-LICENSE.txt
   licence_check.py linux <licenses dir> <library>... Debian: dpkg -S, /usr/share/doc/<package>/copyright
 """
 import os
@@ -17,6 +19,10 @@ from pathlib import Path
 # A native (mingw) Python cannot read /clang64: package.sh passes the folder as a Windows path.
 MSYS2_LICENSES = Path(os.environ.get('MSYS2_LICENSES', '/clang64/share/licenses'))
 DEBIAN_DOCS = Path('/usr/share/doc')
+# Texts kept in the repo for packages whose MSYS2 install ships no licence file.
+FALLBACK_DIR = Path(__file__).resolve().parent / 'windows' / 'licenses'
+PACMAN_PREFIX = 'mingw-w64-clang-x86_64-'
+LICENSE_ROOT = '/clang64/share/licenses/'
 
 
 def check_licences(entries):
@@ -49,9 +55,32 @@ def _linux_owner(path):
     return owner.split(':')[0] if owner else None
 
 
+def short_name(package):
+    """mingw-w64-clang-x86_64-ffmpeg -> ffmpeg"""
+    return package[len(PACMAN_PREFIX):] if package.startswith(PACMAN_PREFIX) else package
+
+
+def licence_paths(listing):
+    """Licence files (paths relative to the licenses root) in `pacman -Ql <package>` output."""
+    found = []
+    for line in listing.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2 and parts[1].startswith(LICENSE_ROOT) and not parts[1].endswith('/'):
+            found.append(parts[1][len(LICENSE_ROOT):].strip())
+    return sorted(found)
+
+
 def _windows_files(package):
-    folder = MSYS2_LICENSES / package
-    return sorted(p for p in folder.rglob('*') if p.is_file()) if folder.is_dir() else []
+    """(source, path under licenses/<package>/) pairs: pacman's listed files, else the repo fallback."""
+    result = subprocess.run(['pacman', '-Ql', package], capture_output=True, text=True)
+    listed = licence_paths(result.stdout) if result.returncode == 0 else []
+    pairs = [(MSYS2_LICENSES / rel, Path(*Path(rel).parts[1:]) if len(Path(rel).parts) > 1 else Path(rel))
+             for rel in listed]
+    pairs = [(source, target) for source, target in pairs if source.is_file()]
+    if pairs:
+        return pairs
+    fallback = FALLBACK_DIR / f'{short_name(package)}-LICENSE.txt'
+    return [(fallback, Path(fallback.name))] if fallback.is_file() else []
 
 
 def _linux_files(package):
@@ -63,13 +92,14 @@ def run(mode, licenses, libraries):
     owner, files = (_windows_owner, _windows_files) if mode == 'windows' else (_linux_owner, _linux_files)
     licenses = Path(licenses)
     entries, copies = [], []
-    for library in libraries:
+    for library in filter(None, libraries):  # ldd with several inputs leaves blank lines
         package = owner(library)
         found = files(package) if package else []
         entries.append((Path(library).name, package, found))
         for source in found:
             if mode == 'windows':
-                copies.append((source, licenses / package / source.relative_to(MSYS2_LICENSES / package)))
+                source, target = source
+                copies.append((source, licenses / package / target))
             else:
                 copies.append((source, licenses / f'{package}-copyright.txt'))
     problems = check_licences(entries)
