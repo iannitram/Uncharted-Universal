@@ -73,13 +73,13 @@ if [[ ${NO_UPDATE_CHECK:-0} == 1 ]]; then : > "$dest/NO_UPDATE_CHECK"; fi
 for license in gpu/third_party/httplib/LICENSE:cpp-httplib launcher/fonts/OFL.txt:Cinzel; do
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
 done
-# The bundled libraries' own copyright files (Debian keeps them per package).
+# The bundled libraries' own copyright files (Debian keeps them per package). A library whose
+# package has no copyright file fails the package step with its name (#302).
+bundled=()
 for library in "$dest"/bin/lib/*; do
-    package=$(dpkg -S "$(readlink -f "/usr/lib/x86_64-linux-gnu/$(basename "$library")" 2>/dev/null || echo none)" 2>/dev/null | cut -d: -f1 | head -1 || true)
-    if [[ -n $package && -f /usr/share/doc/$package/copyright ]]; then
-        cp "/usr/share/doc/$package/copyright" "$dest/licenses/$package-copyright.txt"
-    fi
+    [[ -e $library ]] && bundled+=("/usr/lib/x86_64-linux-gnu/$(basename "$library")")
 done
+"$python" packaging/licence_check.py linux "$dest/licenses" "${bundled[@]}"
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 mkdir -p dist
 tar -C out/stage -czf dist/uncharted-linux.tar.gz uncharted-linux
