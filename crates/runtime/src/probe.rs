@@ -36,15 +36,16 @@ pub struct Adapter {
 /// Vulkan 1.3, the version the renderer needs (`TargetVulkanApiVersion`).
 pub const TARGET_API_VERSION: u32 = (1 << 22) | (3 << 12);
 
-/// The device the game will use: the index `BB_GPU_ID` names when it reads as zero or more
-/// (the game parses it with `strtol`, so text without digits is 0), else the game's ranking:
-/// Vulkan 1.3 first, then discrete, then anything but a CPU renderer, then the larger
-/// device-local heap; on a tie the first enumerated wins.
+/// The device the game will use: the index `BB_GPU_ID` names when the game reads it as zero
+/// or more ([`bb_gpu_id`] with this target's C `long`; text without digits is 0), else the
+/// game's ranking: Vulkan 1.3 first, then discrete, then anything but a CPU renderer, then the
+/// larger device-local heap; on a tie the first enumerated wins.
 pub fn select(adapters: &[Adapter], gpu_id: Option<&str>) -> Result<usize, String> {
     if adapters.is_empty() {
         return Err("no Vulkan device".into());
     }
-    if let Some(index) = gpu_id.map(strtol).filter(|n| *n >= 0) {
+    let long_bits = std::ffi::c_long::BITS;
+    if let Some(index) = gpu_id.map(|t| bb_gpu_id(t, long_bits)).filter(|n| *n >= 0) {
         return usize::try_from(index)
             .ok()
             .filter(|i| *i < adapters.len())
@@ -72,10 +73,25 @@ pub fn select(adapters: &[Adapter], gpu_id: Option<&str>) -> Result<usize, Strin
     Ok(best)
 }
 
-// C's strtol in base 10: leading white space, an optional sign, then digits; no digits is 0.
-// Saturates instead of wrapping.
-fn strtol(text: &str) -> i64 {
-    let text = text.trim_start_matches(|c: char| c.is_ascii_whitespace());
+/// The device index the game reads from `BB_GPU_ID` text: `s32(strtol(v, nullptr, 10))`
+/// (gpu/shim/core/emulator_settings.h) with a C `long` of `long_bits` bits, 32 on Windows and
+/// 64 on every other target. strtol saturates at the `long` range and the cast keeps the low
+/// 32 bits, so with a 64-bit `long` "4294967296" is device 0 and "4294967295" is -1 (the
+/// ranking); on Windows both saturate to `i32::MAX`.
+pub fn bb_gpu_id(text: &str, long_bits: u32) -> i32 {
+    let (min, max) = match long_bits {
+        32 => (i32::MIN.into(), i32::MAX.into()),
+        _ => (i64::MIN.into(), i64::MAX.into()),
+    };
+    // `as` keeps the low 32 bits, as the C++ cast does.
+    strtol(text).clamp(min, max) as i32
+}
+
+// C's strtol in base 10 before its `long` limit: leading white space (C's isspace: space, \t,
+// \n, \v, \f, \r), an optional sign, then digits; no digits is 0. The magnitude stops growing
+// past 2^64, beyond any `long`, so the caller's clamp gives strtol's LONG_MIN and LONG_MAX.
+fn strtol(text: &str) -> i128 {
+    let text = text.trim_start_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
     let (negative, digits) = match text.as_bytes().first() {
         Some(b'-') => (true, &text[1..]),
         Some(b'+') => (false, &text[1..]),
@@ -84,9 +100,7 @@ fn strtol(text: &str) -> i64 {
     let value = digits
         .bytes()
         .take_while(u8::is_ascii_digit)
-        .fold(0i64, |n, d| {
-            n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
-        });
+        .fold(0i128, |n, d| (n * 10 + i128::from(d - b'0')).min(1 << 64));
     if negative {
         -value
     } else {
@@ -175,15 +189,17 @@ fn amd_generation(name: &str, words: &[String]) -> &'static str {
             _ => "unknown",
         };
     }
-    // Integrated: 610M, 660M, 680M and 820M are RDNA 2; 740M to 780M and 840M to 890M are
-    // RDNA 3 and 3.5; 8040S to 8060S (Strix Halo) are RDNA 3.5. The Steam Deck is RDNA 2.
+    // Integrated: 610M (Mendocino, Dragon Range), 660M and 680M (Rembrandt) are RDNA 2;
+    // 740M, 760M and 780M (Phoenix) are RDNA 3; 820M, 840M and 860M (Krackan), 880M and 890M
+    // (Strix Point) and 8040S to 8060S (Strix Halo) are RDNA 3.5, which `tune` counts as
+    // `rdna3`. The Steam Deck is RDNA 2.
     for word in words {
         let (digits, suffix) = word.split_at(word.len() - 1);
         if !is_number(digits) {
             continue;
         }
         match (suffix, digits) {
-            ("M", "610" | "660" | "680" | "820") => return "rdna2",
+            ("M", "610" | "660" | "680") => return "rdna2",
             ("M", d) if d.len() == 3 && (d.starts_with('7') || d.starts_with('8')) => {
                 return "rdna3"
             }
@@ -278,6 +294,9 @@ fn this_cpu_supported(_rewrite: bool) -> bool {
 }
 
 /// The report for `adapters[selected]`, with the keys and values `parse_probe` reads.
+/// `vram_mib` is the selected device's largest device-local heap, except 0 for a CPU renderer:
+/// llvmpipe and lavapipe give system RAM as that heap, and `tune` reads a GPU heap, never
+/// system RAM, so a CPU renderer is offered no frame generation and nothing above 1080p.
 /// `hybrid_graphics` looks at every adapter, not only the selected one. `refresh_hz` is null:
 /// Vulkan cannot tell without a window, and the launcher knows its own display.
 pub fn report(adapters: &[Adapter], selected: usize, cpu: Cpu) -> String {
@@ -286,12 +305,16 @@ pub fn report(adapters: &[Adapter], selected: usize, cpu: Cpu) -> String {
         "" => "Unknown GPU",
         name => name,
     };
+    let vram_mib = match gpu.kind {
+        Kind::Cpu => 0,
+        _ => u32::try_from(gpu.device_local_bytes >> 20).unwrap_or(u32::MAX),
+    };
     let any = |kind| adapters.iter().any(|a| a.kind == kind);
     json!({
         "vendor": vendor(gpu.vendor_id),
         "name": name,
         "generation": generation(gpu.vendor_id, name),
-        "vram_mib": u32::try_from(gpu.device_local_bytes >> 20).unwrap_or(u32::MAX),
+        "vram_mib": vram_mib,
         "shared_memory": gpu.kind != Kind::Discrete,
         "integrated_gpu": gpu.kind == Kind::Integrated,
         "hybrid_graphics": any(Kind::Integrated) && any(Kind::Discrete),
@@ -451,18 +474,82 @@ mod tests {
             ("0", Ok(0)),
             ("1", Ok(1)),
             (" 1", Ok(1)),
+            ("\t\n\u{b}\u{c}\r 1", Ok(1)),
             ("+1", Ok(1)),
             ("1x", Ok(1)),
             ("abc", Ok(0)),
             ("", Ok(0)),
+            ("+-1", Ok(0)),
+            ("- 1", Ok(0)),
             ("-1", Ok(1)),
             ("-7", Ok(1)),
         ] {
             assert_eq!(select(&two, Some(text)), want, "BB_GPU_ID={text:?}");
         }
-        for out in ["2", "99999999999999999999"] {
-            let error = select(&two, Some(out)).unwrap_err();
-            assert!(error.contains("BB_GPU_ID"), "{error}");
+        let error = select(&two, Some("2")).unwrap_err();
+        assert!(error.contains("BB_GPU_ID"), "{error}");
+    }
+
+    // The game reads `s32(strtol(v, nullptr, 10))` (gpu/shim/core/emulator_settings.h).
+    // Linux, macOS, Android and iOS have a 64-bit `long`: strtol saturates there and the
+    // cast keeps the low 32 bits.
+    #[test]
+    fn probe_bb_gpu_id_with_a_64_bit_long_keeps_the_low_32_bits() {
+        for (text, want) in [
+            ("7", 7),
+            ("-7", -7),
+            ("2147483647", i32::MAX),
+            ("2147483648", i32::MIN),
+            ("4294967295", -1),
+            ("4294967296", 0),
+            ("4294967297", 1),
+            ("-4294967296", 0),
+            ("-4294967295", 1),
+            ("9223372036854775807", -1),
+            ("99999999999999999999", -1),
+            ("-9223372036854775808", 0),
+            ("-99999999999999999999", 0),
+            ("\u{b}3", 3),
+        ] {
+            assert_eq!(bb_gpu_id(text, 64), want, "BB_GPU_ID={text:?}");
+        }
+    }
+
+    // Windows has a 32-bit `long`: strtol saturates at the `s32` range and the cast keeps it.
+    #[test]
+    fn probe_bb_gpu_id_with_a_32_bit_long_saturates() {
+        for (text, want) in [
+            ("7", 7),
+            ("-7", -7),
+            ("2147483647", i32::MAX),
+            ("2147483648", i32::MAX),
+            ("4294967296", i32::MAX),
+            ("99999999999999999999", i32::MAX),
+            ("-2147483648", i32::MIN),
+            ("-2147483649", i32::MIN),
+            ("-4294967296", i32::MIN),
+            ("-99999999999999999999", i32::MIN),
+            ("\u{b}3", 3),
+        ] {
+            assert_eq!(bb_gpu_id(text, 32), want, "BB_GPU_ID={text:?}");
+        }
+    }
+
+    #[test]
+    fn probe_bb_gpu_id_outside_s32_selects_the_game_device_on_this_host() {
+        let two = [radeon_780m(), rtx_4060_laptop()];
+        // (text, with a 64-bit long, on Windows); Ok(1) from a negative value is the ranking.
+        for (text, long_64, windows) in [
+            ("4294967296", Ok(0), Err(())),
+            ("4294967297", Ok(1), Err(())),
+            ("4294967295", Ok(1), Err(())),
+            ("99999999999999999999", Ok(1), Err(())),
+            ("-4294967296", Ok(0), Ok(1)),
+            ("-99999999999999999999", Ok(0), Ok(1)),
+        ] {
+            let want = if cfg!(windows) { windows } else { long_64 };
+            let got = select(&two, Some(text)).map_err(|_| ());
+            assert_eq!(got, want, "BB_GPU_ID={text:?}");
         }
     }
 
@@ -518,10 +605,19 @@ mod tests {
             (amd, "AMD Radeon RX 5600 XT", "older"),
             (amd, "AMD Radeon RX 580 2048SP", "older"),
             (amd, "AMD Radeon(TM) 680M", "rdna2"),
+            (amd, "AMD Radeon(TM) 660M", "rdna2"),
             (amd, "AMD Radeon(TM) 610M", "rdna2"),
-            (amd, "AMD Radeon(TM) 820M Graphics", "rdna2"),
+            (amd, "AMD Radeon 740M Graphics", "rdna3"),
+            (amd, "AMD Radeon 760M Graphics", "rdna3"),
             (amd, "AMD Radeon 780M Graphics", "rdna3"),
+            (amd, "AMD Radeon(TM) 820M Graphics", "rdna3"),
+            (amd, "AMD Radeon 820M Graphics (RADV GFX1152)", "rdna3"),
+            (amd, "AMD Radeon(TM) 840M Graphics", "rdna3"),
+            (amd, "AMD Radeon(TM) 860M Graphics", "rdna3"),
+            (amd, "AMD Radeon(TM) 880M Graphics", "rdna3"),
             (amd, "AMD Radeon(TM) 890M Graphics", "rdna3"),
+            (amd, "AMD Radeon(TM) 8040S Graphics", "rdna3"),
+            (amd, "AMD Radeon(TM) 8050S Graphics", "rdna3"),
             (amd, "AMD Radeon(TM) 8060S Graphics", "rdna3"),
             (amd, "AMD Custom GPU 0405", "rdna2"),
             (amd, "AMD Radeon(TM) Graphics", "unknown"),
@@ -672,12 +768,23 @@ mod tests {
         let got = parsed(&[odd], 0);
         assert_eq!(got["vram_mib"], 2047);
         assert_eq!(got["name"], "Unknown GPU");
+        let huge = adapter(0x10de, "RTX", Kind::Discrete, TARGET_API_VERSION, u64::MAX);
+        assert_eq!(parsed(&[huge], 0)["vram_mib"], u32::MAX);
+    }
+
+    /// llvmpipe and lavapipe give system RAM as their device-local heap; `tune` reads
+    /// `vram_mib` as a GPU heap, never system RAM, so a CPU renderer has none.
+    #[test]
+    fn probe_report_gives_a_cpu_renderer_no_video_memory() {
         let cpu_renderer = parsed(&[llvmpipe()], 0);
+        assert_eq!(cpu_renderer["vram_mib"], 0);
         assert_eq!(cpu_renderer["vendor"], "other");
         assert_eq!(cpu_renderer["shared_memory"], true);
         assert_eq!(cpu_renderer["integrated_gpu"], false);
-        let huge = adapter(0x10de, "RTX", Kind::Discrete, TARGET_API_VERSION, u64::MAX);
-        assert_eq!(parsed(&[huge], 0)["vram_mib"], u32::MAX);
+        // Selected with BB_GPU_ID next to a GPU: still none, and the GPU keeps its own heap.
+        let both = [radeon_780m(), llvmpipe()];
+        assert_eq!(parsed(&both, 1)["vram_mib"], 0);
+        assert_eq!(parsed(&both, 0)["vram_mib"], 4096);
     }
 
     /// On a machine with a Vulkan driver this prints a real report; without one (most CI
