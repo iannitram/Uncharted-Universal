@@ -13,12 +13,15 @@
 //! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
+//! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
+//! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
+//! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
+//! `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -26,6 +29,7 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
 pub mod crash;

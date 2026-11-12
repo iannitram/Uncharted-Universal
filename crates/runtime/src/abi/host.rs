@@ -53,14 +53,14 @@ fn c_string(text: &str) -> CString {
 }
 
 /// `puts`: one line on the C stdout (the newline is added).
-pub(super) fn out_line(text: &str) {
+pub(crate) fn out_line(text: &str) {
     let line = c_string(text);
     // SAFETY: `line` is a NUL-terminated string.
     unsafe { puts(line.as_ptr()) };
 }
 
 /// `fputs(text, stderr)`; `text` carries its own newline.
-pub(super) fn err(text: &str) {
+pub(crate) fn err(text: &str) {
     let text = c_string(text);
     // SAFETY: `text` is a NUL-terminated string and `stderr()` the C library's stream.
     unsafe { fputs(text.as_ptr(), stderr()) };
@@ -82,7 +82,6 @@ mod loader {
         pub fn runtime_trophy_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
-        pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
@@ -97,7 +96,6 @@ mod loader {
         pub fn runtime_content_report();
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
-        pub fn runtime_audio_report();
         pub fn runtime_pad_report();
         pub fn runtime_savedata_report();
         pub fn runtime_file_report();
@@ -124,7 +122,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         runtime_trophy_resolve,
         runtime_services_resolve,
         runtime_ajm_resolve,
-        runtime_audio_resolve,
+        crate::audio::runtime_audio_resolve,
         runtime_pad_resolve,
         runtime_rtc_resolve,
         runtime_savedata_resolve,
@@ -139,10 +137,10 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .find(|&address| address != 0)
 }
 
+/// The ported modules' resolvers in `runtime.c`'s order (no C modules without the loader).
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    let _ = name;
-    None
+    crate::audio::resolve(name)
 }
 
 /// The C modules' report lines, in `runtime.c`'s order.
@@ -157,7 +155,7 @@ pub(super) fn report_modules() {
         runtime_content_report,
         runtime_memory_report,
         runtime_ajm_report,
-        runtime_audio_report,
+        crate::audio::runtime_audio_report,
         runtime_pad_report,
         runtime_savedata_report,
         runtime_file_report,
@@ -169,8 +167,11 @@ pub(super) fn report_modules() {
     }
 }
 
+/// The ported modules' report lines, in `runtime.c`'s order.
 #[cfg(not(uncharted_loader))]
-pub(super) fn report_modules() {}
+pub(super) fn report_modules() {
+    crate::audio::runtime_audio_report();
+}
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.

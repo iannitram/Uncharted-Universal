@@ -25,10 +25,14 @@ serde_json = "1"
 # Vulkan for `uncharted-run --probe` (#171), loaded at run time: a machine without a Vulkan
 # loader gets an error message, not a missing-library failure. MIT or Apache-2.0.
 ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+# SDL3 audio streams for `audio` (piece 3.07); zlib. The raw bindings, not the `sdl3` crate (MIT):
+# `no-link` because the loader already links SDL3 (build.sh, gpu/CMakeLists.txt), and only the
+# loader build calls it (`cfg(uncharted_loader)`), so tests and the mobile builds need no SDL.
+sdl3-sys = { version = "0.7", default-features = false, features = ["no-link"] }
 
 [dev-dependencies]
 # Writes and checks include/uncharted_runtime.h (tests/header.rs); MPL-2.0, a test-only tool.
 cbindgen = { version = "0.29", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Performance"] }

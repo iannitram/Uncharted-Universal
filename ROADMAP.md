@@ -126,7 +126,7 @@ holds one row per build. This project still builds no sync service of its own.
 | FEX-Emu/FEX | MIT root; bundled components have individual notices | Android, #207-#209 | FEXCore dependency through a pinned build recipe |
 | bylaws/libadrenotools | BSD-2-Clause root and loader files | Android, #210 | verified original API/implementation; use explicit choice and verify loaded driver before Vulkan startup |
 | JICA98/libadrenotools | BSD-2-Clause | Android dependency comparison | peer's exact pinned variant; prefer bylaws source unless its fork-specific patch is required |
-| SDL3 (`sdl3` crate) | zlib | runtime input/window/audio | existing dependency; launcher UI remains Slint |
+| SDL3 (`sdl3-sys` crate, `no-link`: the loader links SDL3) | zlib | runtime input/window/audio (audio since 3.07) | existing dependency; launcher UI remains Slint |
 | eladharels/uncharted_android | GPL-2.0 root | Android device notes | learn; incomplete coverage and no additional import identified |
 | bloodborne-native/bloodborne-recomp, bbcpu, bloodborne-runtime, -mac, -ios | mostly GPL-2.0 roots; exact files/dependencies vary; [`bbnet20` is GPL-3.0](https://github.com/bloodborne-native/bloodborne-runtime/blob/42736cf7ca7704b087e847482417d9f475bb2dd7/gpu/bbnet20/LICENSE.GPL-3.0#L1-L8) | Apple, #211/#212 before 8.03-8.06 | hard feasibility/license gate; no blanket adoption, no Bloodborne annotations/generated output, exclude GPL-3.0 component |
 | Ryxm-a/uncharted-ios | GPL-2.0 root | iOS scaffold | learn only; default lite build does not run engine; conflicts with no-JIT route |

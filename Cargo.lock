@@ -4095,6 +4095,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sdl3-sys"
+version = "0.7.3+SDL-3.4.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e68da4d2bcf29a81a1ea71ec27b93bb27151d649c2b186eb5988ad4dcb17d11"
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4961,6 +4967,7 @@ version = "0.0.0"
 dependencies = [
  "ash",
  "cbindgen",
+ "sdl3-sys",
  "serde_json",
  "windows-sys 0.61.2",
 ]
