@@ -89,7 +89,8 @@ jobs:
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
     # target linker, so no NDK is installed yet; host build scripts (serde_json's) use the
-    # runner's `cc`. When the runtime links C (piece 3.01) this job gets the NDK.
+    # runner's `cc`. When the runtime links C (piece 3.01) this job gets the NDK. `--lib`:
+    # Android embeds the runtime, so the desktop `uncharted-run` binary is not linked here.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -101,7 +102,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
-      - run: cargo build -p uncharted_runtime --target aarch64-linux-android
+      - run: cargo build -p uncharted_runtime --lib --target aarch64-linux-android
 
   ios:
     # The runtime checks for iOS (ROADMAP 8.02); `check` because nothing links an iOS binary yet.
