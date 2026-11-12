@@ -46,9 +46,23 @@ pub struct Bundle {
 /// kept from the old install by `install`.
 pub const DEVICE_OWNED: &[&str] = &["saves", "logs", "mods", "user"];
 
+/// The top-level folder of a build that holds the GPU-independent shader translations:
+/// `manifest` lists its files as `Kind::ShaderTranslation`.
+pub const SHADER_DIR: &str = "shaders";
+
+/// True when a file name (lowercase) is a driver pipeline cache: the Vulkan driver's blob
+/// (`vulkan_driver.vkc` in the runtime's cache folder, any `.vkc`) or a `pipeline_cache*` file.
+/// It is only valid for the GPU and driver that wrote it, so it never enters a bundle (ADR 0004).
+fn is_driver_cache(name: &str) -> bool {
+    name.ends_with(".vkc")
+        || name.starts_with("vulkan_driver")
+        || name.starts_with("pipeline_cache")
+}
+
 /// True when a path (relative, with `/`) must never leave a hub: a `.pkg`, anything under
 /// `DEVICE_OWNED`, a `PARAM.SFO`, `EBOOT.BIN` or `EBOOT.ELF` copied from a copy, any
-/// file of the game folder itself, a `.prx`/`.sprx`/`.self`, or game data the runtime reads.
+/// file of the game folder itself, a `.prx`/`.sprx`/`.self`, a game archive (`.psarc`), game
+/// data the runtime reads, or a driver pipeline cache.
 pub fn is_forbidden(rel_path: &str) -> bool {
     // Bundle paths are a portable wire format. Reject ambiguous and escaping paths before any
     // receiver joins them to its staging directory.
@@ -80,9 +94,9 @@ pub fn is_forbidden(rel_path: &str) -> bool {
     }
     let name = components.last().map(String::as_str).unwrap_or("");
     let forbidden_suffix = [
-        ".pkg", ".iso", ".elf", ".self", ".prx", ".sprx", ".nca", ".keys",
+        ".pkg", ".iso", ".elf", ".self", ".prx", ".sprx", ".nca", ".keys", ".psarc",
     ];
-    if forbidden_suffix.iter().any(|suffix| name.ends_with(suffix)) {
+    if forbidden_suffix.iter().any(|suffix| name.ends_with(suffix)) || is_driver_cache(name) {
         return true;
     }
     if name == "param.sfo"
@@ -192,8 +206,9 @@ pub fn from_text(text: &str) -> Result<Bundle> {
 }
 
 /// The bundle of an install folder: every file under `dir` (recursively), skipping
-/// `DEVICE_OWNED`; a forbidden file is the `from_text` refusal error. `build_id` is the first 16
-/// hex digits of the SHA-256 of all the file lines joined in order.
+/// `DEVICE_OWNED`; a forbidden file is the `from_text` refusal error. Files under `SHADER_DIR`
+/// are `Kind::ShaderTranslation`, the rest `Kind::Install`. `build_id` is the first 16 hex
+/// digits of the SHA-256 of all the file lines joined in order.
 pub fn manifest(dir: &Path, target: Os, patch_level: u32) -> Result<Bundle> {
     let mut files = Vec::new();
     collect_files(dir, dir, true, &mut files)?;
@@ -330,11 +345,20 @@ fn collect_files(
                 return Err(refusal(&relative));
             }
             let bytes = std::fs::read(&path)?;
+            let kind = if relative
+                .split('/')
+                .next()
+                .is_some_and(|first| first.eq_ignore_ascii_case(SHADER_DIR))
+            {
+                Kind::ShaderTranslation
+            } else {
+                Kind::Install
+            };
             files.push(BundleFile {
                 path: relative,
                 size: bytes.len() as u64,
                 sha256: sha256_hex(&bytes),
-                kind: Kind::Install,
+                kind,
             });
         } else {
             return Err(Error::Hub("refusing to bundle a non-regular file".into()));
@@ -585,7 +609,13 @@ mod tests {
         assert!(is_forbidden("C:/absolute/path"));
         assert!(is_forbidden("sce_sys/param.sfo"));
         assert!(is_forbidden("game/eboot.bin"));
+        assert!(is_forbidden("bin.psarc"));
+        assert!(is_forbidden("cache/CUSA07737_dev/vulkan_driver.vkc"));
+        assert!(is_forbidden("shaders/VULKAN_DRIVER.VKC"));
+        assert!(is_forbidden("shaders/other.vkc"));
+        assert!(is_forbidden("pipeline_cache.bin"));
         assert!(!is_forbidden("lib/libx.so"));
+        assert!(!is_forbidden("shaders/0123abcd.spv"));
     }
 
     #[test]
@@ -633,9 +663,10 @@ mod tests {
         assert_eq!(bundle.files[1].size, 4);
         assert_eq!(bundle.files[1].sha256, sha256_hex(b"bbbb"));
         assert_eq!(bundle.files[0].kind, Kind::Install);
+        assert_eq!(bundle.files[1].kind, Kind::ShaderTranslation);
 
         let lines = format!(
-            "file install 3 {} lib/a.so\nfile install 4 {} shaders/s.bin\n",
+            "file install 3 {} lib/a.so\nfile shader 4 {} shaders/s.bin\n",
             sha256_hex(b"aaa"),
             sha256_hex(b"bbbb")
         );
@@ -650,6 +681,8 @@ mod tests {
             ("sfo", "install/sce_sys/param.sfo"),
             ("executable", "install/eboot.bin"),
             ("game-data", "install/gamedata/data.bin"),
+            ("archive", "install/core.psarc"),
+            ("driver-cache", "shaders/vulkan_driver.vkc"),
         ] {
             let dir = temp_dir(name);
             write_file(&dir, relative, b"synthetic");

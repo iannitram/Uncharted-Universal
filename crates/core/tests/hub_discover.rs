@@ -234,7 +234,7 @@ fn fake_hub(net: &dyn Mdns, code: &'static str) -> std::thread::JoinHandle<Strin
         let peer = pair_limited(
             &mut device,
             code,
-            "handheld",
+            "strix-halo",
             &mut PairingLimiter::default(),
             &SystemClock,
         )
@@ -255,7 +255,7 @@ fn find_and_pair(hubs: &[Found], code: &str) -> String {
     let peer = pair_limited(
         &mut t,
         code,
-        "strix-halo",
+        "handheld",
         &mut PairingLimiter::default(),
         &SystemClock,
     )

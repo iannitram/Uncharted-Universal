@@ -15,8 +15,8 @@ path = "src/lib.rs"
 # `relay` (src/relay.rs, planned, not in the tree yet) links iannitram/save-relay's library;
 # its issue adds the module, the dependency and this feature.
 # `hub` is the build hub on the home network (src/hub.rs, ADR 0004): mDNS discovery and
-# announce (`mdns-sd`, Apache-2.0 OR MIT, pure Rust), pairing and game-data crypto are
-# implemented; the bundle transfer service is not.
+# announce (`mdns-sd`, Apache-2.0 OR MIT, pure Rust), pairing, and the sealed game-data and
+# bundle transfers are implemented; the service listener and CLI wiring are not.
 hub = [
     "dep:chacha20poly1305",
     "dep:fs4",
