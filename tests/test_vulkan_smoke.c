@@ -1,4 +1,6 @@
-/* Independent backend smoke test: command submission and readback, no game graphics. */
+/* Independent backend smoke test: command submission and readback, no game graphics. A test of
+ * the gpu/ build (vulkan-smoke-test in gpu/CMakeLists.txt, piece 3.01; it was bb-probe
+ * --vulkan-only). Needs a Vulkan device: CI runs it on Mesa lavapipe. */
 #include <vulkan/vulkan.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -6,7 +8,7 @@
 #define CHECK(call) do { VkResult r = (call); if (r != VK_SUCCESS) { \
     fprintf(stderr, "Vulkan: %s returned %d\n", #call, r); exit(1); } } while (0)
 
-int vulkan_smoke(void) {
+int main(void) {
     VkApplicationInfo app = {.sType=VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName="Bloodborne native probe", .apiVersion=VK_API_VERSION_1_0};
     VkInstanceCreateInfo ici = {.sType=VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo=&app};
     VkInstance instance; CHECK(vkCreateInstance(&ici, NULL, &instance));

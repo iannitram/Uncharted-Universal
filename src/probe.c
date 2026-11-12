@@ -43,7 +43,6 @@ static LinkedModule modules[16];
 static uint64_t module_count;
 static int entered_game;
 static int gpu_enabled;
-int vulkan_smoke(void);
 
 static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
 static uint64_t read64(FILE *f) {
@@ -1523,13 +1522,19 @@ void runtime_restart(void) {
 
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    /* The runtime's exports are Rust now (crates/runtime, linked as a static library): a library
+     * built from other sources than this header's would misbehave quietly, so stop here. */
+    if (uncharted_runtime_version() != UNCHARTED_RUNTIME_ABI_VERSION) {
+        fprintf(stderr, "ERROR: crates/runtime has ABI version %u, this loader needs %u: rebuild both\n",
+                (unsigned)uncharted_runtime_version(), (unsigned)UNCHARTED_RUNTIME_ABI_VERSION);
+        return 1;
+    }
 #ifndef _WIN32
     /* Keep host heap objects handed to the guest (thread handles, TLS) in the
        non-PIE brk heap, i.e. below 1 TiB: the guest packs pointers into 40 bits. */
     mallopt(M_ARENA_MAX,1);
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
-    if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
     if (argc == 2 && !strcmp(argv[1], "--controller-info")) return runtime_pad_tool(0,100);
     if (argc == 3 && !strcmp(argv[1], "--controller-test"))
         return runtime_pad_tool(1,atoi(argv[2]));
@@ -1562,7 +1567,7 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [options] | --vulkan-only | --controller-info | --controller-test 0..100\n", argv[0]);
+        fprintf(stderr, "Usage: %s boot.bin [options] | --controller-info | --controller-test 0..100\n", argv[0]);
         return 1;
     }
     if (content_profile) {

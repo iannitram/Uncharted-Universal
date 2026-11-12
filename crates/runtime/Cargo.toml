@@ -11,6 +11,7 @@ publish = false
 name = "uncharted_runtime"
 path = "src/lib.rs"
 # A static library linked into the loader while C remains (ADR 0002); rlib for the Rust tests.
+# build.rs: the NID table, the loader cfg (UNCHARTED_RUNTIME_LOADER=1) and the gpu/ build.
 crate-type = ["rlib", "staticlib"]
 
 # The desktop runner. Only `--probe` is built; the game loader joins it in piece 3.16.
@@ -24,6 +25,10 @@ serde_json = "1"
 # Vulkan for `uncharted-run --probe` (#171), loaded at run time: a machine without a Vulkan
 # loader gets an error message, not a missing-library failure. MIT or Apache-2.0.
 ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
+
+[dev-dependencies]
+# Writes and checks include/uncharted_runtime.h (tests/header.rs); MPL-2.0, a test-only tool.
+cbindgen = { version = "0.29", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
