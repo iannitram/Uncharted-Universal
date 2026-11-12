@@ -6,6 +6,7 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "$0")/.." && pwd)
 ROOT=$(cd -- "$HERE/.." && pwd)
 LOCK=$HERE/components.lock.json
+PATCHES=$HERE/patches
 WORK=${WORK:?Set WORK to an external build directory}
 NDK=${NDK:-${ANDROID_NDK_HOME:-}}
 SDK=${SDK:-${ANDROID_SDK_ROOT:-}}
@@ -67,6 +68,24 @@ fetch_ref() {
     [ "$(git -C "$path" rev-parse HEAD)" = "$revision" ]
 }
 
+apply_series() {
+    # <source dir> <patch dir> <prefix>: reset the checkout, then check and apply each patch in order.
+    local path=$1 dir=$2 prefix=$3 patch name
+    local patches=("$dir"/"$prefix"-*.patch)
+    [ -f "${patches[0]}" ] || { echo "no $prefix-*.patch files in $dir" >&2; exit 3; }
+    git -C "$path" reset -q --hard HEAD
+    git -C "$path" clean -qfd
+    for patch in "${patches[@]}"; do
+        name=$(basename "$patch")
+        if ! git -C "$path" apply --check --whitespace=nowarn "$patch"; then
+            echo "PATCH MISMATCH: $name does not apply to $path at $(git -C "$path" rev-parse HEAD)" >&2
+            exit 3
+        fi
+        git -C "$path" apply --whitespace=nowarn "$patch"
+        echo "   applied $name"
+    done
+}
+
 cmake_android() {
     local name=$1 source=$2; shift 2
     cmake -S "$source" -B "$WORK/build/$name" -G Ninja \
@@ -89,6 +108,8 @@ git -C "$WORK/src/fex" submodule update --init --depth 1 \
     External/fmt External/xxhash External/range-v3 External/unordered_dense \
     External/rpmalloc External/jemalloc_glibc External/vixl External/zydis \
     Source/Common/cpp-optparse
+echo '== Apply the FEX patch series (android/patches/fex)'
+apply_series "$WORK/src/fex" "$PATCHES/fex" fex
 cmake -S "$WORK/src/fex" -B "$WORK/build/fex" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="$API" -DANDROID_STL=c++_shared \
@@ -100,6 +121,8 @@ cmake --build "$WORK/build/fex" --parallel "$JOBS" --target FEXCore Common Commo
 
 echo '== Build Mesa Turnip for Android KGSL'
 fetch_commit mesa-turnip "$MESA_URL" "$MESA_REV"
+echo '== Apply the Mesa Turnip KGSL patch series (android/patches/mesa)'
+apply_series "$WORK/src/mesa-turnip" "$PATCHES/mesa" mesa
 python3 -m venv "$WORK/mesa-venv"
 "$WORK/mesa-venv/bin/pip" install --disable-pip-version-check \
     'meson==1.12.1' 'mako==1.4.3' 'pyyaml==6.0.3' 'packaging==26.3'
