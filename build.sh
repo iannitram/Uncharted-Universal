@@ -187,6 +187,9 @@ if [[ ${1:-} == --test ]]; then
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim \
         tests/test_upscaler_support.cpp gpu/shim/bbport_settings.cpp -o out/upscaler-support-test
     out/upscaler-support-test
+    "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim \
+        tests/test_vertex_input_deny.cpp gpu/shim/vertex_input_deny.cpp -o out/vertex-input-deny-test
+    out/vertex-input-deny-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test
     out/cpu-patch-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -I. tests/test_equeue_request_gate.cpp -o out/equeue-request-gate-test

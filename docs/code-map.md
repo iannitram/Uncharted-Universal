@@ -163,12 +163,13 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `app/src/input.rs` | planned | `Nav` from gilrs (desktop) and Android key events | | M10, M17 |
 | `app/ui/` | planned | `.slint` pages, controller first; texts in Slint's translation files (from `uncharted_i18n*.py`, `bbport_lang*.py`, seven languages) | `launcher/uncharted_widgets.py`, i18n files | M10, M20 |
 | `docs/design/continue-screen.md` | planned | the Continue screen brief, shared with totk-native, for three games | | M10 |
+| `docs/shadps4-triage.md` | present | per-game changes in `gpu/shadps4` against base `b4e7ae7`, with the hook each needs in the shared core (private half of shadPS4#17) | | M8 |
 
 ## Adopted code (stays in its own language)
 
 | Path | Status | From | Owns | Musts |
 |---|---|---|---|---|
-| `gpu/` | present; selected fixes remain open | shadPS4 (pinned, `VENDOR.txt`) + the port's shim | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; open import candidates #31 (ExpandImage) and #37 (BUFFER_WBINVL1 decode/barrier), plus the independent equeue fix #35 | M1-M3, M5, M8 |
+| `gpu/` | present; selected fixes remain open | shadPS4 (pinned, `VENDOR.txt`) + the port's shim; FPS memory line adapted from Mevlock/uncharted_pc-dev cf02c6cff (#138) | GNM to Vulkan, shader recompiler, host passes, FSR, DLSS; FPS counter samples Linux/Windows process RAM and device-local VRAM (memory-budget extension or tracked VMA blocks and sparse arenas); Linux game screenshot pending; open import candidates #31 (ExpandImage) and #37 (BUFFER_WBINVL1 decode/barrier), plus the independent equeue fix #35 | M1-M3, M5, M8 |
 | `android/` | partial: pinned dependency recipe and synthetic SDL link target | Selected FEXCore, Mesa Turnip, libadrenotools and SDL sources; recipe adapted from revvv991/uncharted-android (GPL-2.0-or-later) | `android/scripts/build_dependencies.sh` builds pinned public dependencies and links an authored smoke binary; APK project, FEX guest harness, runtime bridge and driver selection remain separate | M17 |
 | `apple/` | partial: #211 source review and synthetic test plan only; CPU/Metal probes not executed; owner-run source and Apple hardware feasibility evidence remains outstanding | bloodborne-native/bloodborne-runtime, -mac, -ios (GPL-2.0 roots; exact files and dependency closure still need review before import; `bbnet20` GPL-3.0 is excluded) | target remains an x86-64-to-ARM64 AOT library, no-JIT fallback and Metal; no Uncharted executable coverage or Apple runtime is implemented | M15, M16 |
 

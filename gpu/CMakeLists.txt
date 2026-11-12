@@ -178,6 +178,7 @@ set(COMMON
     shim/common/logging/log.cpp)
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
+# Includes bbport_settings.cpp and vertex_input_deny.cpp for every GPU build.
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
 # Windows: a DLL cannot leave the runtime_* symbols for bb-probe.exe to resolve, so the
 # library is static there and linked into the executable.
@@ -345,6 +346,11 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
+
+add_executable(vertex-input-deny-test EXCLUDE_FROM_ALL ../tests/test_vertex_input_deny.cpp
+    shim/vertex_input_deny.cpp)
+target_include_directories(vertex-input-deny-test PRIVATE shim)
+target_compile_options(vertex-input-deny-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
 add_executable(expand-image-test EXCLUDE_FROM_ALL ../tests/test_expand_image.cpp)
 target_include_directories(expand-image-test PRIVATE shadps4)

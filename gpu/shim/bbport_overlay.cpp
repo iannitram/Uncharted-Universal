@@ -15,6 +15,19 @@
 #include <thread>
 
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#endif
+#include <vk_mem_alloc.h>
 #include "bbport_settings.h"
 #include <miniz.h>
 #include "imgui.h"
@@ -23,6 +36,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_vram.h"
 
 // DejaVu Sans (Cyrillic), embedded (third_party/fonts, Bitstream Vera license).
 #ifdef _WIN32
@@ -69,6 +83,73 @@ float base_scale = 1.0f;
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f, last_present_ms = 0.0f;
+
+// Adapted from Mevlock/uncharted_pc-dev cf02c6cff: sample the process working set/RSS
+// and device-local heap usage once a second, only while the FPS counter is visible.
+vk::PhysicalDevice memory_gpu{};
+VmaAllocator memory_allocator{};
+bool memory_budget = false;
+std::chrono::steady_clock::time_point memory_at{};
+double ram_gib = -1.0, ram_total_gib = 0.0, vram_gib = 0.0, vram_total_gib = 0.0;
+
+void UpdateMemory() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - memory_at < std::chrono::seconds(1) && memory_at.time_since_epoch().count() != 0) {
+        return;
+    }
+    memory_at = now;
+    constexpr double GiB = 1024.0 * 1024.0 * 1024.0;
+    ram_gib = -1.0; // An unavailable sample must not look like zero RAM use.
+    ram_total_gib = 0.0;
+#ifdef _WIN32
+    using GetInfo = BOOL(WINAPI*)(HANDLE, PPROCESS_MEMORY_COUNTERS, DWORD);
+    static const auto get_info = reinterpret_cast<GetInfo>(reinterpret_cast<void*>(
+        GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32GetProcessMemoryInfo")));
+    PROCESS_MEMORY_COUNTERS counters{};
+    counters.cb = sizeof(counters);
+    if (get_info && get_info(GetCurrentProcess(), &counters, sizeof(counters))) {
+        ram_gib = double(counters.WorkingSetSize) / GiB;
+    }
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (GlobalMemoryStatusEx(&status)) {
+        ram_total_gib = double(status.ullTotalPhys) / GiB;
+    }
+#elif defined(__linux__)
+    const long page_size = sysconf(_SC_PAGESIZE);
+    if (FILE* statm = std::fopen("/proc/self/statm", "r")) {
+        unsigned long long resident_pages = 0;
+        if (std::fscanf(statm, "%*s %llu", &resident_pages) == 1 && page_size > 0) {
+            ram_gib = double(resident_pages) * double(page_size) / GiB;
+        }
+        std::fclose(statm);
+    }
+    const long physical_pages = sysconf(_SC_PHYS_PAGES);
+    if (physical_pages > 0 && page_size > 0) {
+        ram_total_gib = double(physical_pages) * double(page_size) / GiB;
+    }
+#endif
+    if (memory_gpu) {
+        vk::PhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+        vk::PhysicalDeviceMemoryProperties2 props{.pNext = memory_budget ? &budget : nullptr};
+        memory_gpu.getMemoryProperties2(&props);
+        // Without the extension, count VMA blocks plus the separately allocated sparse arenas.
+        VmaBudget tracked[VK_MAX_MEMORY_HEAPS]{};
+        if (!memory_budget && memory_allocator) {
+            vmaGetHeapBudgets(memory_allocator, tracked);
+        }
+        u64 used = memory_budget ? 0 : Vulkan::Vram::arena_bytes.load(std::memory_order_relaxed);
+        u64 total = 0;
+        for (u32 i = 0; i < props.memoryProperties.memoryHeapCount; ++i) {
+            if (props.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                total += props.memoryProperties.memoryHeaps[i].size;
+                used += memory_budget ? budget.heapUsage[i] : tracked[i].statistics.blockBytes;
+            }
+        }
+        vram_gib = double(used) / GiB;
+        vram_total_gib = double(total) / GiB;
+    }
+}
 
 void SetOpen(bool value) {
     if (menu_open.exchange(value) == value) {
@@ -552,16 +633,29 @@ void FpsCounter() {
                      ImGuiWindowFlags_NoFocusOnAppearing);
     const auto& s = BbSettings::Get();
     const char* latency = Vulkan::LowLatency::Name();
-    ImGui::Text(T("%.0f FPS  %.1f ms  %s%s%s", "%.0f FPS  %.1f мс  %s%s%s"), frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg,
+    ImGui::Text(T("%.0f FPS  %.1f ms%s%s", "%.0f FPS  %.1f мс%s%s"),
+                frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg,
+                latency ? "  " : "", latency ? latency : "");
+    ImGui::Text("%s  %d x %d",
                 s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
                 : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
                 : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
                 : s.upscaler == BbSettings::UpscalerTaa ? "TAA"
                 : s.upscaler == BbSettings::UpscalerDlss ? "DLSS"
                 : s.upscaler == BbSettings::UpscalerXess ? "XeSS"
-                                                         : "",
-                latency ? "  " : "", latency ? latency : "");
+                                                         : "Native",
+                s.active_render_width.load(), s.active_render_height.load());
+    UpdateMemory();
+    char ram_text[64];
+    if (ram_gib < 0.0) {
+        std::snprintf(ram_text, sizeof(ram_text), "RAM N/A");
+    } else if (ram_total_gib > 0.0) {
+        std::snprintf(ram_text, sizeof(ram_text), "RAM %.1f/%.0f GiB", ram_gib, ram_total_gib);
+    } else {
+        std::snprintf(ram_text, sizeof(ram_text), "RAM %.1f GiB", ram_gib);
+    }
+    ImGui::Text("%s  VRAM %.1f/%.0f GiB%s", ram_text, vram_gib, vram_total_gib,
+                memory_budget ? "" : " (tracked)");
     ImGui::End();
 }
 
@@ -766,6 +860,9 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     if (initialized) {
         return;
     }
+    memory_gpu = instance.GetPhysicalDevice();
+    memory_allocator = instance.GetAllocator();
+    memory_budget = instance.CanReportMemoryUsage();
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
