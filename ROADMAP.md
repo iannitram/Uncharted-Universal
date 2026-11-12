@@ -1,5 +1,25 @@
 # Roadmap
 
+Updated: 2026-11-11
+
+features:
+- campaign: Uncharted 1, 2 and 3 play start to finish on the AMD handheld (M1-M3): the playthroughs, progress blockers, crashes, physics, input and audio in today's runtime
+- gpu: The graphics library draws each game correctly (M8): play-breaking renderer bugs, shadPS4 fixes, upscalers and GPU vendor workarounds
+- perf: Power and frame rate (M5): render size, run settings, the benchmark and auto-tune
+- crash-help: Crash help: the crash line, the known-issues list, the playthrough log and the after-crash screen
+- prep: Stage 1, the prep tools in Rust: dump check, revision gate, package, patches, link, prepare, mods, and no game files (M9, M11)
+- launcher: Stage 2 and stage 10, the faces: the CLI, the Slint app, the Continue screen, first run, Saves and Settings, About and languages, the design pass (M7, M10)
+- runtime: Stage 3, the runtime to Rust, one module per piece, then the C build path deleted (M20)
+- hubs: Stage 4, build hubs: discovery, pairing, serve and pull, fleet records (M12)
+- steamos: Stage 5, SteamOS handhelds: Steam shortcut, artwork, handheld profile, Game Mode, the device hours (M13)
+- windows: Stage 6, the Windows desktop: the build, the Windows shims, an hour per game (M14)
+- android: Stage 7, Android on Adreno through FEXCore and Turnip (M17)
+- apple: Stage 8, Mac, iPhone and iPad through a recompiled library and Metal (M15, M16)
+- saves: Saves work, one save everywhere through save-relay, and updates keep saves (M4, M18, M19, stage 9)
+- builds: Stage 0 and every build verified: housekeeping, CI, release builds, upstream syncs, project rules (M6)
+- later: After 1.0 only, the new features among the Won'ts: in-game graphics menu, Game Mode menu, Xbox prompts, launcher trophies, aspect ratios, AI beta testers, shader preload, FSR 4, stereo, plain ELF input, Mali GPUs
+- save-relay: Save Relay integration: this port adopts the shared save-sync core (https://github.com/iannitram/save-relay, 1.0 reached 2026-11-11, release tag to follow) so its saves follow me between machines
+
 From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet, the RTX 3090 Ti desktop, a Mac, an iPhone or iPad, and an Adreno Android device, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
 
 ## Features, by Must
@@ -49,7 +69,7 @@ The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps 
 
 Five roadmap issues have local implementation branches from the prior build wave: #188 dump identity refusal, #189 hub data transfer foundations, #206 bounded SELF/plain-ELF parsing, #207 Android dependency recipe, and #211 Apple feasibility. These branches are not merged into `main`; the code map records their exact scope and remaining acceptance below. In particular, #189 still needs listener/discovery/CLI wiring and device acceptance; #207 has not been built with the Android SDK/NDK; and #211 is plan-only because CPU/Metal probes were not run on Apple hardware. No platform application or gameplay milestone is complete from this work.
 
-The next implementation wave is five independent, open issues: #31 ExpandImage stale-cache fix, #35 equeue lost-request fix, #37 shader barrier decode/lowering, #175 known-issue data, and #190 Rust artwork generator. The first three address tracked play-breaking GPU/runtime defects; #175 and #190 advance the Rust port. Luna worktrees produced local commits for all five. #175 has three evidence-backed matcher contexts and cannot meet its 15-entry acceptance count from the verified public `Crash:` text alone. #190 now generates all five artifacts procedurally in Rust, but visual parity remains open and Windows packaging was not checked. Device and visual acceptance remain required; these branches do not mark their containing roadmap stages complete.
+The next implementation wave (status 2026-11-11): #175 known-issue data is done on `main` (19 verified entries, each linked to an issue, loaded by a test that reads the shipped file). #190 Rust artwork generator is in PR #223, which ships the original images as bundled reference bytes (byte-identical output) instead of porting the drawing code. #31 ExpandImage stale-cache fix, #35 equeue lost-request fix and #37 shader barrier decode/lowering are still open; they address tracked play-breaking GPU/runtime defects. Device and visual acceptance remain required; none of this marks its containing roadmap stage complete.
 
 
 ### Issue-backed peer import sequence
@@ -101,6 +121,10 @@ ready; there is no new sync implementation issue.
 | Revivedx/SavageWindRecomp | MIT | packaging | learn, for 2.10 |
 | bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings | learn, for 1.16 and 2.06 |
 | GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS | GPL-2.0 | sibling PS4 port | watch |
+
+## Save Relay integration
+
+I'm adopting [Save Relay](https://github.com/iannitram/save-relay) for this port's saves. It shares game saves between machines through my own Nextcloud, pulling at launch and pushing at exit, as one small Rust core reused by every game port. Save Relay reached 1.0 on 2026-11-11 (release tag to follow). This port will adopt it for saves, so a save made on one of my machines is there on the next.
 
 ## After 1.0
 
