@@ -18,7 +18,7 @@ are in [`ru/`](ru/), at the same paths.
 
 ## Plans
 
-- [../ROADMAP.md](../ROADMAP.md): Universal implementation stages for all five platforms.
+- [../ROADMAP.md](../ROADMAP.md): Universal implementation stages (1.0: Windows and Linux/SteamOS; Mac, iOS and Android are 1.x).
 - [ROADMAP.md](ROADMAP.md): historical Linux-fork goals and phases, retained from upstream.
 - [history/BLOODBORNE_ROADMAP_2026-09-30.md](history/BLOODBORNE_ROADMAP_2026-09-30.md): the
   Bloodborne-era plan, with the state of the renderer and upscaler at the end of September.
