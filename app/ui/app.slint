@@ -1,8 +1,8 @@
-// The launcher window: the Continue screen (docs/continue-screen.md, roadmap 2.04). The .slint
-// file only draws; the view model, focus and button handling live in Rust (src/screen.rs,
-// src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
+// The launcher window: the Continue screen (docs/continue-screen.md, roadmap 2.04) and the
+// Saves and Settings pages over it (roadmap 2.06). The .slint file only draws; the view models,
+// focus and button handling live in Rust (src/screen.rs, src/vm/, src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
 // `Input::from_code`); the controller reaches the same handler from src/input.rs; clicks go
-// through `clicked(area, index)` (`Screen::click`).
+// through `clicked(area, index)` (`Screen::click`), on a page through `page-clicked(row, col)`.
 
 export struct CardData {
     title: string,
@@ -37,6 +37,29 @@ export struct SideData {
     has-picture: bool,
     title: string,
     lines: [string],
+}
+
+// One row of the Saves page: a slot or a backup, with its buttons.
+export struct SlotRowData {
+    title: string,
+    detail: string,
+    mark: string,
+    buttons: [string],
+}
+
+// One display card of the Settings page.
+export struct TuneCardData {
+    title: string,
+    lines: [string],
+    in-use: bool,
+}
+
+// One choice row of the Settings page.
+export struct ChoiceData {
+    label: string,
+    value: string,
+    can-prev: bool,
+    can-next: bool,
 }
 
 global Theme {
@@ -209,6 +232,54 @@ export component AppWindow inherits Window {
     callback input(int);
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
+
+    // The page over the Continue screen: 0 none, 1 Saves, 2 Settings (`Shown::code`). Its focus
+    // is a row and a column (`focus::Grid`); its clicks are `page-clicked(row, col)`, with row
+    // -1 the game strip, -2 the prompt (col 0 confirm, 1 cancel) and -3 the Back button.
+    in property <int> page;
+    in property <int> page-row;
+    in property <int> page-col;
+    in property <string> page-status;
+    callback page-clicked(int, int);
+
+    // Saves: the games, the slot rows, then the backup rows (their focus rows follow the
+    // slots'), what save-relay syncs, and the delete prompt's question ("" when closed).
+    in property <[string]> page-games;
+    in property <int> page-game;
+    in property <[SlotRowData]> save-slots;
+    in property <[SlotRowData]> save-backups;
+    in property <string> saves-relay;
+    in property <string> saves-confirm;
+
+    // Settings: row 0 the cards, row 1 Tune this device, rows 2.. the choices.
+    in property <[TuneCardData]> tune-cards;
+    in property <[ChoiceData]> choices;
+    in property <[string]> setting-notes;
+    in property <bool> tuning;
+
+    // Keep the focused row of a page in sight: `y` and `h` in the page's list.
+    function follow(y: length, h: length) {
+        if (y < -list.content-y) {
+            list.content-y = -y;
+        } else if (y + h > -list.content-y + list.height) {
+            list.content-y = list.height - y - h;
+        }
+    }
+    function follow-focus() {
+        if (root.page == 1) {
+            root.follow(root.page-row * (root.unit * 3.4), root.unit * 3);
+        } else if (root.page == 2) {
+            root.follow(
+                root.page-row == 0 ? 0 : root.page-row == 1 ? root.unit * 9 : root.unit * (12.6 + (root.page-row - 2) * 2.9),
+                root.page-row == 0 ? root.unit * 8.6 : root.unit * 2.8);
+        }
+    }
+    changed page-row => {
+        root.follow-focus();
+    }
+    changed page => {
+        list.content-y = 0;
+    }
 
     FocusScope {
         init => {
@@ -383,6 +454,343 @@ export component AppWindow inherits Window {
                 color: Theme.dim;
                 font-size: max(9px, root.unit * 0.6);
                 wrap: word-wrap;
+            }
+        }
+
+        // A page over the Continue screen: Saves or Settings. Opaque, and it takes every click
+        // the page itself does not.
+        Rectangle {
+            visible: root.page != 0;
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            background: Theme.page;
+            TouchArea { }
+            VerticalLayout {
+                padding: root.unit;
+                spacing: root.unit * 0.8;
+
+                HorizontalLayout {
+                    spacing: root.unit * 0.8;
+                    FocusButton {
+                        label: "Back";
+                        hint: "B";
+                        unit: root.unit * 0.9;
+                        clicked => {
+                            root.page-clicked(-3, 0);
+                        }
+                    }
+                    Text {
+                        text: root.page == 1 ? "Saves" : "Settings";
+                        color: Theme.text;
+                        font-size: root.unit * 1.6;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Saves: the game strip, as on the Continue screen.
+                if root.page == 1: HorizontalLayout {
+                    spacing: root.unit * 0.6;
+                    Hint {
+                        unit: root.unit;
+                        text: "LB";
+                        vertical-alignment: center;
+                    }
+                    for name[i] in root.page-games: Rectangle {
+                        horizontal-stretch: 1;
+                        min-height: root.unit * 2;
+                        border-radius: root.unit * 0.3;
+                        background: i == root.page-game ? Theme.button-focused : transparent;
+                        border-width: i == root.page-game ? 2px : 0px;
+                        border-color: Theme.accent;
+                        Text {
+                            text: name;
+                            color: i == root.page-game ? Theme.text : Theme.dim;
+                            font-size: root.unit * 1.1;
+                            font-weight: i == root.page-game ? 700 : 400;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.page-clicked(-1, i);
+                            }
+                        }
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: "RB";
+                        vertical-alignment: center;
+                    }
+                }
+
+                list := Flickable {
+                    vertical-stretch: 1;
+                    content-height: root.page == 1 ? saves-list.preferred-height : settings-list.preferred-height;
+
+                    // Saves: one row per slot, then one per backup, newest first.
+                    saves-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 1;
+                        spacing: root.unit * 0.4;
+                        for row[r] in root.save-slots: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: r == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    HorizontalLayout {
+                                        spacing: root.unit * 0.6;
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.text;
+                                            font-size: root.unit;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                        if row.mark != "": Text {
+                                            text: row.mark;
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && r == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(r, c);
+                                    }
+                                }
+                            }
+                        }
+                        if root.save-backups.length > 0: Text {
+                            text: "Backups";
+                            color: Theme.text;
+                            font-size: root.unit * 1.1;
+                            font-weight: 700;
+                        }
+                        for row[b] in root.save-backups: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: root.save-slots.length + b == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text {
+                                        text: row.title;
+                                        color: Theme.text;
+                                        font-size: root.unit;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && root.save-slots.length + b == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(root.save-slots.length + b, c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Settings: the three cards, Tune this device, the choices, the notes.
+                    settings-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 2;
+                        spacing: root.unit * 0.4;
+                        HorizontalLayout {
+                            spacing: root.unit * 0.6;
+                            for card[i] in root.tune-cards: Rectangle {
+                                horizontal-stretch: 1;
+                                min-height: root.unit * 8.6;
+                                border-radius: root.unit * 0.4;
+                                border-width: root.page-row == 0 && root.page-col == i ? 3px : 1px;
+                                border-color: root.page-row == 0 && root.page-col == i ? Theme.accent : Theme.edge;
+                                background: root.page-row == 0 && root.page-col == i ? Theme.button-focused : Theme.button;
+                                VerticalLayout {
+                                    padding: root.unit * 0.5;
+                                    spacing: root.unit * 0.2;
+                                    HorizontalLayout {
+                                        Text {
+                                            text: card.title;
+                                            color: Theme.text;
+                                            font-size: root.unit * 1.1;
+                                            font-weight: 700;
+                                            horizontal-stretch: 1;
+                                        }
+                                        if card.in-use: Text {
+                                            text: "In use";
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    for line in card.lines: Text {
+                                        text: line;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.8;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.page-clicked(0, i);
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            FocusButton {
+                                label: root.tuning ? "Tuning..." : "Tune this device";
+                                hint: "A";
+                                unit: root.unit * 0.9;
+                                focused: root.page-row == 1;
+                                clicked => {
+                                    root.page-clicked(1, 0);
+                                }
+                            }
+                        }
+                        for choice[r] in root.choices: Rectangle {
+                            height: root.unit * 2.5;
+                            border-radius: root.unit * 0.3;
+                            border-width: root.page-row == r + 2 ? 3px : 1px;
+                            border-color: root.page-row == r + 2 ? Theme.accent : Theme.edge;
+                            background: root.page-row == r + 2 ? Theme.button-focused : Theme.button;
+                            HorizontalLayout {
+                                padding-left: root.unit * 0.6;
+                                padding-right: root.unit * 0.6;
+                                spacing: root.unit * 0.6;
+                                Text {
+                                    text: choice.label;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: "<";
+                                    color: choice.can-prev ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 0);
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: choice.value;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    min-width: root.unit * 12;
+                                }
+                                Text {
+                                    text: ">";
+                                    color: choice.can-next ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        for note in root.setting-notes: Text {
+                            text: note;
+                            color: Theme.dim;
+                            font-size: root.unit * 0.85;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if root.page == 1: Hint {
+                    unit: root.unit;
+                    text: root.saves-relay;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    Hint {
+                        unit: root.unit;
+                        text: root.page-status;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: root.page == 1 ? "A  Choose   LB/RB  Game   B  Back" : "A  Choose   Left/Right  Change   B  Back";
+                    }
+                }
+            }
+
+            // Delete a slot? It is backed up first.
+            if root.page == 1 && root.saves-confirm != "": Prompt {
+                x: 0;
+                y: 0;
+                width: root.width;
+                height: root.height;
+                unit: root.unit;
+                Text {
+                    text: root.saves-confirm;
+                    color: Theme.text;
+                    font-size: root.unit * 1.2;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    FocusButton {
+                        label: "Delete";
+                        hint: "A";
+                        unit: root.unit;
+                        focused: true;
+                        clicked => {
+                            root.page-clicked(-2, 0);
+                        }
+                    }
+                    FocusButton {
+                        label: "Keep";
+                        hint: "B";
+                        unit: root.unit;
+                        clicked => {
+                            root.page-clicked(-2, 1);
+                        }
+                    }
+                }
             }
         }
 

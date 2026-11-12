@@ -4889,6 +4889,7 @@ dependencies = [
  "chrono",
  "gilrs",
  "i-slint-backend-testing",
+ "serde_json",
  "slint",
  "slint-build",
  "uncharted_core",
