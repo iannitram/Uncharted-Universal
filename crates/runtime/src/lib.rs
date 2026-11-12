@@ -26,6 +26,7 @@
 
 pub mod abi;
 pub mod benchmark;
+pub mod benchmark_run;
 pub mod crash;
 pub mod os;
 pub mod pad;

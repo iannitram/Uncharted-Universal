@@ -11,6 +11,9 @@ MINGW*|MSYS*)
     # MSYS2's Vulkan headers, as on the GitHub runner: an installed Vulkan SDK (VULKAN_SDK) would
     # point CMake at its own, older headers, which lack extensions the port uses.
     unset VULKAN_SDK
+    # cargo (rustup, with the x86_64-pc-windows-gnullvm target) builds the Rust benchmark mode.
+    [[ -d $HOME/.cargo/bin ]] && PATH=$PATH:$HOME/.cargo/bin
+    command -v cargo >/dev/null || echo "No cargo: building without BB_BENCHMARK support (rustup target add x86_64-pc-windows-gnullvm)." >&2
     for tool in clang cmake ninja pkg-config; do
         command -v "$tool" >/dev/null || { echo "Need $tool from MSYS2 CLANG64 (packaging/windows/README.md)." >&2; exit 1; }
     done
@@ -170,6 +173,16 @@ fi
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
 runtime=(src/runtime*.c)
+# BB_BENCHMARK=<seconds> (#173/#242): the benchmark logic is Rust (crates/runtime). With cargo it
+# is linked into bb-probe only (the C unit tests below keep the no-op glue); without, a
+# BB_BENCHMARK request fails loudly.
+benchmark_rust=()
+if command -v cargo >/dev/null && [[ -z ${BB_NO_RUST:-} ]]; then
+    cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
+    benchmark_rust=(-DBB_RUST_BENCHMARK out/rust/release/libuncharted_runtime.a -ldl -lpthread -lm)
+else
+    echo "No cargo: building without BB_BENCHMARK support." >&2
+fi
 # Third-party decoders: compiled once, without this project's -Werror policy.
 atrac9=(third_party/LibAtrac9/C/src/*.c)
 if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
@@ -177,7 +190,7 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" src/vulkan_smoke.c out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" src/vulkan_smoke.c out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" "${benchmark_rust[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities

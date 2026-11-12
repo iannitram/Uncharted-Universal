@@ -1,8 +1,9 @@
 //! Deterministic benchmark configuration and report contracts (#173).
 //!
 //! This module does not start a game, read a save, or claim that a game run is repeatable.
-//! It provides the bounded configuration, frame-statistics accumulator, and report writer
-//! for the runtime integration that will drive the game and collect GPU telemetry.
+//! It provides the bounded configuration, frame-statistics accumulator, and report writer.
+//! `benchmark_run` joins them to the pad schedule and the clock, and exports the C functions
+//! the loader and the GPU library call.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -196,6 +197,18 @@ pub enum Game {
 }
 
 impl Game {
+    /// The game for `BB_EXE` as `run.py` sets it: `u1`, `u2`, `u3`, or the executable's file name
+    /// (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`), with or without a folder.
+    pub fn from_executable(name: &str) -> Option<Self> {
+        let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
+        match file.to_ascii_lowercase().as_str() {
+            "u1" | "eboot.bin" => Some(Self::U1),
+            "u2" | "big2-ps4_shipping.elf" => Some(Self::U2),
+            "u3" | "big3-ps4_shipping.elf" => Some(Self::U3),
+            _ => None,
+        }
+    }
+
     fn as_str(self) -> &'static str {
         match self {
             Self::U1 => "u1",
@@ -230,6 +243,10 @@ pub struct Samples {
 }
 
 impl Samples {
+    pub fn is_empty(&self) -> bool {
+        self.frame_ms.is_empty()
+    }
+
     /// Add one completed frame. Invalid measurements are rejected and never enter the report.
     pub fn record_frame(&mut self, frame_ms: f64, vram_mib: u64) -> io::Result<()> {
         if !frame_ms.is_finite() || frame_ms <= 0.0 {

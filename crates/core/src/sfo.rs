@@ -65,8 +65,6 @@ pub fn parse(data: &[u8]) -> Result<BTreeMap<String, SfoValue>> {
         let format = u16::from_le_bytes(data[entry + 2..entry + 4].try_into().unwrap());
         let len = u32le(data, entry + 4)
             .ok_or_else(|| Error::BadDump("param.sfo is cut short".into()))?;
-        let max_len = u32le(data, entry + 8)
-            .ok_or_else(|| Error::BadDump("param.sfo is cut short".into()))?;
         let value_offset = u32le(data, entry + 12)
             .ok_or_else(|| Error::BadDump("param.sfo is cut short".into()))?;
         let key_at = key_base
@@ -91,11 +89,12 @@ pub fn parse(data: &[u8]) -> Result<BTreeMap<String, SfoValue>> {
                         .ok_or_else(|| Error::BadDump("param.sfo is cut short".into()))?,
             )
             .ok_or_else(|| Error::BadDump("param.sfo is cut short".into()))?;
-        if format == 0x0404 && len >= 4 {
-            values.insert(
-                key,
-                SfoValue::Int(u32::from_le_bytes(val[..4].try_into().unwrap())),
-            );
+        if format == 0x0404 {
+            // The Python reader unpacks exactly four bytes here and fails on any other size.
+            let bytes: [u8; 4] = val
+                .try_into()
+                .map_err(|_| Error::BadDump("param.sfo integer is not four bytes".into()))?;
+            values.insert(key, SfoValue::Int(u32::from_le_bytes(bytes)));
         } else {
             let end = val.iter().rposition(|b| *b != 0).map_or(0, |n| n + 1);
             values.insert(
@@ -103,9 +102,16 @@ pub fn parse(data: &[u8]) -> Result<BTreeMap<String, SfoValue>> {
                 SfoValue::Text(String::from_utf8_lossy(&val[..end]).into_owned()),
             );
         }
-        let _ = max_len;
     }
     Ok(values)
+}
+
+/// The build version to key on: `APP_VER`, or `VERSION` only when `APP_VER` is missing or empty
+/// (never both; same rule as `game_versions` in `scripts/patches.py`).
+pub fn app_version(values: &BTreeMap<String, SfoValue>) -> Option<&str> {
+    text(values, APP_VER)
+        .filter(|v| !v.is_empty())
+        .or_else(|| text(values, VERSION).filter(|v| !v.is_empty()))
 }
 
 /// The text value of `key`, if it is there and is text.
@@ -123,6 +129,93 @@ mod tests {
             d.extend(n.to_le_bytes());
         }
         d
+    }
+
+    /// Build an SFO like `tests/test_prepare.py` and `tests/test_patches.py` do:
+    /// (key, format, value bytes); synthetic only.
+    fn build(entries: &[(&str, u16, &[u8])]) -> Vec<u8> {
+        let (mut keys, mut vals, mut table): (Vec<u8>, Vec<u8>, Vec<u8>) = Default::default();
+        for (key, format, value) in entries {
+            table.extend((keys.len() as u16).to_le_bytes());
+            table.extend(format.to_le_bytes());
+            table.extend((value.len() as u32).to_le_bytes());
+            table.extend((value.len() as u32).to_le_bytes());
+            table.extend((vals.len() as u32).to_le_bytes());
+            keys.extend(key.as_bytes());
+            keys.push(0);
+            vals.extend(*value);
+        }
+        let key_base = 20 + table.len();
+        let mut d = header(
+            key_base as u32,
+            (key_base + keys.len()) as u32,
+            entries.len() as u32,
+        );
+        d.extend(table);
+        d.extend(keys);
+        d.extend(vals);
+        d
+    }
+
+    #[test]
+    fn reads_text_and_int_values() {
+        let d = build(&[
+            ("TITLE_ID", 0x0204, b"CUSA02320\0"),
+            ("APP_VER", 0x0204, b"01.02\0\0\0"),
+            ("VERSION", 0x0204, b"01.00\0"),
+            ("TITLE", 0x0204, "Uncharted \u{2605} Special\0".as_bytes()),
+            ("USER_DEFINED_PARAM_1", 0x0404, &7u32.to_le_bytes()),
+            ("EMPTY", 0x0204, b"\0\0"),
+        ]);
+        let v = parse(&d).unwrap();
+        assert_eq!(text(&v, TITLE_ID), Some("CUSA02320"));
+        assert_eq!(text(&v, APP_VER), Some("01.02"));
+        assert_eq!(text(&v, TITLE), Some("Uncharted \u{2605} Special"));
+        assert_eq!(text(&v, "EMPTY"), Some(""));
+        assert_eq!(v["USER_DEFINED_PARAM_1"].as_int(), Some(7));
+        assert_eq!(text(&v, "USER_DEFINED_PARAM_1"), None);
+        assert_eq!(v["TITLE"].as_int(), None);
+        assert_eq!(text(&v, "MISSING"), None);
+        assert_eq!(app_version(&v), Some("01.02"));
+    }
+
+    #[test]
+    fn version_is_used_only_when_app_ver_is_missing() {
+        let only_version = parse(&build(&[("VERSION", 0x0204, b"01.00\0")])).unwrap();
+        assert_eq!(app_version(&only_version), Some("01.00"));
+        let blank_app = parse(&build(&[
+            ("APP_VER", 0x0204, b"\0"),
+            ("VERSION", 0x0204, b"01.00\0"),
+        ]))
+        .unwrap();
+        assert_eq!(app_version(&blank_app), Some("01.00"));
+        assert_eq!(app_version(&parse(&build(&[])).unwrap()), None);
+    }
+
+    #[test]
+    fn non_utf8_text_is_replaced_not_refused() {
+        let v = parse(&build(&[("TITLE", 0x0204, b"A\xffB\0")])).unwrap();
+        assert_eq!(text(&v, "TITLE"), Some("A\u{fffd}B"));
+    }
+
+    #[test]
+    fn int_value_must_be_four_bytes_like_the_python_reader() {
+        let bad = Error::BadDump("param.sfo integer is not four bytes".into());
+        for value in [&[1u8, 2, 3][..], &[1, 2, 3, 4, 5][..], &[][..]] {
+            assert_eq!(parse(&build(&[("N", 0x0404, value)])).unwrap_err(), bad);
+        }
+    }
+
+    #[test]
+    fn key_without_a_terminator_is_an_error() {
+        // Values first would hide the key's NUL; here the key table is the last thing in the file.
+        let mut d = header(36, 38, 1);
+        d.extend([0, 0, 4, 2, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]);
+        d.extend(b"AB");
+        assert_eq!(
+            parse(&d).unwrap_err(),
+            Error::BadDump("param.sfo is cut short".into())
+        );
     }
 
     #[test]

@@ -96,6 +96,18 @@ pub fn build_env(
     env.extend(settings.extra.clone());
     env.extend(player_env.clone());
 
+    // Values `run.py` derives again on every start, so a stale one never survives.
+    for name in [
+        "BB_SCENE_SIZE",
+        "BB_MOVIE_SIZE",
+        "BB_RENDER_RES",
+        "BB_OUTPUT_RES",
+        "BB_UI_COMPOSITE_PS",
+        "BB_UI_TONEMAP_PS",
+    ] {
+        env.remove(name);
+    }
+
     // Preserve the legacy `run.py::game_res` behavior: canonicalize a valid explicit game size,
     // derive its heap sizes, and discard an invalid/default 1080p value. Existing numeric heap
     // overrides are passed through by `game_res_env`.
@@ -104,6 +116,51 @@ pub fn build_env(
         env.remove("BB_GAME_RES");
     }
     env.extend(game_res);
+
+    // A direct memory size the player set stays theirs (`run.py` copies it after `game_res`).
+    if let Some(dmem) = env.get("BB_DMEM_MB").cloned() {
+        if !dmem.is_empty() {
+            env.entry("BB_DMEM_MB_USER".to_owned()).or_insert(dmem);
+        }
+    }
+    // An explicit game size is also the scene and movie size (`render_resolution`).
+    if let Some(size) = env.get("BB_GAME_RES").filter(|v| !v.is_empty()).cloned() {
+        env.insert("BB_SCENE_SIZE".to_owned(), size.clone());
+        env.insert("BB_MOVIE_SIZE".to_owned(), size);
+    }
+
+    // The renderer's shader hashes (the same for all three games) and the display rate.
+    for (name, value) in [
+        ("BB_VELOCITY_PS", "f4b18264"),
+        ("BB_UPSCALE_BEFORE_CS", "aec539f0"),
+        ("BB_HUDLESS_PS", "484cdbf5"),
+        ("BB_JITTER_PS", "f614041e,b2a42acf,1a08df2d"),
+        ("BB_VBLANK_HZ", "60"),
+    ] {
+        env.entry(name.to_owned())
+            .or_insert_with(|| value.to_owned());
+    }
+
+    // U3's raycaster copy readback is on unless the player chose; no other game gets it.
+    if !player_env.contains_key("BB_COPY64_EOP_READBACK") {
+        if game == Game::U3 {
+            env.insert("BB_COPY64_EOP_READBACK".to_owned(), "1".to_owned());
+        } else {
+            env.remove("BB_COPY64_EOP_READBACK");
+        }
+    }
+    if !player_env.contains_key("BB_READBACK_SMALL_GATE") {
+        env.remove("BB_READBACK_SMALL_GATE");
+    }
+
+    // U1 opens its own menu, not the collection's, unless the player (or the direct start of
+    // `BB_U1_DIRECT=1`) says otherwise.
+    if game == Game::U1
+        && !env.contains_key("BB_SKIP_COLLECTION_MENU")
+        && env.get("BB_U1_DIRECT").map(String::as_str) != Some("1")
+    {
+        env.insert("BB_SKIP_COLLECTION_MENU".to_owned(), "1".to_owned());
+    }
 
     Ok(env.into_iter().collect())
 }

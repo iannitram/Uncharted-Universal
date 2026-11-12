@@ -8,6 +8,12 @@
 > relaunch, or answering a takedown notice, talk to a lawyer, or ask the EFF / Software Freedom
 > Conservancy for a referral.
 
+> **Update 2026-11-12 (owner ruling): the project is now GPL-2.0-only.** Several sources it builds on
+> (uncharted_pc, uncharted_Linux, Uncharted_Collection_PC, SpartanPort) ship plain GPL-2.0 with no "or
+> later" grant, so this project cannot offer later versions. Every place below that relied on the project
+> being "or later" no longer holds. In particular, the GPL-3.0 FFmpeg build cannot ship with a
+> GPL-2.0-only program; that is tracked in issue #299.
+
 **Key takeaways for uncharted_pc**
 
 - **The DLSS files are the weakest licensing point.** The release zip ships NVIDIA's proprietary
@@ -47,7 +53,7 @@ What the repository shows (read 2026-10-16):
 
 | Item | Where | Note |
 |---|---|---|
-| Project license GPL-2.0-or-later | `LICENSE`, `README.md` | Vendored shadPS4 code is GPL-2.0-or-later (`gpu/VENDOR.txt`). |
+| Project license GPL-2.0-only (was GPL-2.0-or-later until 2026-11-12) | `LICENSE`, `README.md`, `Cargo.toml` | Vendored shadPS4 code is GPL-2.0-or-later (`gpu/VENDOR.txt`). |
 | No decryption code | `scripts/prepare.py` ("No decryption…"), `README.md` | The user supplies an already decrypted dump (CUSA02343, CUSA02320). |
 | DLSS bridge (MIT source) links `nvsdk_ngx_s.lib` statically | `gpu/dlss_bridge/CMakeLists.txt`, `LICENSE.txt` | The renderer loads `bbport_dlss.dll` at run time (`vk_temporal_upscaler.cpp`). `package.sh` ships `bbport_dlss.dll`, `nvngx_dlss.dll`, `nvngx_dlssg.dll` and `NVIDIA-DLSS-LICENSE.txt`. |
 | FSR 4 v07 INT8 assets | `tools/fetch_fsr4_assets.sh` → `fsr4_shaders/` (shipped if present) | Taken from FireBurn/Q2RTX at a pinned commit, with `LICENSE-FSR4-v07.txt` (MIT, © 2025 AMD). |
@@ -191,7 +197,7 @@ has acted against the shadPS4 DLSS forks so far (none found).
 - MSYS2's `mingw-w64-ffmpeg` (9.0.2) is configured with `--enable-gpl --enable-version3`, x264, x265,
   xvid, vidstab and others, and its package license is `GPL-3.0-or-later`
   ([PKGBUILD](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-ffmpeg/PKGBUILD)). So:
-  - The distributed binary combination must follow **GPLv3**. That is fine for a GPL-2.0-or-later project
+  - The distributed binary combination must follow **GPLv3**. That was fine while the project was GPL-2.0-or-later; it is not for the GPL-2.0-only project (see the 2026-11-12 update at the top)
     (OpenSSL 3's Apache-2.0 license is also compatible with v3, though not v2-only). It does mean the DLSS
     conflict is judged under v3.
   - **Source obligations:** anyone distributing GPL binaries must provide the Corresponding Source, or a
