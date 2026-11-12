@@ -3,6 +3,10 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+/* Every exit and STOP of the runtime ends through runtime_quit, which is in probe.c
+ * (upstream 0.3.14). Tests end at once, with the output flushed. */
+void runtime_quit(int code) { fflush(NULL); _Exit(code); }
 typedef int32_t (ABI *Module)(uint16_t);
 typedef int32_t (ABI *Init)(const void *,void *);
 typedef int32_t (ABI *Param)(uint32_t,int32_t *);
