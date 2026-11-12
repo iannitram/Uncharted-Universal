@@ -13,9 +13,17 @@ path = "src/lib.rs"
 # A static library linked into the loader while C remains (ADR 0002); rlib for the Rust tests.
 crate-type = ["rlib", "staticlib"]
 
+# The desktop runner. Only `--probe` is built; the game loader joins it in piece 3.16.
+[[bin]]
+name = "uncharted-run"
+path = "src/bin/uncharted-run.rs"
+
 [dependencies]
 # Escape the three player-visible save strings without ever serializing a guest buffer.
 serde_json = "1"
+# Vulkan for `uncharted-run --probe` (#171), loaded at run time: a machine without a Vulkan
+# loader gets an error message, not a missing-library failure. MIT or Apache-2.0.
+ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
