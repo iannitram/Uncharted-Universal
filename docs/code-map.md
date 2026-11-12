@@ -164,7 +164,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `app/src/vm/` | planned | view models: `continue_page`, `first_run`, `saves`, `settings` (display cards from auto-tune #174), `fleet`, `about`, `after_crash` (closed #176 is replaced by roadmap 2.07) | | M1-M3, M10-M12, M18, M19 |
 | `app/src/input.rs`, `app/src/focus.rs` | partial: gilrs d-pad/left stick/South button to `Nav` and activate, and the `FocusRing` the two buttons use; Android key events not yet | | M10, M17 |
 | `app/ui/` | planned | `.slint` pages, controller first; texts in Slint's translation files (from `uncharted_i18n*.py`, `bbport_lang*.py`, seven languages) | `launcher/uncharted_widgets.py`, i18n files | M10, M20 |
-| `docs/design/continue-screen.md` | planned | the Continue screen brief, shared with totk-native, for three games | | M10 |
+| [`docs/continue-screen.md`](continue-screen.md) | written (2.01, #288), waiting for the owner's approval | the Continue screen brief, from totk-native's, for three games: four states each, the save card fields and their `None` cases, Continue and Play, the conflict prompt | | M10 |
 | `docs/shadps4-triage.md` | present | per-game changes in `gpu/shadps4` against base `b4e7ae7`, with the hook each needs in the shared core (private half of shadPS4#17) | | M8 |
 
 ## Adopted code (stays in its own language)
