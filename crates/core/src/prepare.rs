@@ -161,7 +161,7 @@ pub fn load_image(executable: &[u8]) -> Result<Image> {
             .ok_or_else(|| fail("invalid memory image"))
     }
 
-    let is_self = executable.starts_with(b"\x00\x15=\x1d");
+    let is_self = executable.starts_with(b"\x4f\x15\x3d\x1d");
     let base = if is_self {
         let count = u16le(executable, 24)? as u64;
         let table_bytes = count
@@ -424,7 +424,7 @@ mod image_tests {
 
     fn self_fixture() -> Vec<u8> {
         let mut data = vec![0; 0x210];
-        data[..4].copy_from_slice(b"\x00\x15=\x1d");
+        data[..4].copy_from_slice(b"\x4f\x15\x3d\x1d");
         put_u16(&mut data, 24, 1);
         put_u64(&mut data, 32, 0x800);
         put_u64(&mut data, 40, 0x200);
