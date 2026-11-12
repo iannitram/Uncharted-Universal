@@ -18,6 +18,7 @@ features:
 - saves: Saves work, one save everywhere through save-relay, and updates keep saves (M4, M18, M19, stage 9)
 - builds: Stage 0 and every build verified: housekeeping, CI, release builds, upstream syncs, project rules (M6)
 - later: After 1.0 only, the new features among the Won'ts: in-game graphics menu, Game Mode menu, Xbox prompts, launcher trophies, aspect ratios, AI beta testers, shader preload, FSR 4, stereo, plain ELF input, Mali GPUs
+- save-relay: Save Relay integration: this port adopts the shared save-sync core (https://github.com/iannitram/save-relay, 1.0 reached 2026-11-11, release tag to follow) so its saves follow me between machines
 
 From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet, the RTX 3090 Ti desktop, a Mac, an iPhone or iPad, and an Adreno Android device, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
 
@@ -120,6 +121,10 @@ ready; there is no new sync implementation issue.
 | Revivedx/SavageWindRecomp | MIT | packaging | learn, for 2.10 |
 | bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings | learn, for 1.16 and 2.06 |
 | GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS | GPL-2.0 | sibling PS4 port | watch |
+
+## Save Relay integration
+
+I'm adopting [Save Relay](https://github.com/iannitram/save-relay) for this port's saves. It shares game saves between machines through my own Nextcloud, pulling at launch and pushing at exit, as one small Rust core reused by every game port. Save Relay reached 1.0 on 2026-11-11 (release tag to follow). This port will adopt it for saves, so a save made on one of my machines is there on the next.
 
 ## After 1.0
 
