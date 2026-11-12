@@ -3,8 +3,13 @@
 //! Nothing here reads the dump, keys or a save; it moves only what `bundle` lists. Home network
 //! only: an address outside the private ranges is refused. The shape is copied from
 //! iannitram/totk-native's `hub.rs` (MIT); SPAKE2 and RustCrypto AEAD are used for pairing and
-//! game-data transfer. A limiter and Unix peer-file storage helper exist, but no accept loop wires
-//! them to a remote address. mDNS discovery and bundle serving remain unimplemented.
+//! game-data transfer.
+//!
+//! Pairing (ROADMAP 4.02): the hub makes a random six-digit code (`new_pairing_code`) and shows
+//! it (`format_pairing_code`); the player types it on the client (`parse_pairing_code`). The hub
+//! runs a `PairingServer`, whose accept loop keeps one `PairingLimiter` per remote address and
+//! stores the new `Peer` in `peers.json`; the client runs `pair_with_hub`, which stores the hub.
+//! `remove_peer` forgets a device. mDNS discovery and bundle serving remain unimplemented.
 
 use crate::bundle::Bundle;
 use crate::error::{not_built, Error, Result};
@@ -14,7 +19,8 @@ use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
@@ -32,7 +38,23 @@ const STAGING_LOCK: &str = ".uu-transfer.lock";
 const TRANSFER_WORK_DIR: &str = ".uu-transfer-work";
 const TRANSFER_WORK_OWNER: &str = ".owner";
 const TRANSFER_WORK_OWNER_CONTENT: &[u8] = b"uncharted-universal-transfer-work-v1\n";
-const PAIRING_ID: &[u8] = b"uncharted-universal-hub-pairing-v1";
+const PAIRING_ID: &[u8] = b"uncharted-universal-hub-pairing-v2";
+const PAIRING_MISMATCH: &str = "the pairing code did not match";
+const PAIRING_LOCKED: &str = "too many pairing attempts; try again in five minutes";
+const PAIRING_SPENT: &str = "this pairing code is used up; start pairing again with a new code";
+const PAIRING_READY: &[u8] = b"UUPAIR2 ready";
+const PAIRING_REFUSED_LOCKED: &[u8] = b"UUPAIR2 locked";
+const PAIRING_REFUSED_SPENT: &[u8] = b"UUPAIR2 spent";
+/// Wrong codes from one remote address before it is locked out.
+pub const MAX_FAILED_ATTEMPTS: u8 = 3;
+/// How long a remote address stays locked out after `MAX_FAILED_ATTEMPTS` wrong codes.
+pub const PAIRING_LOCKOUT: Duration = Duration::from_secs(5 * 60);
+/// Wrong codes from all remote addresses together before a `PairingServer`'s code is spent. It
+/// bounds a guesser that changes address (IPv6 privacy addresses) to ten tries in a million.
+pub const MAX_TOTAL_FAILED_ATTEMPTS: u32 = 10;
+/// How long one pairing exchange may stall on a read or write before it fails (and counts).
+pub const PAIRING_IO_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_DEVICE_NAME: usize = 128;
 const TRANSFER_DOMAIN: &[u8] = b"uncharted-universal-game-transfer-v1";
 const CLIENT_TO_SERVER: u8 = 1;
 const SERVER_TO_CLIENT: u8 = 2;
@@ -50,6 +72,7 @@ pub struct Found {
 /// A device paired with this one, as kept in `<config>/uncharted-universal/peers.json`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Peer {
+    /// The other device's name, as it sent it at pairing.
     pub device: String,
     /// Hex of the key both sides derived at pairing.
     key_hex: String,
@@ -70,8 +93,9 @@ impl Clock for SystemClock {
     }
 }
 
-/// Per-remote-device pairing attempt budget. Keep one limiter for each accepted transport peer;
-/// after three wrong codes that remote is blocked for five minutes.
+/// Per-remote-device pairing attempt budget. Keep one limiter for each remote address
+/// (`PairingServer` does); after `MAX_FAILED_ATTEMPTS` wrong codes that remote is blocked for
+/// `PAIRING_LOCKOUT`.
 #[derive(Debug, Clone, Default)]
 pub struct PairingLimiter {
     failures: u8,
@@ -82,9 +106,7 @@ impl PairingLimiter {
     pub fn check(&mut self, now: std::time::Duration) -> Result<()> {
         if let Some(until) = self.locked_until {
             if now < until {
-                return Err(Error::Hub(
-                    "too many pairing attempts; try again in five minutes".into(),
-                ));
+                return Err(Error::Hub(PAIRING_LOCKED.into()));
             }
             self.failures = 0;
             self.locked_until = None;
@@ -94,8 +116,8 @@ impl PairingLimiter {
 
     fn failed(&mut self, now: std::time::Duration) {
         self.failures = self.failures.saturating_add(1);
-        if self.failures >= 3 {
-            self.locked_until = Some(now + std::time::Duration::from_secs(5 * 60));
+        if self.failures >= MAX_FAILED_ATTEMPTS {
+            self.locked_until = Some(now + PAIRING_LOCKOUT);
         }
     }
 
@@ -141,6 +163,13 @@ impl TcpTransport {
             ));
         }
         Ok(Self(stream))
+    }
+
+    /// Bound every read and write on this connection, so a stalled peer cannot hold it open.
+    pub fn set_timeout(&self, timeout: Duration) -> Result<()> {
+        self.0.set_read_timeout(Some(timeout))?;
+        self.0.set_write_timeout(Some(timeout))?;
+        Ok(())
     }
 }
 
@@ -191,18 +220,74 @@ pub fn discover(wait_ms: u64) -> Result<Vec<Found>> {
     not_built("hub::discover")
 }
 
-/// Pairs over `t` with the six-digit `code` shown on both screens (SPAKE2), confirms possession
-/// on both sides, then returns an ephemeral peer record with the same key on both devices.
-/// Internal PAKE exchange; exported callers must go through `pair_limited`.
-fn pair_inner(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
+/// A random six-digit pairing code from the operating system's random source, uniform over
+/// 000000-999999. The hub makes a new one for each pairing session and shows it on its screen.
+pub fn new_pairing_code() -> Result<String> {
+    loop {
+        let mut word = [0u8; 4];
+        getrandom::getrandom(&mut word).map_err(|_| {
+            Error::Hub("the operating system could not provide random bytes".into())
+        })?;
+        if let Some(code) = pairing_code_from(u32::from_be_bytes(word)) {
+            return Ok(code);
+        }
+    }
+}
+
+/// One random word as a code, or `None` for the top sliver of words that would favour low codes.
+fn pairing_code_from(word: u32) -> Option<String> {
+    // The largest multiple of a million that fits in a u32.
+    const LIMIT: u32 = 4_294_000_000;
+    (word < LIMIT).then(|| format!("{:06}", word % 1_000_000))
+}
+
+/// The code as a screen shows it, in two groups of three: `"483 921"`.
+pub fn format_pairing_code(code: &str) -> Result<String> {
+    let code = parse_pairing_code(code)?;
+    Ok(format!("{} {}", &code[..3], &code[3..]))
+}
+
+/// The code as the player typed it on the client: six digits, with any spaces or dashes dropped.
+pub fn parse_pairing_code(input: &str) -> Result<String> {
+    let code: String = input
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '-')
+        .collect();
     if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(Error::Hub(
             "the pairing code must contain six digits".into(),
         ));
     }
-    if device.is_empty() || device.len() > 128 || device.chars().any(char::is_control) {
+    Ok(code)
+}
+
+fn valid_device_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= MAX_DEVICE_NAME && !name.chars().any(char::is_control)
+}
+
+fn check_pairing_input(code: &str, own_name: &str) -> Result<()> {
+    if code.len() != 6 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::Hub(
+            "the pairing code must contain six digits".into(),
+        ));
+    }
+    if !valid_device_name(own_name) {
         return Err(Error::Hub("the device name is invalid".into()));
     }
+    Ok(())
+}
+
+fn pairing_mismatch() -> Error {
+    Error::Hub(PAIRING_MISMATCH.into())
+}
+
+/// Pairs over `t` with the six-digit `code` shown on both screens (SPAKE2). Each side sends its
+/// own name; both confirm the key and the sender's name in both directions, then acknowledge the
+/// other's confirmation, so a damaged confirmation leaves neither side remembering the other.
+/// Returns the remote device, under the name it sent, with the key both sides derived.
+/// Internal; callers go through `pair_limited`, `PairingServer` or `pair_client`.
+fn pair_inner(t: &mut dyn Transport, code: &str, own_name: &str) -> Result<Peer> {
+    check_pairing_input(code, own_name)?;
 
     let (state, outbound) = Spake2::<Ed25519Group>::start_symmetric(
         &Password::new(code.as_bytes()),
@@ -210,16 +295,18 @@ fn pair_inner(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
     );
     write_packet(t, &outbound, 256)?;
     let inbound = read_packet(t, 256)?;
-    let shared = state
-        .finish(&inbound)
-        .map_err(|_| Error::Hub("the pairing code did not match".into()))?;
+    // A reflected message would make this side pair with itself.
+    if inbound == outbound {
+        return Err(pairing_mismatch());
+    }
+    let shared = state.finish(&inbound).map_err(|_| pairing_mismatch())?;
     let mut key_hash = Sha256::new();
-    key_hash.update(b"uncharted-universal peer key v1\0");
+    key_hash.update(b"uncharted-universal peer key v2\0");
     key_hash.update(&shared);
     let key: [u8; 32] = key_hash.finalize().into();
 
-    // Confirm possession in both directions with independent random challenges. This prevents
-    // a reflection from making one side accept its own confirmation as the peer's response.
+    // Confirm possession in both directions with independent random challenges; a reflected
+    // challenge is refused so one side cannot accept its own confirmation as the peer's.
     let mut challenge = [0u8; 32];
     getrandom::getrandom(&mut challenge)
         .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
@@ -230,46 +317,251 @@ fn pair_inner(t: &mut dyn Transport, code: &str, device: &str) -> Result<Peer> {
             "the peer sent an invalid pairing challenge".into(),
         ));
     }
-    let own_tag = pairing_confirmation(&key, &peer_challenge)?;
+    if peer_challenge == challenge {
+        return Err(pairing_mismatch());
+    }
+
+    write_packet(t, own_name.as_bytes(), MAX_DEVICE_NAME)?;
+    let peer_name = String::from_utf8(read_packet(t, MAX_DEVICE_NAME)?)
+        .ok()
+        .filter(|name| valid_device_name(name))
+        .ok_or_else(|| Error::Hub("the peer sent an invalid device name".into()))?;
+
+    let own_tag = pairing_mac(&key, b"peer confirmation v2\0", &peer_challenge, own_name)?
+        .finalize()
+        .into_bytes();
     write_packet(t, &own_tag, 64)?;
     let peer_tag = read_packet(t, 64)?;
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&key)
-        .map_err(|_| Error::Hub("could not initialize pairing confirmation".into()))?;
-    mac.update(b"peer confirmation v1\0");
-    mac.update(&challenge);
-    mac.verify_slice(&peer_tag)
-        .map_err(|_| Error::Hub("the pairing code did not match".into()))?;
+    let confirmed = pairing_mac(&key, b"peer confirmation v2\0", &challenge, &peer_name)?
+        .verify_slice(&peer_tag)
+        .is_ok();
+
+    // Acknowledge the peer's confirmation; a failed check sends no valid acknowledgement.
+    let own_ack: Vec<u8> = if confirmed {
+        pairing_mac(&key, b"peer accepted v2\0", &peer_challenge, own_name)?
+            .finalize()
+            .into_bytes()
+            .to_vec()
+    } else {
+        vec![0; 32]
+    };
+    write_packet(t, &own_ack, 64)?;
+    let peer_ack = read_packet(t, 64)?;
+    let acknowledged = pairing_mac(&key, b"peer accepted v2\0", &challenge, &peer_name)?
+        .verify_slice(&peer_ack)
+        .is_ok();
+    if !confirmed || !acknowledged {
+        return Err(pairing_mismatch());
+    }
 
     Ok(Peer {
-        device: device.to_string(),
+        device: peer_name,
         key_hex: hex(&key),
     })
 }
 
-/// Rate-limited pairing entry point. The accept loop must keep `limiter` attached to the remote
-/// address for the full five-minute window and call this for every incoming pairing attempt.
+/// Rate-limited pairing exchange. `own_name` is this device's name, sent to the peer; the returned
+/// `Peer` carries the name the peer sent. The caller keeps `limiter` attached to the remote
+/// address for the full lockout window (`PairingServer` does). Every failed exchange counts:
+/// a wrong code, a dropped connection, a timeout or a malformed packet, because a guesser could
+/// otherwise check its guess against this side's confirmation and hang up unseen.
 pub fn pair_limited(
     t: &mut dyn Transport,
     code: &str,
-    device: &str,
+    own_name: &str,
     limiter: &mut PairingLimiter,
     clock: &dyn Clock,
 ) -> Result<Peer> {
+    check_pairing_input(code, own_name)?;
     let now = clock.now();
     limiter.check(now)?;
-    match pair_inner(t, code, device) {
-        Ok(peer) => {
-            limiter.reset();
-            Ok(peer)
+    let result = pair_inner(t, code, own_name);
+    match &result {
+        Ok(_) => limiter.reset(),
+        Err(_) => limiter.failed(now),
+    }
+    result
+}
+
+/// The hub's side of pairing: one code for the hub's screen and the accept loop that guards it.
+/// It keeps one `PairingLimiter` per remote address for the whole session, so a remote that sent
+/// `MAX_FAILED_ATTEMPTS` wrong codes is refused for `PAIRING_LOCKOUT` before any key exchange
+/// and is told why. The code is spent by one pairing, or by `MAX_TOTAL_FAILED_ATTEMPTS` wrong codes
+/// from all addresses together; a new session needs a new code. The new peer is stored in the
+/// paired-device file, normally `<AppDirs.config>/peers.json`.
+pub struct PairingServer<C: Clock = SystemClock> {
+    code: String,
+    own_name: String,
+    peers: PathBuf,
+    clock: C,
+    limiters: HashMap<IpAddr, PairingLimiter>,
+    failures: u32,
+    spent: bool,
+}
+
+impl PairingServer<SystemClock> {
+    /// A session with a new random code (`new_pairing_code`), timed by the system clock.
+    pub fn new(own_name: &str, peers: &Path) -> Result<Self> {
+        Self::with_code(&new_pairing_code()?, own_name, peers, SystemClock)
+    }
+}
+
+impl<C: Clock> PairingServer<C> {
+    /// A session for `code`, timed by `clock` (tests inject their own).
+    pub fn with_code(code: &str, own_name: &str, peers: &Path, clock: C) -> Result<Self> {
+        let code = parse_pairing_code(code)?;
+        check_pairing_input(&code, own_name)?;
+        Ok(Self {
+            code,
+            own_name: own_name.to_string(),
+            peers: peers.to_path_buf(),
+            clock,
+            limiters: HashMap::new(),
+            failures: 0,
+            spent: false,
+        })
+    }
+
+    /// The code for the hub's screen, as `format_pairing_code` shows it.
+    pub fn display_code(&self) -> String {
+        format!("{} {}", &self.code[..3], &self.code[3..])
+    }
+
+    /// True once the code paired a device or ran out of tries.
+    pub fn is_spent(&self) -> bool {
+        self.spent
+    }
+
+    /// One pairing attempt from `remote` over `t`. A locked-out remote, or any remote once the
+    /// code is spent, is told so and refused before any key exchange. On success the peer is
+    /// stored in the paired-device file and the code is spent.
+    pub fn attempt(&mut self, remote: IpAddr, t: &mut dyn Transport) -> Result<Peer> {
+        let remote = canonical_ip(remote);
+        if self.spent {
+            let _ = write_packet(t, PAIRING_REFUSED_SPENT, 64);
+            return Err(Error::Hub(PAIRING_SPENT.into()));
         }
-        Err(error) => {
-            if matches!(&error, Error::Hub(message) if message == "the pairing code did not match")
-            {
-                limiter.failed(now);
+        let now = self.clock.now();
+        if let Some(limiter) = self.limiters.get_mut(&remote) {
+            if let Err(error) = limiter.check(now) {
+                let _ = write_packet(t, PAIRING_REFUSED_LOCKED, 64);
+                return Err(error);
             }
-            Err(error)
+        }
+        write_packet(t, PAIRING_READY, 64)?;
+        let mut limiter = self.limiters.remove(&remote).unwrap_or_default();
+        match pair_limited(t, &self.code, &self.own_name, &mut limiter, &self.clock) {
+            Ok(peer) => {
+                self.spent = true;
+                remember_peer(&self.peers, &peer)?;
+                Ok(peer)
+            }
+            Err(error) => {
+                self.limiters.insert(remote, limiter);
+                self.failures = self.failures.saturating_add(1);
+                if self.failures >= MAX_TOTAL_FAILED_ATTEMPTS {
+                    self.spent = true;
+                }
+                Err(error)
+            }
         }
     }
+
+    /// The accept loop: takes connections on `listener` until one pairs (returning that peer) or
+    /// the code is spent (returning why). A connection from outside the home network is dropped
+    /// unread; each exchange gets `PAIRING_IO_TIMEOUT` per read or write. Failed attempts are
+    /// counted and the loop goes on.
+    pub fn serve(&mut self, listener: &TcpListener) -> Result<Peer> {
+        loop {
+            let (stream, remote) = listener.accept()?;
+            let Ok(mut transport) = TcpTransport::from_stream(stream) else {
+                continue;
+            };
+            if transport.set_timeout(PAIRING_IO_TIMEOUT).is_err() {
+                continue;
+            }
+            match self.attempt(remote.ip(), &mut transport) {
+                Ok(peer) => return Ok(peer),
+                Err(error) if self.spent => return Err(error),
+                Err(_) => continue,
+            }
+        }
+    }
+}
+
+/// An IPv4-mapped IPv6 address as plain IPv4, so a dual-stack listener keeps one limiter per device.
+fn canonical_ip(addr: IpAddr) -> IpAddr {
+    match addr {
+        IpAddr::V6(ip) => ip.to_ipv4_mapped().map_or(addr, IpAddr::V4),
+        IpAddr::V4(_) => addr,
+    }
+}
+
+/// The client's side of pairing: connects to the hub at `hub` (home network only), pairs with the
+/// code the player typed (spaces and dashes allowed), and stores the hub in the paired-device file
+/// `peers`, normally `<AppDirs.config>/peers.json`. Returns the hub under the name it sent.
+pub fn pair_with_hub(hub: SocketAddr, code: &str, own_name: &str, peers: &Path) -> Result<Peer> {
+    let mut transport = TcpTransport::connect(hub, PAIRING_IO_TIMEOUT)?;
+    transport.set_timeout(PAIRING_IO_TIMEOUT)?;
+    pair_client(&mut transport, code, own_name, peers)
+}
+
+/// `pair_with_hub` over a transport the caller opened. A hub that has locked this device out, or
+/// whose code is spent, says so before any key exchange, and nothing is stored.
+pub fn pair_client(
+    t: &mut dyn Transport,
+    code: &str,
+    own_name: &str,
+    peers: &Path,
+) -> Result<Peer> {
+    let code = parse_pairing_code(code)?;
+    check_pairing_input(&code, own_name)?;
+    let hello = read_packet(t, 64)?;
+    if hello == PAIRING_REFUSED_LOCKED {
+        return Err(Error::Hub(PAIRING_LOCKED.into()));
+    }
+    if hello == PAIRING_REFUSED_SPENT {
+        return Err(Error::Hub(PAIRING_SPENT.into()));
+    }
+    if hello != PAIRING_READY {
+        return Err(Error::Hub(
+            "the hub sent an unexpected pairing reply".into(),
+        ));
+    }
+    let peer = pair_inner(t, &code, own_name)?;
+    remember_peer(peers, &peer)?;
+    Ok(peer)
+}
+
+/// Serializes read-modify-write of the paired-device file within this process.
+static PEERS_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Adds `peer` to the paired-device file at `path`, replacing an older record of the same device
+/// (pairing again makes a new key). Fails closed where protected storage is unavailable.
+pub fn remember_peer(path: &Path, peer: &Peer) -> Result<()> {
+    let _guard = PEERS_LOCK
+        .lock()
+        .map_err(|_| Error::Hub("paired-device storage is busy".into()))?;
+    let mut peers = read_peers(path)?;
+    peers.retain(|old| old.device != peer.device);
+    peers.push(peer.clone());
+    write_peers(path, &peers)
+}
+
+/// Forgets (unpairs) `device` in the paired-device file at `path`, returning whether it was
+/// remembered. The file is left untouched when it was not.
+pub fn remove_peer(path: &Path, device: &str) -> Result<bool> {
+    let _guard = PEERS_LOCK
+        .lock()
+        .map_err(|_| Error::Hub("paired-device storage is busy".into()))?;
+    let mut peers = read_peers(path)?;
+    let before = peers.len();
+    peers.retain(|peer| peer.device != device);
+    if peers.len() == before {
+        return Ok(false);
+    }
+    write_peers(path, &peers)?;
+    Ok(true)
 }
 
 /// Load paired devices from a protected `peers.json` file. Callers should normally pass
@@ -578,12 +870,15 @@ fn peer_key(peer: &Peer) -> Result<[u8; 32]> {
     Ok(key)
 }
 
-fn pairing_confirmation(key: &[u8; 32], challenge: &[u8]) -> Result<Vec<u8>> {
+/// HMAC over `label`, the receiver's `challenge` and the sender's `name` (length-prefixed).
+fn pairing_mac(key: &[u8; 32], label: &[u8], challenge: &[u8], name: &str) -> Result<Hmac<Sha256>> {
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key)
         .map_err(|_| Error::Hub("could not initialize pairing confirmation".into()))?;
-    mac.update(b"peer confirmation v1\0");
+    mac.update(label);
     mac.update(challenge);
-    Ok(mac.finalize().into_bytes().to_vec())
+    mac.update(&(name.len() as u16).to_be_bytes());
+    mac.update(name.as_bytes());
+    Ok(mac)
 }
 
 fn write_packet(t: &mut dyn Transport, packet: &[u8], limit: usize) -> Result<()> {
@@ -1560,7 +1855,9 @@ mod tests {
         let right = std::thread::spawn(move || pair_test(&mut b, "483921", "handheld"));
         let left = left.join().unwrap().unwrap();
         let right = right.join().unwrap().unwrap();
-        assert_ne!(left.device, right.device);
+        // Each side records the other under the name the other sent.
+        assert_eq!(left.device, "handheld");
+        assert_eq!(right.device, "hub");
         assert_eq!(left.key_hex, right.key_hex);
 
         let (mut a, mut b) = MemoryTransport::pair();
@@ -1961,6 +2258,18 @@ mod tests {
             write_peers(&path, &[]),
             Err(Error::Hub(message)) if message.contains("not implemented on Windows")
         ));
+        let peer = Peer {
+            device: "synthetic handheld".into(),
+            key_hex: "a5".repeat(32),
+        };
+        assert!(matches!(
+            remember_peer(&path, &peer),
+            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+        ));
+        assert!(matches!(
+            remove_peer(&path, "synthetic handheld"),
+            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+        ));
         assert!(!path.exists());
     }
 
@@ -1982,6 +2291,291 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
             assert!(read_peers(&path).is_err());
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clock the test moves by hand; shared with the hub thread.
+    #[derive(Clone)]
+    struct TestClock(std::sync::Arc<std::sync::atomic::AtomicU64>);
+
+    impl TestClock {
+        fn at(seconds: u64) -> Self {
+            Self(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                seconds,
+            )))
+        }
+
+        fn advance(&self, seconds: u64) {
+            self.0
+                .fetch_add(seconds, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl Clock for TestClock {
+        fn now(&self) -> Duration {
+            Duration::from_secs(self.0.load(std::sync::atomic::Ordering::SeqCst))
+        }
+    }
+
+    /// Writes come back as reads: a peer that reflects everything it is sent.
+    #[derive(Default)]
+    struct EchoTransport(std::collections::VecDeque<u8>);
+
+    impl io::Read for EchoTransport {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            let count = buffer.len().min(self.0.len());
+            for byte in &mut buffer[..count] {
+                *byte = self.0.pop_front().expect("count bounds queued bytes");
+            }
+            Ok(count)
+        }
+    }
+
+    impl io::Write for EchoTransport {
+        fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+            self.0.extend(buffer);
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Transport for EchoTransport {}
+
+    fn fresh_root(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("uu-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    /// One attempt on `server` from `remote`, with a client typing `code`, over memory.
+    fn memory_attempt<C: Clock + Send>(
+        server: &mut PairingServer<C>,
+        remote: IpAddr,
+        code: &str,
+        client_peers: &Path,
+    ) -> (Result<Peer>, Result<Peer>) {
+        let (mut hub_side, mut client_side) = MemoryTransport::pair();
+        std::thread::scope(|scope| {
+            let client =
+                scope.spawn(move || pair_client(&mut client_side, code, "handheld", client_peers));
+            let hub = server.attempt(remote, &mut hub_side);
+            drop(hub_side);
+            (hub, client.join().unwrap())
+        })
+    }
+
+    #[test]
+    fn pairing_codes_are_six_uniform_digits_and_parse_as_typed() {
+        assert_eq!(pairing_code_from(0).as_deref(), Some("000000"));
+        assert_eq!(pairing_code_from(1_000_000).as_deref(), Some("000000"));
+        assert_eq!(pairing_code_from(4_293_999_999).as_deref(), Some("999999"));
+        assert_eq!(pairing_code_from(4_294_000_000), None);
+        assert_eq!(pairing_code_from(u32::MAX), None);
+
+        let codes: std::collections::BTreeSet<String> =
+            (0..64).map(|_| new_pairing_code().unwrap()).collect();
+        assert!(codes
+            .iter()
+            .all(|code| code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())));
+        assert!(codes.len() > 1, "the generator repeated one code");
+
+        assert_eq!(format_pairing_code("483921").unwrap(), "483 921");
+        assert_eq!(format_pairing_code("000042").unwrap(), "000 042");
+        for typed in ["483921", "483 921", " 483-921\n", "4 8 3 9 2 1"] {
+            assert_eq!(parse_pairing_code(typed).unwrap(), "483921");
+        }
+        for bad in ["", "48392", "4839210", "48392a", "483_921", "٤٨٣٩٢١"] {
+            assert!(parse_pairing_code(bad).is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn pairing_refuses_a_reflected_exchange() {
+        let mut echo = EchoTransport::default();
+        assert_eq!(
+            pair_inner(&mut echo, "483921", "hub"),
+            Err(Error::Hub(PAIRING_MISMATCH.into()))
+        );
+    }
+
+    #[test]
+    fn a_guesser_that_hangs_up_still_counts_against_the_limiter() {
+        let clock = TestClock::at(10_000);
+        let mut limiter = PairingLimiter::default();
+        for _ in 0..MAX_FAILED_ATTEMPTS {
+            // The peer vanishes after the first packet: an I/O error, not a mismatch.
+            let mut hung_up = BufferTransport::default();
+            assert!(matches!(
+                pair_limited(&mut hung_up, "483921", "hub", &mut limiter, &clock),
+                Err(Error::Io(_))
+            ));
+        }
+        let mut transport = BufferTransport::default();
+        assert_eq!(
+            pair_limited(&mut transport, "483921", "hub", &mut limiter, &clock),
+            Err(Error::Hub(PAIRING_LOCKED.into()))
+        );
+        assert!(transport.outgoing.is_empty(), "a locked attempt sent bytes");
+    }
+
+    #[test]
+    fn pairing_server_keeps_one_limiter_per_remote_and_spends_the_code() {
+        let root = fresh_root("pair-limits");
+        let clock = TestClock::at(10_000);
+        let mut server =
+            PairingServer::with_code("483921", "hub", &root.join("hub.json"), clock.clone())
+                .unwrap();
+        let client_peers = root.join("client.json");
+        let a = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20));
+        let a_mapped = IpAddr::V6(Ipv4Addr::new(192, 168, 1, 20).to_ipv6_mapped());
+
+        for _ in 0..MAX_FAILED_ATTEMPTS {
+            let (hub, client) = memory_attempt(&mut server, a, "000000", &client_peers);
+            assert_eq!(hub, Err(Error::Hub(PAIRING_MISMATCH.into())));
+            assert_eq!(client, Err(Error::Hub(PAIRING_MISMATCH.into())));
+        }
+        // The same device, also when it arrives as an IPv4-mapped IPv6 address, is refused
+        // before any key exchange, even with the right code.
+        for remote in [a, a_mapped] {
+            let (hub, client) = memory_attempt(&mut server, remote, "483921", &client_peers);
+            assert_eq!(hub, Err(Error::Hub(PAIRING_LOCKED.into())));
+            assert_eq!(client, Err(Error::Hub(PAIRING_LOCKED.into())));
+        }
+
+        // Another address has its own budget, but every wrong code counts toward the total.
+        let mut failures = u32::from(MAX_FAILED_ATTEMPTS);
+        let mut host = 30;
+        while failures < MAX_TOTAL_FAILED_ATTEMPTS {
+            assert!(!server.is_spent());
+            let remote = IpAddr::V4(Ipv4Addr::new(192, 168, 1, host));
+            let (hub, client) = memory_attempt(&mut server, remote, "111111", &client_peers);
+            assert_eq!(hub, Err(Error::Hub(PAIRING_MISMATCH.into())));
+            assert_eq!(client, Err(Error::Hub(PAIRING_MISMATCH.into())));
+            failures += 1;
+            host += 1;
+        }
+        assert!(server.is_spent());
+        let fresh = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 99));
+        let (hub, client) = memory_attempt(&mut server, fresh, "483921", &client_peers);
+        assert_eq!(hub, Err(Error::Hub(PAIRING_SPENT.into())));
+        assert_eq!(client, Err(Error::Hub(PAIRING_SPENT.into())));
+        assert!(!client_peers.exists(), "a failed pairing stored a peer");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The fake hub on loopback (SPEC.md M12, ROADMAP 4.02): three wrong codes lock the remote
+    /// out, the right code is refused until the lockout ends on the fake clock, then pairs, and
+    /// both paired-device files hold the same key.
+    #[test]
+    fn fake_hub_on_loopback_locks_out_then_pairs_and_both_sides_store_the_key() {
+        let root = fresh_root("pair-loopback");
+        let hub_peers = root.join("hub").join("peers.json");
+        let client_peers = root.join("client").join("peers.json");
+        let clock = TestClock::at(10_000);
+        let mut server =
+            PairingServer::with_code("483921", "hub", &hub_peers, clock.clone()).unwrap();
+        assert_eq!(server.display_code(), "483 921");
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hub = std::thread::spawn(move || {
+            let result = server.serve(&listener);
+            (result, server)
+        });
+
+        for _ in 0..MAX_FAILED_ATTEMPTS {
+            assert_eq!(
+                pair_with_hub(addr, "000000", "handheld", &client_peers),
+                Err(Error::Hub(PAIRING_MISMATCH.into()))
+            );
+        }
+        assert_eq!(
+            pair_with_hub(addr, "483 921", "handheld", &client_peers),
+            Err(Error::Hub(PAIRING_LOCKED.into()))
+        );
+        clock.advance(PAIRING_LOCKOUT.as_secs() - 1);
+        assert_eq!(
+            pair_with_hub(addr, "483921", "handheld", &client_peers),
+            Err(Error::Hub(PAIRING_LOCKED.into()))
+        );
+        clock.advance(1);
+        let client = pair_with_hub(addr, "483-921", "handheld", &client_peers);
+        let (hub, server) = hub.join().unwrap();
+        assert!(server.is_spent());
+
+        #[cfg(not(windows))]
+        {
+            let client = client.unwrap();
+            let hub = hub.unwrap();
+            assert_eq!(client.device, "hub");
+            assert_eq!(hub.device, "handheld");
+            assert_eq!(client.key_hex, hub.key_hex);
+            assert_eq!(read_peers(&client_peers).unwrap(), vec![client.clone()]);
+            assert_eq!(read_peers(&hub_peers).unwrap(), vec![hub.clone()]);
+
+            // Pairing again replaces the record; unpairing forgets it.
+            let mut again =
+                PairingServer::with_code("222333", "hub", &hub_peers, clock.clone()).unwrap();
+            let (repaired, _) = memory_attempt(
+                &mut again,
+                Ipv4Addr::LOCALHOST.into(),
+                "222 333",
+                &client_peers,
+            );
+            let repaired = repaired.unwrap();
+            assert_ne!(repaired.key_hex, hub.key_hex);
+            assert_eq!(read_peers(&hub_peers).unwrap(), vec![repaired]);
+            assert_eq!(read_peers(&client_peers).unwrap().len(), 1);
+            assert!(remove_peer(&hub_peers, "handheld").unwrap());
+            assert!(!remove_peer(&hub_peers, "handheld").unwrap());
+            assert!(read_peers(&hub_peers).unwrap().is_empty());
+        }
+        // Protected peer storage is not built on Windows: the exchange completes, then both
+        // sides fail closed instead of storing the key unprotected.
+        #[cfg(windows)]
+        {
+            for result in [client, hub] {
+                assert!(matches!(
+                    result,
+                    Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+                ));
+            }
+            assert!(!hub_peers.exists() && !client_peers.exists());
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remembered_peers_replace_by_device_and_unpair() {
+        let root = fresh_root("peers-remember");
+        let path = root.join("peers.json");
+        let first = Peer {
+            device: "handheld".into(),
+            key_hex: "a5".repeat(32),
+        };
+        let other = Peer {
+            device: "tablet".into(),
+            key_hex: "5a".repeat(32),
+        };
+        let repaired = Peer {
+            device: "handheld".into(),
+            key_hex: "c3".repeat(32),
+        };
+        assert!(!remove_peer(&path, "handheld").unwrap());
+        assert!(!path.exists(), "unpairing nothing created the file");
+        remember_peer(&path, &first).unwrap();
+        remember_peer(&path, &other).unwrap();
+        remember_peer(&path, &repaired).unwrap();
+        assert_eq!(
+            read_peers(&path).unwrap(),
+            vec![other.clone(), repaired.clone()]
+        );
+        assert!(remove_peer(&path, "handheld").unwrap());
+        assert_eq!(read_peers(&path).unwrap(), vec![other]);
         fs::remove_dir_all(root).unwrap();
     }
 }
