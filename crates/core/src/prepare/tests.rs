@@ -6,7 +6,7 @@
 //! `games::SUPPORTED` is still empty.
 
 use super::*;
-use crate::link::tests::{eboot, fios, libc, sym, Elf};
+use crate::link::tests::link_modules::{eboot, fios, libc, sym, Elf};
 use std::collections::BTreeSet;
 
 const STT_SECTION: u8 = 3;
