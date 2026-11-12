@@ -16,7 +16,11 @@
 //! its files; `serve` sends the newest bundle for a target and the files it lists, shader
 //! translations included, over the same sealed channel and per-file exchange as the game-data
 //! copy (`serve_game`/`pull_game`, #189). `pull` stages them with resume and runs
-//! `bundle::verify` before returning. A transfer service listener and CLI wiring (4.05) remain.
+//! `bundle::verify` before returning.
+//!
+//! Service (ROADMAP 4.05): `HubService` in `hub/service.rs` takes pairing and bundle pulls on
+//! one TCP port behind a plain opening packet; `pair_with_service` and `pull_from_service` are
+//! the device's side. `uncharted-universal hub serve|pair|pull` runs them.
 
 use crate::bundle::{self, Bundle};
 use crate::error::{Error, Result};
@@ -36,6 +40,10 @@ mod discovery;
 pub use discovery::{
     announce, discover, discover_on, found, parse_txt, txt, withdraw, Announcement, Mdns,
     MdnsDaemon, MemoryMdns, Record, TXT_HUB, TXT_TARGETS,
+};
+mod service;
+pub use service::{
+    pair_with_service, pull_from_service, HubService, Served, PORT, SERVICE_IO_TIMEOUT,
 };
 
 /// The mDNS service a hub announces.
