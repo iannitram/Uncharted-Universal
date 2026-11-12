@@ -7,6 +7,7 @@
 
 #include "shader_recompiler/frontend/decode.h"
 #include "shader_recompiler/frontend/translate/translate.h"
+#include "shader_recompiler/profile.h"
 
 int main() {
     using namespace Shader;
