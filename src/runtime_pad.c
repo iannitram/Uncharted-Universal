@@ -788,14 +788,15 @@ static void __attribute__((ms_abi)) u2_chapter_activate_us(uint64_t rdi, uint64_
     (void)rsi; (void)r14; (void)regs;
     u2_chapter_activate(rdi,image,0xa60460,u2_apply_settings_us,sizeof(u2_apply_settings_us));
 }
-/* U3, London Underground (issue #81): the title-screen music played on into the level after Continue at
- * the chapter's low-intensity checkpoint. The menu playlist survives level loads, loops, and has no tempo;
- * the level queues its playlist 0x0c3dd4f5 to switch at the current track's next musical boundary, which
- * the music manager (NdMusicManager update) finds with fmodf(position, beat length): with no tempo that is
- * NaN, so the boundary never comes and the menu theme plays on. Only for that pending playlist, and only
- * while the playing track has no tempo, its copy in the manager is set to switch at once (as a chapter
- * start's music does). rbx is the manager: +0x2f5 a playlist is pending, +0x224 its id, +0x22f its
- * flags (4: wait for a boundary), +0x180 the playing track's beat length. BB_CALLBACKS_SKIP=menu off. */
+/* U3, London Underground (#245, from spacepepperoni/uncharted_Linux#81): the title-screen music played on
+ * into the level after Continue at the chapter's low-intensity checkpoint. The menu playlist survives level
+ * loads, loops, and has no tempo; the level queues its playlist 0x0c3dd4f5 to switch at the current track's
+ * next musical boundary, which the music manager (NdMusicManager update) finds with fmodf(position, beat
+ * length): with no tempo that is NaN, so the boundary never comes and the menu theme plays on. Only for
+ * that pending playlist, and only while the playing track has no tempo, its copy in the manager is set to
+ * switch at once (as a chapter start's music does). rbx is the manager: +0x2f5 a playlist is pending,
+ * +0x224 its id, +0x22f its flags (4: wait for a boundary), +0x180 the playing track's beat length.
+ * BB_CALLBACKS_SKIP=menu off. */
 static void __attribute__((ms_abi)) u3_menu_music_into_level(uint64_t rdi, uint64_t rsi, uint64_t image, uint64_t r14,
                                                               const RuntimeGuestRegs *regs) {
     (void)rdi; (void)rsi; (void)image; (void)r14;
@@ -806,7 +807,7 @@ static void __attribute__((ms_abi)) u3_menu_music_into_level(uint64_t rdi, uint6
     if (pending!=0x0c3dd4f5u || beat!=0.0f) return;
     manager[0x22f]&=(unsigned char)~4;
     static int told;
-    if (!told) { told=1; printf("U3 music: the London Underground music replaces the title music (issue #81)\n"); }
+    if (!told) { told=1; printf("U3 music: the London Underground music replaces the title music (#245)\n"); }
 }
 
 static const RuntimeGuestCallback guest_callbacks[]={
@@ -978,7 +979,7 @@ static const RuntimeGuestCallback guest_callbacks[]={
       "8d 35 ?? ?? ?? ?? 48 8d 15 ?? ?? ?? ?? 48 8d 0d ?? ?? ?? ?? "
       "41 b8 4d 04 00 00 45 31 c9 ff d0 cd 41 c5 f8 28 45 d0",
       0x0, 58, NULL, u2_focus_reset_102},
-    /* U3 title music into the London Underground level (issue #81), build 102: cmp byte [rbx+0x2f5],0; je;
+    /* U3 title music into the London Underground level (#245), build 102: cmp byte [rbx+0x2f5],0; je;
      * test byte [rbx+0x22f],4; sete al; or al,r15b; jne (NdMusicManager update, pending playlist switch) */
     {"U3 menu music into London Underground",
       "80 bb f5 02 00 00 00 74 61 f6 83 2f 02 00 00 04 0f 94 c0 44 08 f8 75 0a",
