@@ -7,7 +7,7 @@ sce_sys/trophy/trophy01.trp (Drake's Fortune), trophy02.trp (Among Thieves) and 
 texts as ESFM files, which are AES-128-CBC encrypted. The key of a set comes from the console's
 trophy key and the set's NP communication id (NPWRxxxxx_00), the same way shadPS4 reads them.
 
-run.py calls this before a game starts and the runtime (src/runtime_trophy.c) reads what it
+run.py calls this before a game starts and the runtime (crates/runtime/src/trophy.rs) reads what it
 leaves in <out>/trophy/: trophies.txt and the icons. The launcher's Trophies page reads the same
 files. Unlocks are kept in <saves folder>/trophy/<NPWR id>.log, one "id unix-time" per line.
 
