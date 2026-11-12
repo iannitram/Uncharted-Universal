@@ -1,4 +1,5 @@
-/* libSceFiber: user-mode fibers on guest-allocated stacks.
+/* libSceFiber: user-mode fibers on guest-allocated stacks. Windows only: on Linux this is
+ * crates/runtime/src/fiber.rs (piece 3.13, same symbols) until Windows moves too (piece 3.15).
  *
  * A fiber is suspended inside fiber_swap with its callee-saved registers (SysV), MXCSR and
  * the x87 control word pushed on its own stack; only that stack pointer is kept. Fibers move
@@ -267,11 +268,9 @@ static ABI int32_t fiber_run_with(GuestFiber *fiber,void *addr,uint64_t size,uin
 }
 static ABI int32_t fiber_run(GuestFiber *fiber,uint64_t arg,uint64_t *ret) { return fiber_run_with(fiber,NULL,0,arg,ret); }
 
-/* bbport (Mevlock): set while a render command context is open on this thread (runtime_pad.c
- * hooks, the job wait patch in probe.c); a fiber leaving the thread takes its context along, so
- * the flag is cleared. */
-_Thread_local int runtime_ndgi_open;
-#define NDGI_LEAVE() (runtime_ndgi_open=0)
+/* The render command context flag (runtime_tls.c): a fiber leaving the thread takes its context
+ * along, so the flag is cleared. */
+#define NDGI_LEAVE() runtime_ndgi_leave()
 static ABI int32_t fiber_switch_with(GuestFiber *fiber,void *addr,uint64_t size,uint64_t arg,uint64_t *arg_on_run) {
     NDGI_LEAVE();
     int32_t e=check_fiber(fiber);

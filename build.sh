@@ -178,11 +178,15 @@ UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf 
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-# src/runtime_memory.c is Windows only: on Linux the guest address space is Rust (crates/runtime
-# memory, piece 3.12, same symbols).
+# src/runtime_memory.c, src/runtime_thread.c and src/runtime_fiber.c are Windows only: on Linux
+# the guest address space (piece 3.12), threads and fibers (piece 3.13) are Rust (crates/runtime
+# memory, thread and fiber, same symbols).
 runtime=()
 for source in src/runtime*.c; do
-    if [[ $source != src/runtime_memory.c ]]; then runtime+=("$source"); fi
+    case $source in
+    src/runtime_memory.c | src/runtime_thread.c | src/runtime_fiber.c) ;;
+    *) runtime+=("$source") ;;
+    esac
 done
 # Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
 # with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only
@@ -190,7 +194,8 @@ done
 rust=()
 for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing \
     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped \
-    runtime_disabled_optimizations runtime_disabled_optimizations2; do
+    runtime_disabled_optimizations runtime_disabled_optimizations2 runtime_thread_attach_host \
+    runtime_thread_spawn runtime_thread_join_spawned runtime_errno; do
     rust+=(-Wl,--undefined="$symbol")
 done
 rust+=(out/rust/release/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl)

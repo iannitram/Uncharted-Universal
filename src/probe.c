@@ -1232,7 +1232,7 @@ static void patch_u1_sticky(uint64_t image_size) {
  * retries in place (SwitchToThread, then 1 ms sleeps, up to BB_JOB_LOCK_WAIT_MS, default 250;
  * 0: off) and suspends its job only after that, as before; other workers suspend at once. The
  * counter is read again on every try. */
-extern _Thread_local int runtime_ndgi_open; /* runtime_fiber.c */
+extern _Thread_local int runtime_ndgi_open; /* runtime_tls.c */
 static uint64_t job_lock_try;
 static unsigned job_lock_wait_ms=250;
 static volatile long job_lock_fallbacks;

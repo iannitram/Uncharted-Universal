@@ -1,4 +1,6 @@
-/* Guest threads on host pthreads. Each guest thread owns a FreeBSD-style TCB
+/* Windows only: on Linux this is crates/runtime/src/thread.rs (piece 3.13, same symbols) until
+ * Windows moves too (piece 3.15).
+ * Guest threads on host pthreads. Each guest thread owns a FreeBSD-style TCB
  * (variant II: static TLS below the TCB). The loader rewrites the eboot's
  * `mov rax, fs:[0]` into `mov rax, gs:[0]`, so GS base = guest TCB while glibc
  * keeps FS. Priorities/affinity are recorded, not enforced by a PS4 scheduler.

@@ -12,6 +12,9 @@
 //! [`memory`] is the guest address space (piece 3.12): direct and flexible memory, the region
 //! table and the GPU library's page hooks. On Linux and Android it exports the C symbols of
 //! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
+//! `thread` and `fiber` are guest threads on host pthreads and libSceFiber (piece 3.13): on Linux
+//! x86-64 they export the C symbols of `src/runtime_thread.c` and `src/runtime_fiber.c`, which
+//! Windows still builds until piece 3.15.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
 //! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
@@ -21,7 +24,7 @@
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
+//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -32,6 +35,8 @@ pub mod abi;
 pub mod benchmark;
 pub mod benchmark_run;
 pub mod crash;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub mod fiber;
 // `cbindgen:ignore`: their constants are Rust-only, not part of the C header. `memory`'s
 // symbols stay declared in `src/runtime.h` (its constants share names with `<sys/mman.h>`).
 /// cbindgen:ignore
@@ -42,3 +47,5 @@ pub mod pad;
 /// cbindgen:ignore
 pub mod probe;
 pub mod savedata;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub mod thread;

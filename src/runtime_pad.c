@@ -691,7 +691,7 @@ _Static_assert(sizeof(u3_focus_reset_100)==51 && sizeof(u3_focus_reset_102)==53,
  * the thread, runtime_fiber.c), used by the job wait patch in probe.c. A context records its
  * worker at Begin (+0xe810) and asserts the same one at End ("m_workerThreadIndex ==
  * GetCurrentWorkerThreadIndex()"). One site each in all three games. */
-extern _Thread_local int runtime_ndgi_open; /* runtime_fiber.c */
+extern _Thread_local int runtime_ndgi_open; /* runtime_tls.c */
 static void __attribute__((ms_abi)) ndgi_begin(uint64_t rdi, uint64_t rsi, uint64_t image, uint64_t r14,
                                                const RuntimeGuestRegs *regs) {
     (void)rdi; (void)rsi; (void)image; (void)r14; (void)regs;

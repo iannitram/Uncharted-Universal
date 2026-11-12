@@ -60,7 +60,7 @@ pub(super) fn out_line(text: &str) {
 }
 
 /// `fputs(text, stderr)`; `text` carries its own newline.
-pub(super) fn err(text: &str) {
+pub(crate) fn err(text: &str) {
     let text = c_string(text);
     // SAFETY: `text` is a NUL-terminated string and `stderr()` the C library's stream.
     unsafe { fputs(text.as_ptr(), stderr()) };
@@ -175,13 +175,13 @@ pub(super) fn report_modules() {}
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.
 #[cfg(uncharted_loader)]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     // SAFETY: `runtime_quit` takes any exit code and does not return.
     unsafe { loader::runtime_quit(code) }
 }
 
 #[cfg(not(uncharted_loader))]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     extern "C" {
         fn fflush(stream: *mut File) -> c_int;
         fn _exit(code: c_int) -> !;
