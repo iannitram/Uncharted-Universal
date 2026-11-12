@@ -555,6 +555,23 @@ pub struct Where {
     pub subtitle: String,
 }
 
+impl Where {
+    /// The chapter a player would name: the subtitle, else the title, else `None`.
+    pub fn chapter(&self) -> Option<String> {
+        [&self.subtitle, &self.title]
+            .into_iter()
+            .find(|text| !text.is_empty())
+            .cloned()
+    }
+
+    /// The text `match_known` looks for an issue's locations in: the title and the subtitle.
+    pub fn location(&self) -> String {
+        format!("{} {}", self.title, self.subtitle)
+            .trim()
+            .to_string()
+    }
+}
+
 /// One line of `playthrough.jsonl` (#170): one game run. In the file its keys are `build`,
 /// `game` (`Game::key`), `chapter`, `preset`, `avg_fps`, `ended` (`"ok"`, `"crash"`,
 /// `"credits"`) and `at_unix`, sorted, one JSON object per line.
@@ -595,17 +612,7 @@ pub fn record(
     ended: Ended,
     at_unix: u64,
 ) -> PlaythroughRun {
-    let chapter = if let Some(where_) = where_ {
-        if !where_.subtitle.is_empty() {
-            Some(where_.subtitle.clone())
-        } else if !where_.title.is_empty() {
-            Some(where_.title.clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let chapter = where_.and_then(Where::chapter);
 
     let avg_fps = avg_fps.map(|fps| (fps * 10.0).round() / 10.0);
 
@@ -840,8 +847,7 @@ pub fn rotate(folder: &Path, name: &str, keep: usize) -> Result<()> {
 /// unreadable log says nothing, so this never fails today; `Result` keeps room for that.
 pub fn health(logs: &Path, free_bytes: u64) -> Result<Vec<String>> {
     let mut found = Vec::new();
-    if let Some(reason) = read_tail(&logs.join(RUN_LOG), RUN_LOG_TAIL).and_then(|t| crash_line(&t))
-    {
+    if let Some(reason) = last_crash(logs) {
         let reason: String = reason.chars().take(160).collect();
         found.push(format!("The last game run stopped with: {reason}"));
     }
@@ -1106,5 +1112,209 @@ mod known_issue_game_tests {
         .unwrap();
         let ids: Vec<&str> = got.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids, ["ok"]);
+    }
+}
+
+/// The `Crash:` line of the last game run: `crash_line` of the last MiB of
+/// `<logs>/last_run.log`. `None` for a clean run, or when there is no readable run log.
+pub fn last_crash(logs: &Path) -> Option<String> {
+    read_tail(&logs.join(RUN_LOG), RUN_LOG_TAIL).and_then(|text| crash_line(&text))
+}
+
+/// The runtime's save-location file in a game's saves folder (`savedata::commit`, #168).
+pub const WHERE_FILE: &str = "where.json";
+
+/// The text of `where.json`: its `title` and `subtitle` (a missing one, or one that is not
+/// text, is empty). `None` when the text is not a JSON object or both are empty.
+pub fn parse_where(json: &str) -> Option<Where> {
+    let value: Value = serde_json::from_str(json).ok()?;
+    let map = value.as_object()?;
+    let text = |key: &str| {
+        map.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let found = Where {
+        title: text("title"),
+        subtitle: text("subtitle"),
+    };
+    found.chapter().is_some().then_some(found)
+}
+
+/// `parse_where` of a file; a missing, unreadable or damaged file is `None` (no save yet).
+pub fn load_where(path: &Path) -> Option<Where> {
+    parse_where(&fs::read_to_string(path).ok()?)
+}
+
+/// The bug form on GitHub (`.github/ISSUE_TEMPLATE/bug_report.yml`): `game` is a dropdown of
+/// `Game::name`, `where` a line of text (`ISSUE_URL` in `uncharted_logs.py`).
+pub const BUG_FORM: &str =
+    "https://github.com/iannitram/Uncharted-Universal/issues/new?template=bug_report.yml";
+/// The GitHub text is cut to this many characters; an issue holds at most 65536
+/// (`ISSUE_CHARS`).
+pub const ISSUE_CHARS: usize = 60_000;
+/// Lines from the start of the run log the GitHub text always keeps: build, settings, devices
+/// (`ISSUE_LOG_HEAD`).
+pub const ISSUE_LOG_HEAD: usize = 60;
+
+/// The run a bug report is about: the after-crash screen's game, chapter and `Crash:` line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInfo {
+    pub game: Game,
+    /// From `where.json` (`Where::chapter`); `None` before the first save.
+    pub chapter: Option<String>,
+    /// The `Crash:` line without its prefix; `None` for a run that did not crash.
+    pub crash: Option<String>,
+}
+
+/// What Copy log for GitHub puts on the clipboard for the bug form's Log field (`issue_text` in
+/// `uncharted_logs.py`), through `redact`: the launcher version, the system lines, the game,
+/// chapter and `Crash:` line of `run` (when given), the settings (one line of sorted JSON), the
+/// `health` check, and the run log (`<logs>/last_run.log`): its first `ISSUE_LOG_HEAD` lines,
+/// then as many of its last lines as fit in `ISSUE_CHARS`, with a note of how many were left
+/// out. A log over `REPORT_LOG_BYTES` is cut as `create_report` cuts it first.
+pub fn issue_text(
+    logs: &Path,
+    details: &ReportDetails,
+    run: Option<&RunInfo>,
+    what: &Redact,
+) -> String {
+    let mut head = vec![format!(
+        "Uncharted launcher {}, copied at {} (Unix time)",
+        details.version, details.at_unix
+    )];
+    head.push(format!(
+        "OS: {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    head.extend(details.system.iter().cloned());
+    if let Some(run) = run {
+        head.push(format!("Game: {}", run.game.name()));
+        head.push(format!(
+            "Chapter: {}",
+            run.chapter.as_deref().unwrap_or("not known (no save yet)")
+        ));
+        if let Some(crash) = &run.crash {
+            head.push(format!("Crash: {crash}"));
+        }
+    }
+    let settings = match &details.settings {
+        Value::Null => Value::Object(Map::new()),
+        other => sorted(other),
+    };
+    head.push(format!("Settings: {settings}"));
+    let found = health(logs, details.free_bytes).unwrap_or_default();
+    let found = if found.is_empty() {
+        "No problems found.".to_string()
+    } else {
+        found
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut parts = vec![
+        redact(&head.join("\n"), what),
+        redact(&format!("== Health check\n{found}"), what),
+    ];
+    let log = read_cut(&logs.join(RUN_LOG), REPORT_LOG_BYTES)
+        .map(|text| redact(&text, what))
+        .unwrap_or_default();
+    let lines: Vec<&str> = log.lines().collect();
+    if lines.is_empty() {
+        parts.push("== Game log\n(no game run logged yet)".to_string());
+        return parts.join("\n\n");
+    }
+    let first = lines[..lines.len().min(ISSUE_LOG_HEAD)].join("\n");
+    let used_so_far =
+        parts.iter().map(|p| p.chars().count() + 2).sum::<usize>() + first.chars().count() + 200;
+    let room = ISSUE_CHARS.saturating_sub(used_so_far);
+    let mut tail = Vec::new();
+    let mut used = 0;
+    for line in lines.iter().skip(ISSUE_LOG_HEAD).rev() {
+        let size = line.chars().count() + 1;
+        if used + size > room {
+            break;
+        }
+        tail.push(*line);
+        used += size;
+    }
+    let skipped = lines.len().saturating_sub(ISSUE_LOG_HEAD + tail.len());
+    let mut game_log = format!("== Game log ({RUN_LOG})\n{first}");
+    if skipped > 0 {
+        game_log.push_str(&format!("\n[... {skipped} lines left out ...]"));
+    }
+    for line in tail.iter().rev() {
+        game_log.push('\n');
+        game_log.push_str(line);
+    }
+    parts.push(game_log);
+    parts.join("\n\n")
+}
+
+/// The bug form with `run`'s game picked, its chapter in "Where in the game" and a title
+/// naming the crash: `BUG_FORM` plus `title`, `game` and `where` (percent-encoded UTF-8).
+/// The log itself is too long for a link; it goes on the clipboard (`issue_text`).
+pub fn bug_form_url(run: &RunInfo) -> String {
+    let crash: String = run
+        .crash
+        .as_deref()
+        .unwrap_or("crash")
+        .chars()
+        .take(80)
+        .collect();
+    let title = match &run.chapter {
+        Some(chapter) => format!("{}, {chapter}: {crash}", run.game.name()),
+        None => format!("{}: {crash}", run.game.name()),
+    };
+    let mut url = format!(
+        "{BUG_FORM}&title={}&game={}",
+        percent_encode(&title),
+        percent_encode(run.game.name())
+    );
+    if let Some(chapter) = &run.chapter {
+        url.push_str("&where=");
+        url.push_str(&percent_encode(chapter));
+    }
+    url
+}
+
+/// `text` for a URL query: ASCII letters, digits and `-_.~` stay, every other byte is `%XX`.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod after_run_tests {
+    use super::*;
+
+    #[test]
+    fn where_takes_title_and_subtitle() {
+        let got = parse_where(
+            r#"{"game": "u2", "title": "Chapter 13", "subtitle": "Train-wreck", "detail": "x"}"#,
+        )
+        .unwrap();
+        assert_eq!(got.chapter().as_deref(), Some("Train-wreck"));
+        assert_eq!(got.location(), "Chapter 13 Train-wreck");
+        assert_eq!(parse_where(r#"{"title": 5}"#), None);
+        assert_eq!(parse_where("[]"), None);
+        assert_eq!(parse_where("not json"), None);
+    }
+
+    #[test]
+    fn percent_encoding_keeps_only_unreserved_bytes() {
+        assert_eq!(percent_encode("Uncharted 2"), "Uncharted%202");
+        assert_eq!(percent_encode("a&b=c/é"), "a%26b%3Dc%2F%C3%A9");
     }
 }

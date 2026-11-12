@@ -1,13 +1,13 @@
 // The launcher window. The .slint file only draws; focus order and button handling live in
-// Rust (src/focus.rs, ADR 0003). Keys become `Nav` through the `nav` callback; the controller
-// reaches the same callbacks from src/input.rs.
+// Rust (src/focus.rs, src/vm/, ADR 0003). Keys become `Nav` through the `nav` callback; the
+// controller reaches the same callbacks from src/input.rs.
 
-component PlaceholderButton inherits Rectangle {
+component MenuButton inherits Rectangle {
     in property <string> label;
     in property <bool> focused;
     callback activated();
 
-    height: 56px;
+    min-height: 56px;
     border-radius: 8px;
     border-width: focused ? 3px : 1px;
     border-color: focused ? #f2b134 : #5a6270;
@@ -16,9 +16,79 @@ component PlaceholderButton inherits Rectangle {
         text: root.label;
         color: white;
         font-size: 18px;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: 12px;
+        width: parent.width - 24px;
     }
     TouchArea {
         clicked => { root.activated(); }
+    }
+}
+
+// The after-crash screen (roadmap 2.07): the game, the chapter, a plain sentence, what the
+// game said, and the buttons src/vm/after_crash.rs chose.
+component AfterCrashPage inherits Rectangle {
+    in property <string> heading;
+    in property <string> game;
+    in property <string> chapter;
+    in property <string> summary;
+    in property <string> detail;
+    in property <string> note;
+    in property <[string]> buttons;
+    in property <int> focused-index;
+    callback activate(int);
+
+    border-radius: 12px;
+    background: #1a1f2a;
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+        alignment: start;
+        Text {
+            text: root.heading;
+            color: #f2b134;
+            font-size: 28px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.game;
+            color: white;
+            font-size: 22px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.chapter;
+            color: #c8cfda;
+            font-size: 18px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.summary;
+            color: white;
+            font-size: 18px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.detail;
+            color: #8a93a3;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+        for label[index] in root.buttons: MenuButton {
+            label: label;
+            focused: root.focused-index == index;
+            activated => { root.activate(index); }
+        }
+        Text {
+            text: root.note;
+            visible: root.note != "";
+            color: #c8cfda;
+            font-size: 16px;
+            wrap: word-wrap;
+        }
     }
 }
 
@@ -30,10 +100,40 @@ export component AppWindow inherits Window {
     preferred-height: 600px;
     background: #12151c;
 
+    // 0 = home, 1 = after-crash screen, 2 = a game is running.
+    in property <int> page: 0;
     in-out property <int> focused-index: 0;
+    in property <string> status;
+    in property <string> crash-heading;
+    in property <string> crash-game;
+    in property <string> crash-chapter;
+    in property <string> crash-summary;
+    in property <string> crash-detail;
+    in property <string> crash-note;
+    in property <[string]> crash-buttons;
     // 0 = Up, 1 = Down, 2 = Left, 3 = Right (see `Nav` in src/focus.rs).
     callback nav(int);
     callback activate(int);
+    callback back();
+    // A game run started by the app ended (the game's key); raised from its waiting thread.
+    callback run-ended(string);
+
+    // The clipboard: Slint has no clipboard call in Rust, so a hidden text field copies.
+    public function copy-text(text: string) {
+        clip.text = text;
+        clip.select-all();
+        clip.copy();
+        clip.clear-selection();
+    }
+
+    clip := TextInput {
+        x: 0px;
+        y: 0px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        read-only: true;
+    }
 
     FocusScope {
         init => { self.focus(); }
@@ -44,6 +144,7 @@ export component AppWindow inherits Window {
             if (event.text == Key.RightArrow) { root.nav(3); return accept; }
             if (event.text == Key.Tab) { root.nav(1); return accept; }
             if (event.text == Key.Backtab) { root.nav(0); return accept; }
+            if (event.text == Key.Escape) { root.back(); return accept; }
             if (event.text == Key.Return || event.text == " ") { root.activate(root.focused-index); return accept; }
             reject
         }
@@ -52,26 +153,39 @@ export component AppWindow inherits Window {
             padding: 24px;
             spacing: 16px;
 
-            // Placeholder for the Continue screen (piece 2.04).
-            Rectangle {
+            if root.page == 1: AfterCrashPage {
+                vertical-stretch: 1;
+                heading: root.crash-heading;
+                game: root.crash-game;
+                chapter: root.crash-chapter;
+                summary: root.crash-summary;
+                detail: root.crash-detail;
+                note: root.crash-note;
+                buttons: root.crash-buttons;
+                focused-index: root.focused-index;
+                activate(index) => { root.activate(index); }
+            }
+
+            // Placeholder for the Continue screen (piece 2.04); page 2 says which game runs.
+            if root.page != 1: Rectangle {
                 vertical-stretch: 1;
                 border-radius: 12px;
                 background: #1a1f2a;
                 Text {
-                    text: "Continue screen goes here";
+                    text: root.page == 2 ? root.status : "Continue screen goes here";
                     color: #8a93a3;
                     font-size: 22px;
                 }
             }
 
-            HorizontalLayout {
+            if root.page == 0: HorizontalLayout {
                 spacing: 16px;
-                PlaceholderButton {
+                MenuButton {
                     label: "Placeholder A";
                     focused: root.focused-index == 0;
                     activated => { root.activate(0); }
                 }
-                PlaceholderButton {
+                MenuButton {
                     label: "Placeholder B";
                     focused: root.focused-index == 1;
                     activated => { root.activate(1); }

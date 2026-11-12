@@ -4887,8 +4887,10 @@ name = "uncharted-app"
 version = "0.0.0"
 dependencies = [
  "gilrs",
+ "serde_json",
  "slint",
  "slint-build",
+ "uncharted_core",
 ]
 
 [[package]]
