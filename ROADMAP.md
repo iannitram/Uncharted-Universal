@@ -1,6 +1,6 @@
 # Roadmap
 
-Updated: 2026-11-11
+Updated: 2026-11-12
 
 features:
 - campaign: Uncharted 1, 2 and 3 play start to finish on the AMD handheld (M1-M3): the playthroughs, progress blockers, crashes, physics, input and audio in today's runtime
@@ -13,14 +13,14 @@ features:
 - hubs: Stage 4, build hubs: discovery, pairing, serve and pull, fleet records (M12)
 - steamos: Stage 5, SteamOS handhelds: Steam shortcut, artwork, handheld profile, Game Mode, the device hours (M13)
 - windows: Stage 6, the Windows desktop: the build, the Windows shims, an hour per game (M14)
-- android: Stage 7, Android on Adreno through FEXCore and Turnip (M17)
-- apple: Stage 8, Mac, iPhone and iPad through a recompiled library and Metal (M15, M16)
+- android: Stage 7, Android on Adreno through FEXCore and Turnip (M17) (1.x)
+- apple: Stage 8, Mac, iPhone and iPad through a recompiled library and Metal (M15, M16) (1.x)
 - saves: Saves work, one save everywhere through save-relay, and updates keep saves (M4, M18, M19, stage 9)
 - builds: Stage 0 and every build verified: housekeeping, CI, release builds, upstream syncs, project rules (M6)
 - later: After 1.0 only, the new features among the Won'ts: in-game graphics menu, Game Mode menu, Xbox prompts, launcher trophies, aspect ratios, AI beta testers, shader preload, FSR 4, stereo, plain ELF input, Mali GPUs
 - save-relay: Save Relay integration: this port adopts the shared save-sync core (https://github.com/iannitram/save-relay, 1.0 reached 2026-11-11, release tag to follow) so its saves follow me between machines
 
-From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet, the RTX 3090 Ti desktop, a Mac, an iPhone or iPad, and an Adreno Android device, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
+From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet and the RTX 3090 Ti desktop, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. Mac, iPhone/iPad and Android are 1.x (scope ruling 2026-11-12, #268). The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
 
 ## Features, by Must
 
@@ -29,7 +29,7 @@ From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD han
 | M1-M3 playthroughs on the AMD handheld | the correctness and campaign work already open (#31, #35, #37, #60, #62-#64, #109, #111-#113, #164 and the bug issues), crash help (#165: #168-#170, #175; the after-crash screen is 2.07, which replaced closed #176), playthroughs #76-#78; 5.02 |
 | M4 saves work | 3.06 (savedata in Rust), 1.17, 9.02 |
 | M5 power and frame rate | 1.14, 1.15, 1.16, 1.27, auto-tune (#166: #171, #173 (the `BB_BENCHMARK` runtime benchmark that the M5 soak reads), #174 and #178 are 1.27, and #172 is 1.05 `dump`; the display cards are 2.06, which replaced closed #177), #22; 5.02 |
-| M6 every build verified | 0.02, 2.10, 3.01, 6.01, 7.02, 8.02 |
+| M6 every build verified | 0.02, 2.10, 3.01, 6.01; 1.x: 7.02, 8.02 |
 | M7 the launcher starts each game | 1.04-1.15, 1.25, 2.02-2.05 |
 | M8 play-breaking bugs | #31, #35, #37, all in `gpu/` (and #164 first) |
 | M9 no game files | 1.23 (bundle never holds the dump), 1.26 (redact), PR review |
@@ -38,10 +38,10 @@ From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD han
 | M12 pull from a hub, fleet | 1.23, 4.01-4.05, 2.08 |
 | M13 Steam shortcut, artwork, handheld profile | 1.16, 1.21, 1.22, 5.01, 5.02 |
 | M14 Windows desktop | 3.15, 6.01, 6.02 |
-| M15 Mac and the iOS install | 8.01-8.05, 8.08 |
-| M16 iPhone/iPad with a controller | 8.05, 8.06, 8.09 |
-| M17 Android | 7.01-7.06 |
-| M18 save-relay everywhere | 1.17, 1.25, 9.01 (#163), 7.05, 8.07, 9.02 |
+| M15 Mac and the iOS install | 1.x: 8.01-8.05, 8.08 |
+| M16 iPhone/iPad with a controller | 1.x: 8.05, 8.06, 8.09 |
+| M17 Android | 1.x: 7.01-7.06 |
+| M18 save-relay everywhere | 1.17, 1.25, 9.01 (#163), 9.02; 1.x: 7.05, 8.07 |
 | M19 updates keep saves | 1.19, 1.20 |
 | M20 our code in Rust | stage 1 (tools), stage 2 (launcher), stage 3 (runtime), 2.10 (the C in `packaging/`), 2.11, 3.17 |
 
@@ -56,9 +56,9 @@ Each stage names its platforms (R04). Stages overlap: anything not blocked can b
 4. **Build hubs** (Linux, Windows, macOS; Android as a client). 4.01 discovery; 4.02 pairing; 4.03 serve and pull with the shader translations; 4.04 fleet records and drift; 4.05 `hub` and `fleet` commands. CI runs a fake hub on loopback.
 5. **SteamOS handhelds** (Linux). 5.01 the Strix Halo tablet as hub: prepare all three games on itself, play an hour each from Game Mode; 5.02 the AMD handheld: install pulled from the tablet, Steam artwork, an hour each, the M5 soak; then the playthroughs #76-#78.
 6. **Windows desktop.** 6.01 the Rust workspace and the GPU library on `windows-latest` (CLANG64, Rust target chosen here); 6.02 an hour per game with a controller.
-7. **Android** (Adreno). 7.01 adapt selected reviewed Android dependency/build, FEX bridge and Turnip/libadrenotools sources from revvv991 and zenithblue with credit through #207-#210, after the runtime ABI/thread/memory prerequisites; do not graft the whole peer project. 7.02 the runtime cross-builds for `aarch64-linux-android` in CI; 7.03 the Slint launcher's Android APK build with gamepad keys; 7.04 the hub serves the APK and install, the launcher installs them; 7.05 save-relay in the Android launcher; 7.06 a session per game with a controller.
-8. **Mac, iPhone and iPad.** 8.01 study bloodborne-native's recompiler, Metal renderer and iOS shell: licence files, what is Bloodborne-specific, a written plan (docs); 8.02 the runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios` in CI; 8.03 bring in the recompiler, run on the Mac from my dump to a library per game; 8.04 the Metal renderer for the collection; 8.05 the Mac app from the launcher, then the iOS app built on the Mac and installed by cable; 8.06 iOS controller mapping, touch hidden with a controller; 8.07 save-relay in the iOS app (its C interface); 8.08 the Mac: an hour per game; 8.09 the iPhone or iPad: a session per game with a controller.
-9. **One save everywhere.** External dependency: [iannitram/save-relay](https://github.com/iannitram/save-relay) for Linux, Windows, macOS, iOS/iPadOS and Android. Save Relay reached 1.0 on 2026-11-11, so it is now adopted, not just referenced: every build carries it (tracker #249). Desktop integration (9.01, #163) waits on its rc.1 release cut (save-relay#205); Android and iOS (7.05, 8.07) wait on its C-interface libraries (save-relay#49); the Mac waits on a supported macOS build (8.05). Save slots move the save folders, so the save-relay manifest and adapter follow the selected slot. 9.01 attaches the adapter in the launcher (#163 reworked), with 7.05 and 8.07 covering the mobile integration; 9.02 verifies the round trip across all six devices: the 1.0 sentence. This project does not build a separate sync service.
+7. **Android** (Adreno) (1.x, after 1.0). 7.01 adapt selected reviewed Android dependency/build, FEX bridge and Turnip/libadrenotools sources from revvv991 and zenithblue with credit through #207-#210, after the runtime ABI/thread/memory prerequisites; do not graft the whole peer project. 7.02 the runtime cross-builds for `aarch64-linux-android` in CI; 7.03 the Slint launcher's Android APK build with gamepad keys; 7.04 the hub serves the APK and install, the launcher installs them; 7.05 save-relay in the Android launcher; 7.06 a session per game with a controller.
+8. **Mac, iPhone and iPad** (1.x, after 1.0). 8.01 study bloodborne-native's recompiler, Metal renderer and iOS shell: licence files, what is Bloodborne-specific, a written plan (docs); 8.02 the runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios` in CI; 8.03 bring in the recompiler, run on the Mac from my dump to a library per game; 8.04 the Metal renderer for the collection; 8.05 the Mac app from the launcher, then the iOS app built on the Mac and installed by cable; 8.06 iOS controller mapping, touch hidden with a controller; 8.07 save-relay in the iOS app (its C interface); 8.08 the Mac: an hour per game; 8.09 the iPhone or iPad: a session per game with a controller.
+9. **One save everywhere.** External dependency: [iannitram/save-relay](https://github.com/iannitram/save-relay) for Linux, Windows, macOS, iOS/iPadOS and Android. Save Relay reached 1.0 on 2026-11-11, so it is now adopted, not just referenced: every build carries it (tracker #249). Desktop integration (9.01, #163) waits on its rc.1 release cut (save-relay#205); Android and iOS (7.05, 8.07) wait on its C-interface libraries (save-relay#49); they are 1.x and no longer block 1.0. The Mac waits on a supported macOS build (8.05, 1.x). Save slots move the save folders, so the save-relay manifest and adapter follow the selected slot. 9.01 attaches the adapter in the launcher (#163 reworked), with 7.05 and 8.07 (1.x) covering the mobile integration; 9.02 verifies the round trip across the three 1.0 devices (the AMD handheld, the Strix Halo tablet and the RTX 3090 Ti desktop): the 1.0 sentence. This project does not build a separate sync service.
 10. **Design pass** (R04), last before 1.0. 10.01 the built screens against the Continue screen brief and the shared design system, including the Steam artwork and Game Mode; findings become `design-pass` issues.
 
 ## Platform readiness evidence
@@ -67,9 +67,9 @@ The [2026-11-06 code audit](docs/audits/2026-11-06-universal-platforms.md) maps 
 
 ### Current implementation checkpoint (2026-11-06)
 
-Five roadmap issues have local implementation branches from the prior build wave: #188 dump identity refusal, #189 hub data transfer foundations, #206 bounded SELF/plain-ELF parsing, #207 Android dependency recipe, and #211 Apple feasibility. These branches are not merged into `main`; the code map records their exact scope and remaining acceptance below. In particular, #189 still needs listener/discovery/CLI wiring and device acceptance; #207 has not been built with the Android SDK/NDK; and #211 is plan-only because CPU/Metal probes were not run on Apple hardware. No platform application or gameplay milestone is complete from this work.
+Five roadmap issues have local implementation branches from the prior build wave: #188 dump identity refusal, #189 hub data transfer foundations, #206 bounded SELF/plain-ELF parsing, #207 Android dependency recipe, and #211 Apple feasibility. These branches are not merged into `main`; the code map records their exact scope and remaining acceptance below. In particular, #189 still needs listener/discovery/CLI wiring and device acceptance; #207 has not been built with the Android SDK/NDK; and #211 is plan-only because CPU/Metal probes were not run on Apple hardware. No platform application or gameplay milestone is complete from this work. #188 is closed, and #211 and #212 are now 1.x work (scope ruling 2026-11-12, #268).
 
-The next implementation wave (status 2026-11-11): #175 known-issue data is done on `main` (19 verified entries, each linked to an issue, loaded by a test that reads the shipped file). #190 Rust artwork generator is in PR #223, which ships the original images as bundled reference bytes (byte-identical output) instead of porting the drawing code. #31 ExpandImage stale-cache fix, #35 equeue lost-request fix and #37 shader barrier decode/lowering are still open; they address tracked play-breaking GPU/runtime defects. Device and visual acceptance remain required; none of this marks its containing roadmap stage complete.
+The next implementation wave (status 2026-11-12): #37 shader barrier is closed (PR #263, with a `wbinvl1` test; credits shadPS4 6752d8b1). #175 known-issue data is done on `main` (19 verified entries, each linked to an issue, loaded by a test that reads the shipped file). #190 Rust artwork generator: PR #223 is merged and emits the original images from Rust; #190 is reopened to delete `launcher/uncharted_art.py` and its test once nothing calls them. #31 ExpandImage stale-cache fix and #35 equeue lost-request fix are still open; they address tracked play-breaking GPU/runtime defects. Also merged 2026-11-12: #168 `Crash:` line once per process (PR #267), #171 `uncharted-run --probe` hardware report (PR #260), #173 benchmark report contracts (PR #236), #147 tune DLSS/FSR rules (PR #257), #138 RAM/VRAM line on the FPS counter (PR #264), #246 save slots in the Linux launcher (PR #254), #247 Turnip KGSL/FEX patches vendored (PR #255), CI on GitHub-hosted runners for Linux, Windows and macOS (PR #243), and an upstream sync of Supermedo/uncharted_pc `main` on 2026-11-11 (PR #239). Device and visual acceptance remain required; none of this marks its containing roadmap stage complete.
 
 
 ### Issue-backed peer import sequence
@@ -90,8 +90,7 @@ For Apple, #211 gates implementation on source/synthetic coverage and a
 file-level license/dependency map; it creates no game-dump inspection. #212 is
 synthetic no-JIT CPU coverage after #211. Existing #31 and #37 remain the
 small, issue-scoped shadPS4 import candidates; link to their pinned upstream changes in
-PEERS.md rather than creating duplicates. The former upstream head is already
-an ancestor of production `main`, so no sync batch is planned. #206 carries the
+PEERS.md rather than creating duplicates. The upstream `main` was merged into production `main` on 2026-11-11 (PR #239), so no sync batch is planned. #206 carries the
 separate Rust SELF/plain-ELF loader-parity obligation from the closure of #66.
 Save Relay reached 1.0 on 2026-11-11 and is folded into every build; tracker #249
 holds one row per build. This project still builds no sync service of its own.
@@ -101,7 +100,7 @@ holds one row per build. This project still builds no sync service of its own.
 | Project | Licence evidence | Where | How |
 |---|---|---|---|
 | shadPS4 | GPL-2.0 | `gpu/` | kept in our fork; read-only source research only; no reports or PRs to shadPS4 (anti-AI) |
-| Supermedo/uncharted_pc, spacepepperoni/uncharted_Linux | GPL-2.0 roots | current C/C++ lineage and Linux base | former-upstream head is already an ancestor of production `main`; no sync batch now. Port behavior into Rust modules as separate issues. |
+| Supermedo/uncharted_pc, spacepepperoni/uncharted_Linux | GPL-2.0 roots | current C/C++ lineage and Linux base | upstream `main` merged into production `main` on 2026-11-11 (PR #239); no sync batch now. Port behavior into Rust modules as separate issues. |
 | zorde23/Uncharted_Collection_PC and older community forks | GPL-2.0 roots | Windows/Linux comparisons | targeted fixes only when an open bug has the same cause; no broad engine graft |
 | revvv991/uncharted-android | GPL-2.0-or-later root; [`android/LICENSES.md`](https://github.com/revvv991/uncharted-android/blob/847faf5a802253cf90664144765f0e5d12eb410e/android/LICENSES.md#L1-L30) inventories dependencies | Android, #207-#210 | selected build/bridge references; exclude recipes, byte patches, generated game output and assets |
 | zenithblue-oss/shadps4-arm64 | per-file SPDX MIT for selected FEX source; transitive `hle_trace.h` is GPL-2.0-or-later | Android FEX, #208/#209 | experimental synthetic harness/context/HLE reference, not a drop-in engine; preserve exact file and dependency notices |
