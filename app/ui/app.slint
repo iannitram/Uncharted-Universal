@@ -2,7 +2,10 @@
 // file only draws; the view model, focus and button handling live in Rust (src/screen.rs,
 // src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
 // `Input::from_code`); the controller reaches the same handler from src/input.rs; clicks go
-// through `clicked(area, index)` (`Screen::click`).
+// through `clicked(area, index)` (`Screen::click`). The guided first run (roadmap 2.05,
+// src/firstrun.rs) is a page over everything while `mode` is 1.
+
+import { LineEdit } from "std-widgets.slint";
 
 export struct CardData {
     title: string,
@@ -205,12 +208,39 @@ export component AppWindow inherits Window {
     in property <int> side-index;
 
     // 0 Up, 1 Down, 2 Left, 3 Right, 4 Tab, 5 Shift+Tab, 6 A, 7 B, 8 LB, 9 RB, 10 Y
-    // (`Input::from_code`).
+    // (`Input::from_code`); 20-29 the digits 0-9 and 30 Backspace (`firstrun::Key::from_code`).
     callback input(int);
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
 
-    FocusScope {
+    // 0 the Continue screen, 1 the first run (`FirstRunView`).
+    in property <int> mode;
+    in property <string> fr-step;
+    in property <string> fr-title;
+    in property <[string]> fr-lines;
+    in property <[string]> fr-options;
+    in property <int> fr-focus;
+    // The text field's placeholder; "" when the step has no field.
+    in property <string> fr-field;
+    in-out property <string> fr-field-text;
+    // The six pairing-code boxes; empty when the step has none.
+    in property <[string]> fr-code;
+    in property <int> fr-code-cursor;
+    in property <bool> fr-has-progress;
+    in property <float> fr-progress;
+    in property <string> fr-error;
+    in property <string> fr-hint;
+    // A first-run button clicked or tapped (`FirstRun::click`).
+    callback fr-clicked(int);
+    // Enter in the text field (`FirstRun::field`).
+    callback field-accepted(string);
+
+    // The keyboard goes to the text field (Job::EditField), or back to the page.
+    public function focus-field() {
+        field.focus();
+    }
+
+    keys := FocusScope {
         init => {
             self.focus();
         }
@@ -244,7 +274,19 @@ export component AppWindow inherits Window {
                 return accept;
             }
             if (event.text == Key.Escape) {
+                if (field.has-focus) {
+                    keys.focus();
+                    return accept;
+                }
                 root.input(7);
+                return accept;
+            }
+            if (root.mode == 1 && event.text.character-count == 1 && event.text.is-float()) {
+                root.input(20 + round(event.text.to-float()));
+                return accept;
+            }
+            if (event.text == Key.Backspace) {
+                root.input(30);
                 return accept;
             }
             if (event.text == Key.PageUp) {
@@ -635,6 +677,101 @@ export component AppWindow inherits Window {
                 color: Theme.text;
                 font-size: root.unit * 1.3;
                 horizontal-alignment: center;
+            }
+        }
+
+        // The guided first run (roadmap 2.05, src/firstrun.rs): one column of buttons, the
+        // pairing-code boxes, a text field and a progress bar, over everything.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.mode == 1;
+            background: Theme.page;
+            TouchArea { }
+            VerticalLayout {
+                padding: root.unit * 1.5;
+                spacing: root.unit * 0.8;
+                Hint {
+                    unit: root.unit;
+                    text: root.fr-step;
+                }
+                Text {
+                    text: root.fr-title;
+                    color: Theme.text;
+                    font-size: root.unit * 1.6;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                for line in root.fr-lines: Text {
+                    text: line;
+                    color: Theme.text;
+                    font-size: root.unit;
+                    wrap: word-wrap;
+                }
+                if root.fr-has-progress: Rectangle {
+                    height: root.unit * 0.8;
+                    border-radius: root.unit * 0.4;
+                    background: Theme.button;
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        height: parent.height;
+                        width: parent.width * clamp(root.fr-progress, 0, 1);
+                        border-radius: root.unit * 0.4;
+                        background: Theme.accent;
+                    }
+                }
+                if root.fr-code.length > 0: HorizontalLayout {
+                    alignment: start;
+                    spacing: root.unit * 0.5;
+                    for digit[i] in root.fr-code: Rectangle {
+                        width: root.unit * 2.4;
+                        height: root.unit * 3;
+                        border-radius: root.unit * 0.4;
+                        border-width: i == root.fr-code-cursor ? 3px : 1px;
+                        border-color: i == root.fr-code-cursor ? Theme.accent : Theme.edge;
+                        background: i == root.fr-code-cursor ? Theme.button-focused : Theme.button;
+                        Text {
+                            text: digit;
+                            color: Theme.text;
+                            font-size: root.unit * 1.6;
+                        }
+                    }
+                }
+                for option[i] in root.fr-options: FocusButton {
+                    label: option;
+                    unit: root.unit;
+                    focused: root.fr-focus == i;
+                    clicked => {
+                        root.fr-clicked(i);
+                    }
+                }
+                field := LineEdit {
+                    visible: root.fr-field != "";
+                    height: root.fr-field == "" ? 0px : root.unit * 2.6;
+                    font-size: root.unit;
+                    placeholder-text: root.fr-field;
+                    text <=> root.fr-field-text;
+                    accepted(text) => {
+                        root.field-accepted(text);
+                        keys.focus();
+                    }
+                }
+                if root.fr-error != "": Text {
+                    text: root.fr-error;
+                    color: #ff8a7a;
+                    font-size: root.unit;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                Hint {
+                    unit: root.unit;
+                    text: root.fr-hint;
+                }
             }
         }
     }

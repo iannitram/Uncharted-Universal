@@ -12,9 +12,13 @@
 //! uncharted-universal hub        serve|pair|pull
 //! uncharted-universal fleet
 //! uncharted-universal generate-art [<output folder>]
+//! uncharted-universal setup      [status|hub|client|steam]
 //! ```
 //!
-//! Most commands are still skeletons; `generate-art` writes the launcher collection art.
+//! Most commands are still skeletons; `generate-art` writes the launcher collection art and
+//! `setup` is the app's guided first run without the window (`setup.rs`).
+
+mod setup;
 
 use std::process::ExitCode;
 
@@ -31,6 +35,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("hub", "serve, pair with or pull from a build hub"),
     ("fleet", "show the paired devices and their builds"),
     ("generate-art", "write the collection artwork to a folder"),
+    (
+        "setup",
+        "first run: prepare from the dump, or pull from the hub; add to Steam",
+    ),
 ];
 
 /// Exit status of a command that is not built yet.
@@ -46,7 +54,7 @@ fn usage() -> String {
 }
 
 /// What running with `args` (without the program name) prints and returns.
-struct Outcome {
+pub(crate) struct Outcome {
     stdout: String,
     stderr: String,
     code: u8,
@@ -94,7 +102,11 @@ fn main() -> ExitCode {
             }
         };
     }
-    let outcome = run(&args);
+    let outcome = if args.first().is_some_and(|s| s == "setup") {
+        setup::main(&args[1..])
+    } else {
+        run(&args)
+    };
     print!("{}", outcome.stdout);
     eprint!("{}", outcome.stderr);
     ExitCode::from(outcome.code)
@@ -122,7 +134,7 @@ mod tests {
     #[test]
     fn every_command_says_not_built_and_exits_two() {
         for (name, _) in COMMANDS {
-            if *name == "generate-art" {
+            if *name == "generate-art" || *name == "setup" {
                 continue;
             }
             let out = run(&args(&[name, "u1"]));
