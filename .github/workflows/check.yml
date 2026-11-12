@@ -67,6 +67,12 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+      - name: Build the launcher and run its Fleet page tests (2.08)
+        # Named so a broken Fleet page shows up by name; the workspace steps above already
+        # build and test app/ with everything else.
+        run: |
+          cargo build -p uncharted-app
+          cargo test -p uncharted-app -- vm::fleet pages
       - name: Run the DLSS settings fallback regression test
         if: matrix.os == 'linux'
         run: |

@@ -11,6 +11,8 @@ const STICK_THRESHOLD: f32 = 0.6;
 pub enum Action {
     Move(Nav),
     Activate,
+    /// Leave the page (B on Xbox pads, Circle on PlayStation pads).
+    Back,
 }
 
 /// Reads gilrs events and turns them into [`Action`]s. A stick push fires once until it
@@ -81,6 +83,7 @@ fn button_action(button: Button) -> Option<Action> {
         Button::DPadRight => Some(Action::Move(Nav::Right)),
         // "South" is A on Xbox pads and Cross on PlayStation pads.
         Button::South => Some(Action::Activate),
+        Button::East => Some(Action::Back),
         _ => None,
     }
 }
@@ -90,12 +93,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dpad_and_south_map() {
+    fn dpad_south_and_east_map() {
         assert_eq!(
             button_action(Button::DPadLeft),
             Some(Action::Move(Nav::Left))
         );
         assert_eq!(button_action(Button::South), Some(Action::Activate));
-        assert_eq!(button_action(Button::East), None);
+        assert_eq!(button_action(Button::East), Some(Action::Back));
+        assert_eq!(button_action(Button::North), None);
     }
 }

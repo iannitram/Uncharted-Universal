@@ -1,4 +1,4 @@
-//! Focus order for the placeholder buttons, plain Rust so it is tested without a window.
+//! Focus order for a page's items, plain Rust so it is tested without a window.
 
 /// A direction from the keyboard or the controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ impl Nav {
     }
 }
 
-/// Which of `len` buttons has focus. Moves wrap around.
+/// Which of `len` items has focus. Moves wrap around.
 #[derive(Debug)]
 pub struct FocusRing {
     len: usize,
@@ -39,7 +39,15 @@ impl FocusRing {
         self.index
     }
 
-    /// Up/Left go to the previous button, Down/Right to the next.
+    /// Focus item `index` (a click); `false`, and no change, when there is no such item.
+    pub fn focus_on(&mut self, index: usize) -> bool {
+        if index < self.len {
+            self.index = index;
+        }
+        index < self.len
+    }
+
+    /// Up/Left go to the previous item, Down/Right to the next.
     pub fn step(&mut self, nav: Nav) {
         self.index = match nav {
             Nav::Up | Nav::Left => (self.index + self.len - 1) % self.len,
@@ -64,6 +72,15 @@ mod tests {
         assert_eq!(ring.index(), 1);
         ring.step(Nav::Up);
         assert_eq!(ring.index(), 0);
+    }
+
+    #[test]
+    fn focus_on_sets_an_item_and_ignores_one_past_the_end() {
+        let mut ring = FocusRing::new(3);
+        assert!(ring.focus_on(2));
+        assert_eq!(ring.index(), 2);
+        assert!(!ring.focus_on(3));
+        assert_eq!(ring.index(), 2);
     }
 
     #[test]
