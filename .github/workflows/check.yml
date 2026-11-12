@@ -67,6 +67,12 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+      - name: Smoke-run the uncharted-universal commands
+        # Every command once on a synthetic dump with its exit status (crates/cli/tests/cli.rs,
+        # also part of the workspace tests above; named here so a CLI break shows on its own).
+        run: |
+          cargo run -q -p uncharted_cli -- --help
+          cargo test -p uncharted_cli --test cli
       - name: Run the DLSS settings fallback regression test
         if: matrix.os == 'linux'
         run: |
