@@ -42,13 +42,14 @@ pub fn saves_of(user_dir: &Path, game: Game) -> Vec<SaveEntry> {
 }
 
 /// The dump folder of `game`: `BB_GAME_DIR_U1` .. `_U3`, else `BB_GAME_DIR` (the order of
-/// `prepare::locate`), read through `env`. An empty value counts as unset.
-pub fn dump_dir(game: Game, env: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
-    let own = format!("BB_GAME_DIR_{}", game.key().to_ascii_uppercase());
-    env(&own)
-        .filter(|v| !v.is_empty())
-        .or_else(|| env("BB_GAME_DIR").filter(|v| !v.is_empty()))
-        .map(PathBuf::from)
+/// `prepare::locate`), read through `env`, else the folder the first run noted in `dirs`
+/// (`setup::dump_folder`). An empty value counts as unset.
+pub fn dump_dir(
+    game: Game,
+    env: impl Fn(&str) -> Option<String>,
+    dirs: Option<&uncharted_core::platform::AppDirs>,
+) -> Option<PathBuf> {
+    uncharted_core::setup::dump_folder(game, env, dirs)
 }
 
 /// The collection's `sce_sys/icon0.png` from the player's dump, read at run time, when it can be
@@ -236,9 +237,15 @@ mod tests {
             "BB_GAME_DIR" => Some("/games/all".to_owned()),
             _ => None,
         };
-        assert_eq!(dump_dir(Game::U2, env), Some(PathBuf::from("/games/u2")));
-        assert_eq!(dump_dir(Game::U3, env), Some(PathBuf::from("/games/all")));
-        assert_eq!(dump_dir(Game::U1, |_| None), None);
+        assert_eq!(
+            dump_dir(Game::U2, env, None),
+            Some(PathBuf::from("/games/u2"))
+        );
+        assert_eq!(
+            dump_dir(Game::U3, env, None),
+            Some(PathBuf::from("/games/all"))
+        );
+        assert_eq!(dump_dir(Game::U1, |_| None, None), None);
     }
 
     #[test]

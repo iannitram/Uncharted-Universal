@@ -12,5 +12,6 @@ name = "uncharted-universal"
 path = "src/main.rs"
 
 [dependencies]
-uncharted_core = { path = "../core" }
+# `hub`: `setup client` pairs with a hub and pulls the prepared games.
+uncharted_core = { path = "../core", features = ["hub"] }
 serde_json = "1"

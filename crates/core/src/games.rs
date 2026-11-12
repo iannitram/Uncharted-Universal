@@ -108,7 +108,13 @@ pub fn check_revision(game: Game, app_ver: &str) -> Result<()> {
     check_revision_in(game, app_ver, &SUPPORTED)
 }
 
-fn check_revision_in(game: Game, app_ver: &str, supported: &[(Game, &[&str])]) -> Result<()> {
+/// [`check_revision`] against an explicit table, so `prepare`'s tests can open the gate
+/// while [`SUPPORTED`] is still empty.
+pub(crate) fn check_revision_in(
+    game: Game,
+    app_ver: &str,
+    supported: &[(Game, &[&str])],
+) -> Result<()> {
     if supported
         .iter()
         .find(|(candidate, _)| *candidate == game)
