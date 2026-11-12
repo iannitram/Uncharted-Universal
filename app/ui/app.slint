@@ -1,0 +1,90 @@
+// The launcher window. The .slint file only draws; focus order and button handling live in
+// Rust (src/focus.rs, ADR 0003). Keys become `Nav` through the `nav` callback; the controller
+// reaches the same callbacks from src/input.rs.
+
+component PlaceholderButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> focused;
+    callback activated();
+
+    height: 56px;
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #5a6270;
+    background: focused ? #2d3544 : #1f2430;
+    Text {
+        text: root.label;
+        color: white;
+        font-size: 18px;
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+export component AppWindow inherits Window {
+    title: "Uncharted Universal";
+    min-width: 640px;
+    min-height: 400px;
+    preferred-width: 960px;
+    preferred-height: 600px;
+    background: #12151c;
+
+    in-out property <int> focused-index: 0;
+    // 0 = Up, 1 = Down, 2 = Left, 3 = Right (see `Nav` in src/focus.rs).
+    callback nav(int);
+    callback activate(int);
+
+    FocusScope {
+        init => { self.focus(); }
+        key-pressed(event) => {
+            if (event.text == Key.UpArrow) { root.nav(0); return accept; }
+            if (event.text == Key.DownArrow) { root.nav(1); return accept; }
+            if (event.text == Key.LeftArrow) { root.nav(2); return accept; }
+            if (event.text == Key.RightArrow) { root.nav(3); return accept; }
+            if (event.text == Key.Tab) { root.nav(1); return accept; }
+            if (event.text == Key.Backtab) { root.nav(0); return accept; }
+            if (event.text == Key.Return || event.text == " ") { root.activate(root.focused-index); return accept; }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+
+            // Placeholder for the Continue screen (piece 2.04).
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: 12px;
+                background: #1a1f2a;
+                Text {
+                    text: "Continue screen goes here";
+                    color: #8a93a3;
+                    font-size: 22px;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 16px;
+                PlaceholderButton {
+                    label: "Placeholder A";
+                    focused: root.focused-index == 0;
+                    activated => { root.activate(0); }
+                }
+                PlaceholderButton {
+                    label: "Placeholder B";
+                    focused: root.focused-index == 1;
+                    activated => { root.activate(1); }
+                }
+            }
+
+            // Slint's royalty-free licence asks for this notice.
+            Text {
+                text: "About: this application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).";
+                color: #8a93a3;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

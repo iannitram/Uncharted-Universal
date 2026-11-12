@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/runtime", "crates/cli"]
-# app/ (the Slint launcher, `uncharted-app`) joins the workspace when it is scaffolded
-# (docs/code-map.md, piece 2.03).
+members = ["crates/core", "crates/runtime", "crates/cli", "app"]
 
 [workspace.package]
 version = "0.0.0"
