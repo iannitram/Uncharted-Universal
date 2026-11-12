@@ -23,6 +23,8 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+pub mod benchmark;
 pub mod crash;
 pub mod os;
+pub mod pad;
 pub mod savedata;

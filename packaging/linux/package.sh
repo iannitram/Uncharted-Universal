@@ -6,6 +6,7 @@
 # LINUX_BUILD (e.g. 0.3.1-linux.4) is written into the package for the launcher's update check.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
+cargo run --release -p uncharted_cli -- generate-art "$PWD/launcher/covers"
 [[ -f out/bb-probe && -f out/gpu/libbbgpu.so && -f out/bb-gpu-capabilities ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 python=${PYTHON:-python3}
