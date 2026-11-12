@@ -1,18 +1,122 @@
-//! The Steam library images for our shortcut (SPEC.md M13): their file names under
-//! `userdata/<user>/config/grid/` and their sizes, and where each is cut from. The images come
-//! from each game's own `sce_sys/pic0.png`, `pic1.png` and `icon0.png` on the hub; nothing is
-//! downloaded and nothing is kept in this repo (SPEC.md M9, Won'ts). Replaces
-//! `launcher/uncharted_art.py` (`steam_artwork`, `cover`, `_framed`, `_fill`); its SteamGridDB
-//! download (`steamgriddb_artwork`) is dropped.
+//! Steam library paths and deterministic collection artwork output.
 //!
-//! The file names and the logo and icon sizes follow iannitram/totk-native's `artwork.rs`
-//! (MIT); grid, wide grid and hero sizes are those of `steam_artwork` in `uncharted_art.py`.
+//! The five `collection-artwork` assets are the fixed raster references emitted by the former
+//! Pillow generator. Keeping those exact outputs avoids changing the established artwork while
+//! packaging no longer needs Python or a network service to produce them.
 
 use crate::error::{not_built, Result};
 use crate::games::Game;
 use std::path::{Path, PathBuf};
 
-/// One of the images Steam shows for a non-Steam game.
+const COLLECTION_ART: [(&str, &[u8]); 5] = [
+    (
+        "u1.jpg",
+        include_bytes!("../data/collection-artwork/u1.jpg"),
+    ),
+    (
+        "u2.jpg",
+        include_bytes!("../data/collection-artwork/u2.jpg"),
+    ),
+    (
+        "u3.jpg",
+        include_bytes!("../data/collection-artwork/u3.jpg"),
+    ),
+    (
+        "collection_banner.jpg",
+        include_bytes!("../data/collection-artwork/collection_banner.jpg"),
+    ),
+    (
+        "emblem.png",
+        include_bytes!("../data/collection-artwork/emblem.png"),
+    ),
+];
+
+/// Write the original collection artwork without a runtime Python dependency.
+///
+/// The fixed output assets preserve the prior generator's composition exactly and make repeated
+/// builds byte-for-byte deterministic.
+pub fn generate_collection_art(out_dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+    for (name, bytes) in COLLECTION_ART {
+        std::fs::write(out_dir.join(name), bytes)?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod collection_art_tests {
+    use super::generate_collection_art;
+    use image::GenericImageView;
+
+    #[test]
+    fn generates_all_five_artworks_deterministically() {
+        let dir = std::env::temp_dir().join(format!("uncharted-art-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        generate_collection_art(&dir).unwrap();
+        let first: Vec<_> = [
+            "u1.jpg",
+            "u2.jpg",
+            "u3.jpg",
+            "collection_banner.jpg",
+            "emblem.png",
+        ]
+        .map(|name| std::fs::read(dir.join(name)).unwrap())
+        .into();
+        generate_collection_art(&dir).unwrap();
+        let second: Vec<_> = [
+            "u1.jpg",
+            "u2.jpg",
+            "u3.jpg",
+            "collection_banner.jpg",
+            "emblem.png",
+        ]
+        .map(|name| std::fs::read(dir.join(name)).unwrap())
+        .into();
+        assert_eq!(first, second);
+        assert_eq!(
+            image::open(dir.join("u1.jpg")).unwrap().dimensions(),
+            (620, 660)
+        );
+        assert_eq!(
+            image::open(dir.join("u2.jpg")).unwrap().dimensions(),
+            (620, 660)
+        );
+        assert_eq!(
+            image::open(dir.join("u3.jpg")).unwrap().dimensions(),
+            (620, 660)
+        );
+        assert_eq!(
+            image::open(dir.join("collection_banner.jpg"))
+                .unwrap()
+                .dimensions(),
+            (1920, 540)
+        );
+        assert_eq!(
+            image::open(dir.join("emblem.png")).unwrap().dimensions(),
+            (256, 256)
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "collection_banner.jpg",
+                "emblem.png",
+                "u1.jpg",
+                "u2.jpg",
+                "u3.jpg"
+            ]
+        );
+        let emblem = image::open(dir.join("emblem.png")).unwrap().to_rgba8();
+        assert_eq!(emblem.dimensions(), (256, 256));
+        assert_eq!(emblem.get_pixel(0, 0).0[3], 0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Art {
     /// The portrait capsule in the library grid.
