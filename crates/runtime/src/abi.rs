@@ -31,18 +31,19 @@ pub fn runtime_resolve(name: &str, is_data: bool) -> Option<usize> {
     unimplemented!("not built yet: abi::runtime_resolve")
 }
 
-/// The runtime's ABI version. `0` means no C symbol has moved to Rust yet; the first ported
-/// module raises it and the loader checks it at start. Exists so the static library links and a
-/// test can call across the C ABI from day one.
+/// The runtime's ABI version, which the loader is to check at start. `0` meant no C symbol
+/// had moved to Rust; `1`: [`crate::memory`] (piece 3.12) exports the `src/runtime_memory.c`
+/// symbols on Linux and Android. Exists so the static library links and a test can call
+/// across the C ABI from day one.
 #[no_mangle]
 pub extern "C" fn uncharted_runtime_version() -> u32 {
-    0
+    1
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn version_is_zero_until_a_module_moves() {
-        assert_eq!(super::uncharted_runtime_version(), 0);
+    fn version_is_one_since_memory_moved() {
+        assert_eq!(super::uncharted_runtime_version(), 1);
     }
 }
