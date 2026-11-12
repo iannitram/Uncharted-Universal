@@ -163,6 +163,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `app/src/input.rs` | planned | `Nav` from gilrs (desktop) and Android key events | | M10, M17 |
 | `app/ui/` | planned | `.slint` pages, controller first; texts in Slint's translation files (from `uncharted_i18n*.py`, `bbport_lang*.py`, seven languages) | `launcher/uncharted_widgets.py`, i18n files | M10, M20 |
 | `docs/design/continue-screen.md` | planned | the Continue screen brief, shared with totk-native, for three games | | M10 |
+| `docs/shadps4-triage.md` | present | per-game changes in `gpu/shadps4` against base `b4e7ae7`, with the hook each needs in the shared core (private half of shadPS4#17) | | M8 |
 
 ## Adopted code (stays in its own language)
 
