@@ -30,6 +30,14 @@ class LinuxPackageScriptsTests(unittest.TestCase):
     def test_every_script_run_py_starts_is_packaged(self):
         self.assertEqual(scripts_run_py_needs() - packaged_scripts(), set())
 
+    def test_every_script_run_py_imports_is_packaged(self):
+        """run.py imports scripts/ modules too (cheats, prepare, save_slots for #246)."""
+        text = (ROOT / 'run.py').read_text(encoding='utf-8')
+        imported = {name + '.py' for name in re.findall(r'^\s*(?:import|from) ([A-Za-z0-9_]+)', text, re.M)}
+        needed = {name for name in imported if (ROOT / 'scripts' / name).is_file()}
+        self.assertIn('save_slots.py', needed)
+        self.assertEqual(needed - packaged_scripts(), set())
+
 
 if __name__ == '__main__':
     unittest.main()

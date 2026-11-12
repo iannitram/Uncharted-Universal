@@ -52,5 +52,23 @@ class LauncherTranslationTests(unittest.TestCase):
                 self.assertEqual(texts - set(uncharted_i18n.TRANSLATIONS[language]), set())
 
 
+    def test_linux_save_slot_texts_are_translated(self):
+        """The Linux launcher's save slot texts (#246): fill_saves and slot_action."""
+        tree = ast.parse((ROOT / 'launcher' / 'uncharted_linux.py').read_text(encoding='utf-8'))
+        texts = set()
+        for function in ast.walk(tree):
+            if isinstance(function, ast.FunctionDef) and function.name in ('fill_saves', 'slot_action'):
+                texts |= {node.args[0].value for node in ast.walk(function)
+                          if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                          and node.func.id == '_' and node.args
+                          and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)}
+        self.assertIn('Copy to new slot', texts)
+        for language in ('es', 'pt', 'fr', 'de', 'it', 'ja'):
+            with self.subTest(language=language):
+                table = uncharted_i18n.TRANSLATIONS[language]
+                self.assertEqual(texts - set(table), set())
+                for text in texts:
+                    self.assertEqual(table[text].count('{}'), text.count('{}'), text)
+
 if __name__ == '__main__':
     unittest.main()
