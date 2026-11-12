@@ -29,7 +29,7 @@ On the RTX 3090 Ti desktop (`desktop-3090ti`), recorded 2026-11-12. These files 
 | | Path |
 |---|---|
 | Raw package (US, v1.02, CUSA02320) | `L:\Dropbox\Software\Emulation\roms\PS4\Uncharted The Nathan Drake Collection - [US] [EN] [1.02].pkg` (read only; never install or extract into Dropbox) |
-| Installed copy (55.7 GB, 16,156 entries) | `B:\games-donotdelete\Uncharted-Universal\CUSA02320\` (`eboot.bin`, `u1data`, `u2data`, `u3data`, `sce_sys`) |
+| Installed copy (55.7 GB: 15,195 files in 336 folders, 59,807,175,456 bytes, counted 2026-11-12) | `B:\games-donotdelete\Uncharted-Universal\CUSA02320\` (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`, `sce_discmap.plt`, `sce_module`, `sce_sys`, `shareddata`, `u1data`, `u2data`, `u3data`) |
 
 How it was made: the shadPS4 fork's `shadps4.exe --extract-pkg <pkg> --extract-dir <new empty folder> --extract-threads 8`. shadPS4's `config.toml` `installDirs` points at `B:/games-donotdelete/Uncharted-Universal`.
 
