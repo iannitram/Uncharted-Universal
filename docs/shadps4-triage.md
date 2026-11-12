@@ -2,7 +2,7 @@
 
 This is the private half of the triage of `gpu/shadps4/` against its vendor base `b4e7ae7`. The public half, with every changed file and its mark (general, per-game or dropped), is [docs/gpucore-triage/uncharted.md](https://github.com/iannitram/shadPS4/blob/main/docs/gpucore-triage/uncharted.md) in the shadPS4 fork. It lists per-game files by name only; what each changes, and the hook it needs in the shared core's hook table (`gpucore/include/shadps4_gpucore_hooks.h`), is written here. Read at Uncharted-Universal `d7841aed7b9740430881abb03ad99a68158f05c1`.
 
-Totals: 192 changed files: 138 general, 22 per-game, 32 dropped. Method and the files left out are in the public file.
+Totals: 192 changed files: 140 general, 22 per-game, 30 dropped. Method and the files left out are in the public file.
 
 Existing planned hooks: `patch_shader` (where the pipeline cache compiles a guest shader), `before_submit` (scheduler submit), `after_present` (presenter). The other hook names below are proposals from this triage, not in the table yet.
 
@@ -120,8 +120,8 @@ Facts the public table leaves out (game names, comments, origins), for the porte
 | `src/core/libraries/np/np_tus.h` | dropped | Older reduced struct set; superseded by upstream header. |
 | `src/core/libraries/np/trophy_ui.cpp` | dropped | Vendored copy predates base (trophy-name format string bug). |
 | `src/shader_recompiler/backend/spirv/emit_spirv_floating_point.cpp` | dropped | Tri-min/max/med NaN handling and NClamp saturate are what upstream #5257 does; upstream main has the same OpNClamp form. Only a stray #include <cstdlib> and a ConstF32 spelling differ. |
-| `src/shader_recompiler/frontend/decode.h` | dropped | position() exists only for the local fetch-shader parse cache, which upstream #5112 replaces by direct parsing. |
-| `src/shader_recompiler/frontend/fetch_shader.cpp` | dropped | Local per-thread fetch-shader parse cache (BbToggle::FetchShaderCache) targets the cost that upstream #5112 removes by parsing the fetch shader directly (different approach, same goal). Minority: one call reads UserData() snapshots (info.h) which must be re-applied on rebase. |
+| `src/shader_recompiler/frontend/decode.h` | general | position() exists only for the local fetch-shader parse cache (BbToggle::FetchShaderCache). Upstream main has no such cache and #5112 (already in the base) does not add it, so this is not dropped; keep it only if the cache is kept. |
+| `src/shader_recompiler/frontend/fetch_shader.cpp` | general | Local per-thread fetch-shader parse cache (BbToggle::FetchShaderCache); upstream main has no such cache (the base already carries the #5112 parsing optimisations, which may make it redundant: decide at port time). Required part: one call reads UserData() snapshots (info.h), which must be ported with info.h. |
 | `src/shader_recompiler/frontend/format.cpp` | dropped | File is byte-identical to upstream main (BUFFER_WBINVL1 / _SC operand metadata). |
 | `src/shader_recompiler/frontend/translate/scalar_alu.cpp` | dropped | Identical to upstream main; the two VENDOR.txt backports. |
 | `src/shader_recompiler/frontend/translate/translate.h` | dropped | Declarations only: LegacyMul, V_MAC/MAD_LEGACY_F32, *_CLAMP_F32 and the ordered flag on V_CMP_F32/F64 all exist upstream. |
