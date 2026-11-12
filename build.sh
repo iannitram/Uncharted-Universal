@@ -189,6 +189,8 @@ if [[ ${1:-} == --test ]]; then
         tail -40 out/gpu-tests-build.log >&2
         echo 'GPU test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
     fi
+    # The renderer tests need an existing user dir (shadPS4 would create ~/.local/share/shadPS4, which a bare CI home lacks).
+    BB_GPU_USER_DIR=$(mktemp -d); export BB_GPU_USER_DIR
     for test in "${tests[@]:0:6}"; do "out/gpu/$test"; done
     if [[ -s /usr/share/vulkan/icd.d/lvp_icd.x86_64.json ]]; then
         export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
