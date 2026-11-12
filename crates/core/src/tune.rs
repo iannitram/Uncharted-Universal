@@ -11,7 +11,8 @@
 //! than the GPU driving the launcher window. The future runtime probe owns Vulkan device
 //! enumeration, generation detection, `BB_GPU_ID`, refresh-rate and CPU feature queries.
 //! No game files are needed. `choices` supplies the memory, RTX and laptop gates;
-//! `upscalers` adds the DLSS and FSR rules and the default upscaler on top of them (#147).
+//! `upscalers` adds the DLSS and FSR rules and the default upscaler on top of them (#147), and
+//! `pick_for` keeps the three cards to them.
 
 use crate::error::{Error, Result};
 use serde_json::Value;
@@ -189,7 +190,8 @@ pub struct Hidden {
 ///
 /// The game keeps the final word: its own probe falls back to FSR 3.1 when DLSS cannot load
 /// and when the FSR 4 shaders cannot run, and says why in the overlay. FSR 4.1.1 and XeSS are
-/// offered by whoever knows their files are installed; they are not GPU rules.
+/// offered by whoever knows their files are installed; they are not GPU rules. The cards of
+/// [`pick_for`] only take values offered here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upscalers {
     /// `anti_aliasing` values offered, in the page's order: `off`, `taa`, `fsr1` and `fsr3`
@@ -302,7 +304,8 @@ pub struct Bench {
 pub struct Card {
     pub frame_rate: String,
     pub render_resolution: String,
-    /// The upscaler's name: `dlss` on an RTX card, else `fsr3`.
+    /// The upscaler's name: from [`pick`], `dlss` on an RTX card, else `fsr3`; from
+    /// [`pick_for`], the GPU's default upscaler.
     pub anti_aliasing: String,
     pub upscale_preset: String,
     pub frame_generation: String,
@@ -320,6 +323,8 @@ pub struct Cards {
 
 /// Pick the settings of the three cards for `device`, stepping a card's preset down when
 /// `bench` shows it missed its frame-rate target (30 for `handheld30`, 60 for the others).
+/// A `Device` has no generation, so this cannot apply #147's rules: the Settings page uses
+/// [`pick_for`], which starts from it.
 pub fn pick(device: &Device, bench: &Bench) -> Cards {
     let anti_aliasing = if device.rtx { "dlss" } else { "fsr3" };
 
@@ -426,4 +431,29 @@ pub fn pick(device: &Device, bench: &Bench) -> Cards {
         balanced60,
         max,
     }
+}
+
+/// The three cards for the selected GPU: the entry point the Settings page uses. [`pick`]
+/// knows the [`Device`] alone and gives DLSS Frame Generation to every RTX with 6 GB; this keeps
+/// each card to what [`upscalers`] offers (#147):
+/// - `anti_aliasing` is the GPU's default upscaler ([`Upscalers::default`]). It differs from
+///   `pick` only on a non-RTX GPU the game has not measured FSR 3.1 on, which starts with `off`:
+///   the launcher always sends the card's value (`BB_UPSCALER`), and the game keeps a chosen
+///   FSR 3.1 even there. With `off` the launcher draws at the resolution and ignores the preset.
+/// - A hidden `frame_generation` (DLSS's on an RTX 20 or 30) becomes FSR 3's under `pick`'s
+///   own rule for it (offered, which needs 6 GB, and a display of 120 Hz or more), else `off`.
+///
+/// Every other value is `pick`'s.
+pub fn pick_for(report: &HardwareReport, bench: &Bench) -> Cards {
+    let rules = upscalers(report);
+    let offered = &rules.frame_generation;
+    let fsr3 = offered.contains(&"fsr3") && report.device.refresh_hz.unwrap_or(0) >= 120;
+    let mut cards = pick(&report.device, bench);
+    for card in [&mut cards.handheld30, &mut cards.balanced60, &mut cards.max] {
+        card.anti_aliasing = rules.default.to_string();
+        if !offered.contains(&card.frame_generation.as_str()) {
+            card.frame_generation = if fsr3 { "fsr3" } else { "off" }.to_string();
+        }
+    }
+    cards
 }
