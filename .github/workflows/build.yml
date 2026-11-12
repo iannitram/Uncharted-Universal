@@ -28,10 +28,9 @@ concurrency:
 
 jobs:
   build:
-    # Self-hosted Linux runner (R29): this repo is private.
-    runs-on: [self-hosted, linux]
-    # The self-hosted runner is itself a container (no nested Docker) on Ubuntu 24.04, which has no
-    # SDL3 package. So the build runs in a Debian 13 chroot (glibc 2.41, no newer than SteamOS 3.7+).
+    # GitHub-hosted Linux runner (R29): this repo is public.
+    runs-on: ubuntu-24.04
+    # Ubuntu 24.04 has no SDL3 package. So the build runs in a Debian 13 chroot (glibc 2.41, no newer than SteamOS 3.7+).
     env:
       CHROOT: /var/tmp/trixie-build
     steps:
@@ -140,7 +139,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: uncharted-linux
-          path: dist/*
+          retention-days: 3
+          path: |
+            dist/Uncharted-x86_64.AppImage
+            dist/uncharted-linux.tar.gz
+            dist/manifest.json
+            dist/SHA256SUMS
+            dist/vulkan-smoke.txt
       - name: Release
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.ref
         env:

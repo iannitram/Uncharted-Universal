@@ -28,6 +28,7 @@ import sys
 PORT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PORT / 'scripts'))
 import cheats
+from prepare import collection_folder
 EXECUTABLES = {'u1': 'eboot.bin', 'u2': 'big2-ps4_Shipping.elf', 'u3': 'big3-ps4_Shipping.elf'}
 LOADEXEC_EXIT = 101  # runtime_services.c: the game asked for another executable
 
@@ -164,7 +165,10 @@ def locate(env, name):
     if not folder:
         return None, name
     folder = Path(folder)
-    if own and not (folder / name).is_file() and (folder / 'eboot.bin').is_file():
+    # Not in a collection folder: there eboot.bin is Uncharted 1, and an incomplete dump without
+    # big2/big3 started Uncharted 1 on half its files (a player's log, 2026-11-01).
+    if own and not (folder / name).is_file() and (folder / 'eboot.bin').is_file() \
+            and not collection_folder(folder):
         name = 'eboot.bin'
     return folder, name
 
@@ -540,9 +544,10 @@ def main():
         # Apply the per-game defaults
         env.update(fix_defaults(player_env, exe))
         # U3 characters sinking into the ground, floating or twitching (#727, #745, #751; fix from
-        # drakolordx7's community build): the raycaster copy's results are read back at the end-of-pipe
-        # label (Cartagena square 88 -> 66 FPS uncapped). The full fix also makes the label wait for
-        # every small result (BB_READBACK_SMALL_GATE=1, launcher On: 53 FPS), so it is left to the player.
+        # drakolordx7's community build): the raycaster copy's results are read back and land once the
+        # GPU is done (no cost: Cartagena market 88 -> 96 FPS uncapped). The full fix also makes the
+        # end-of-pipe label wait for them and every small result (BB_COPY64_EOP_GATE=1,
+        # BB_READBACK_SMALL_GATE=1, launcher On: 53 FPS), so it is left to the player.
         if 'BB_COPY64_EOP_READBACK' not in player_env:
             if exe == EXECUTABLES['u3']:
                 env['BB_COPY64_EOP_READBACK'] = '1'
@@ -557,7 +562,8 @@ def main():
             game = merge_update(game, update, out_root / 'updated' / game.name)
             print(f'Title update: {update}')
         if not (game / file).is_file():
-            fail(f'No {file} in {game}.')
+            fail(f'No {file} in {game}: the game dump is incomplete (extract the game again) or the wrong folder '
+                 'is chosen for this game.')
         out = out_root / Path(exe).stem.split('-')[0]
         prepare(game, file, out)
         image = render_resolution(env, exe, out, out / 'boot-linked.bin')

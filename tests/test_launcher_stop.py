@@ -2,7 +2,7 @@ from paths import ROOT
 import ctypes
 import importlib.util
 import os
-from pathlib import Path
+from pathlib import PureWindowsPath
 import subprocess
 import sys
 import unittest
@@ -199,7 +199,7 @@ class ProcessTreeFallbackTests(unittest.TestCase):
                 mock.patch.dict(launcher.os.environ, {'SystemRoot': r'C:\Windows'}):
             launcher.terminate_process_tree(process)
         command = run.call_args.args[0]
-        self.assertEqual(Path(command[0]), Path(r'C:\Windows\System32\taskkill.exe'))
+        self.assertEqual(PureWindowsPath(command[0]), PureWindowsPath(r'C:\Windows\System32\taskkill.exe'))
         self.assertEqual(command[1:], ['/PID', '2468', '/T', '/F'])
         self.assertEqual(run.call_args.kwargs['timeout'], 10)
 
