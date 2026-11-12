@@ -98,7 +98,7 @@ flowchart TD
 | `render_size` | partial: `game_res_env` only | derives `BB_GAME_RES` and heap variables; size parsing and executable patches (540p up, 720p Deck mode) are stubs | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13, M20 |
 | `run_env` | stub | per-game defaults (`fix_defaults`) and the `BB_*` environment from settings and the device profile | `run.py` | M5, M7, M20 |
 | `profile` | stub | `DeviceProfile` (amd-handheld 20 W 30/60 Hz, strix-halo-tablet, desktop, mac, ios, android), `builtin`, `detect`, `by_id` | Deck mode in `launcher/uncharted_linux.py` | M5, M13, M20 |
-| `saves` | stub | savedata root per game per device (`save_root`), `split_saves`, what travels (`is_synced`), `relay_manifest` for save-relay | the save folders of `run.py` (`SAVE_FOLDERS`, `split_saves`) | M4, M18, M20 |
+| `saves` | present | `save_root`/`user_dir` (per OS through `platform::Vars`; an existing `<install>/user` keeps its saves), `split_saves`, `is_synced` (only `SAVEDATA0N*` entries; never `where.json`, `save_slots.json`, `*.tmp`), the save slots (`select`, `copy`, `delete`, `mapping` ..), `relay_manifest(game)` (one save-relay format-1 manifest per game, `saves_from` launcher) and `relay_saves_dir` (the `--saves-dir`: the selected slot's folder, so the manifest follows the slot) | the save folders of `run.py` (`SAVE_FOLDERS`, `split_saves`), `scripts/save_slots.py` | M4, M18, M20 |
 | `savecard` | stub | `SaveCard` (game, slot, picture from the save's `sce_sys/icon0.png`, title and detail from its `param.sfo`, file time, device, build id), `read_card`, `latest`, `side_by_side` | | M10 |
 | `backup` | stub | `backup_saves`, `list`, `prune` (keep 10) | | M19 |
 | `update` | stub | back up, re-prepare, recount saves | `launcher/uncharted_launcher.py` update check (`check_update`, `install_update`) | M19, M20 |
@@ -137,7 +137,7 @@ Built as a static library linked into the loader binary while C remains; each Ru
 | `sync` | planned | `runtime_sema.c` (185), `runtime_mutex.c` (263), `runtime_rwlock.c` (162) | `test_sema.c`, `test_sema.py` | 3 | M20 |
 | `content`, `display` | planned | `runtime_content.c` (91), `runtime_display.c` (143) | `test_content.c`, `test_display.c`, `test_content.py`, `test_display.py` | 4 | M7, M20 |
 | `trophy` | planned | `runtime_trophy.c` (327) | | 5 | M20 |
-| `savedata` | present: metadata commit only; guest ABI and VFS pending | `runtime_savedata.c` (431, still legacy): `commit` atomically overwrites local `where.json` with only game, title, subtitle, detail and UTC saved_at (#168); not yet called by the guest runtime; `where.json` is per-device state; `saves::is_synced` (stub) should exclude it | Rust `savedata` tests with made-up strings | 6 | M4, M9, M18, M20 |
+| `savedata` | present: metadata commit only; guest ABI and VFS pending | `runtime_savedata.c` (431, still legacy): `commit` atomically overwrites local `where.json` with only game, title, subtitle, detail and UTC saved_at (#168); not yet called by the guest runtime; `where.json` is per-device state; `saves::is_synced` excludes it | Rust `savedata` tests with made-up strings | 6 | M4, M9, M18, M20 |
 | `audio` | planned | `runtime_audio.c` (323), `runtime_speakers.h` | `test_speakers.c` | 7 | M20 |
 | `ajm` | planned | `runtime_ajm.c` (707) | `test_ajm.c` | 8 | M8, M20 |
 | `file` | planned | `runtime_file.c` (631): VFS, mod overlay | `test_file_mods.c` | 9 | M7, M20 |
