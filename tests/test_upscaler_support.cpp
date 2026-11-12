@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <string_view>
 #include <unistd.h>
 #include "bbport_settings.h"
 
@@ -30,6 +31,24 @@ int main() {
     assert(RenderPreset() == NativeAA && !ResolutionNeedsRestart());
     s.upscaler = UpscalerFsr3;
     assert(RenderPreset() == Performance);
+
+    // The settings layer hides an unavailable DLSS provider and falls back from a saved DLSS
+    // choice. This covers settings behavior; it does not exercise the NGX query or Vulkan device
+    // creation path. A successful DLSS probe leaves the selected provider unchanged.
+    s.upscaler = UpscalerDlss;
+    ConfigureDlssSupport(true, nullptr);
+    assert(s.dlss_supported && s.upscaler == UpscalerDlss);
+    s.upscaler = UpscalerDlss;
+    ConfigureDlssSupport(false, "feature requirement query failed");
+    assert(!s.dlss_supported && s.upscaler == UpscalerFsr3);
+    assert(s.dlss_problem && std::string_view{s.dlss_problem.load()} ==
+                                 "feature requirement query failed");
+    // If the player chose TAA, an unavailable optional DLSS provider must not override that
+    // explicit choice.
+    s.upscaler = UpscalerTaa;
+    ConfigureDlssSupport(false, "feature requirement query failed");
+    assert(!s.dlss_supported && s.upscaler == UpscalerTaa);
+
     for (bool fsr4 : {false, true}) {
         for (bool fsr411 : {false, true}) {
             for (int requested = 0; requested < UpscalerCount; ++requested) {
