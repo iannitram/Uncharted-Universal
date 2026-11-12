@@ -10,7 +10,9 @@
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
 //! wiring it into the fault/assertion handlers remains part of the loader port.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
-//! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
+//! shared position (#39, from `compat_win.c`); [`file`] keeps one per open guest file.
+//! [`file`] is the guest file system (piece 3.09): mounts, the mod overlay, the descriptor table
+//! and the file calls of the deleted `src/runtime_file.c`, with its C symbols.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
 //!
@@ -18,7 +20,7 @@
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
+//! `audio`, `ajm`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -29,6 +31,7 @@ pub mod abi;
 pub mod benchmark;
 pub mod benchmark_run;
 pub mod crash;
+pub mod file;
 pub mod os;
 // `cbindgen:ignore`: their constants are Rust-only, not part of the C header.
 /// cbindgen:ignore
