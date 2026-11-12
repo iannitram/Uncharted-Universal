@@ -24,6 +24,7 @@ macro_rules! not_built {
 }
 
 pub mod artwork;
+pub mod aspect;
 pub mod backup;
 pub mod bundle;
 pub mod cheats;
