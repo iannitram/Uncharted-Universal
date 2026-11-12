@@ -95,7 +95,7 @@ flowchart TD
 | `mods` | stub | mod folder layouts (`dvdroot_ps4`, `app0/...`), overlay list for the runtime's file VFS | `scripts/mods.py` | M7, M20 |
 | `cheats` | stub | cheat table `parse`, `compile` against the executable's hash, `apply` | `scripts/cheats.py` | M7, M20 |
 | `trophies` | stub | the `.trp` reader and unlock log, read for the runtime (showing trophies in the launcher is after 1.0, #12) | `scripts/trophies.py` | M7, M20 |
-| `render_size` | partial: `game_res_env` only | derives `BB_GAME_RES` and heap variables; size parsing and executable patches (540p up, 720p Deck mode) are stubs | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13, M20 |
+| `render_size` | present (#277) | `game_res_env` derives `BB_GAME_RES` and heap variables; `parse_size`; `patch_image` (540p up, falls back to a smaller size that fits) and `deck_720p_patches` (720p Deck mode) find their sites by byte pattern and return `CheckedWrite` data (offset, expected bytes, new bytes); `apply_checked` refuses a write outside the image or over unexpected bytes with a plain error and writes nothing. Synthetic fixtures only | `scripts/render_res.py`, `scripts/render_720p.py` | M5, M13, M20 |
 | `run_env` | stub | per-game defaults (`fix_defaults`) and the `BB_*` environment from settings and the device profile | `run.py` | M5, M7, M20 |
 | `profile` | stub | `DeviceProfile` (amd-handheld 20 W 30/60 Hz, strix-halo-tablet, desktop, mac, ios, android), `builtin`, `detect`, `by_id` | Deck mode in `launcher/uncharted_linux.py` | M5, M13, M20 |
 | `saves` | stub | savedata root per game per device (`save_root`), `split_saves`, what travels (`is_synced`), `relay_manifest` for save-relay | the save folders of `run.py` (`SAVE_FOLDERS`, `split_saves`) | M4, M18, M20 |
