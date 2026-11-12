@@ -124,15 +124,14 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
     struct TempDir(PathBuf);
     impl TempDir {
         fn new(label: &str) -> Self {
-            let nonce = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
+            let nonce = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir()
                 .join(format!("uu-dump-{}-{label}-{nonce}", std::process::id()));
             fs::create_dir_all(&path).unwrap();
