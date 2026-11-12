@@ -142,13 +142,15 @@ fn play_plan_uses_the_selected_save_slot_the_profile_and_the_players_variables()
     assert_eq!(plan.install, install);
     assert_eq!(plan.saves_dir, user_dir.join("Uncharted 2"));
     assert_eq!(plan.program, dir.path().join("my-run"));
-    let get = |name: &str| {
-        plan.env
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, v)| v.as_str())
-    };
-    assert_eq!(get("BB_EXE"), Some("u2"));
+    assert_eq!(plan.paths.data_dir, install);
+    assert_eq!(plan.paths.out_dir, install.join("out"));
+    let env = plan.session(ctx.os).env(Game::U2).unwrap();
+    let get = |name: &str| env.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+    assert_eq!(
+        get("BB_EXE"),
+        Some(Game::U2.executable()),
+        "run.py sets the executable"
+    );
     assert_eq!(
         get("BB_USER_DIR"),
         Some(user_dir.display().to_string().as_str())
@@ -188,15 +190,38 @@ fn the_runner_clears_ld_preload_and_passes_extra_arguments() {
         program: PathBuf::from("uncharted-run"),
         extra_args: vec!["--timeout".into(), "5".into()],
     };
-    let command = runner.command(&[
-        ("LD_PRELOAD".into(), "/steam/overlay.so".into()),
-        ("BB_EXE".into(), "u3".into()),
-    ]);
+    let command = runner.command(
+        &[
+            ("LD_PRELOAD".into(), "/steam/overlay.so".into()),
+            ("BB_EXE".into(), "u3".into()),
+        ],
+        None,
+    );
     let envs: Vec<_> = command.get_envs().collect();
     assert!(envs.contains(&(OsStr::new("LD_PRELOAD"), None)));
     assert!(envs.contains(&(OsStr::new("BB_EXE"), Some(OsStr::new("u3")))));
     let args: Vec<_> = command.get_args().collect();
     assert_eq!(args, [OsStr::new("--timeout"), OsStr::new("5")]);
+}
+
+#[test]
+fn the_runner_passes_the_guest_argv_file_before_the_extra_arguments() {
+    let runner = RuntimeRunner {
+        program: PathBuf::from("uncharted-run"),
+        extra_args: vec!["--timeout".into(), "5".into()],
+    };
+    let file = Path::new("out").join("guest-argv.txt");
+    let command = runner.command(&[], Some(&file));
+    let args: Vec<_> = command.get_args().collect();
+    assert_eq!(
+        args,
+        [
+            OsStr::new("--guest-argv"),
+            file.as_os_str(),
+            OsStr::new("--timeout"),
+            OsStr::new("5")
+        ]
+    );
 }
 
 #[test]
@@ -206,7 +231,10 @@ fn a_missing_runtime_is_a_launch_error() {
         program: dir.path().join("missing-runtime"),
         extra_args: Vec::new(),
     };
-    assert!(matches!(runner.run(Game::U1, &[]), Err(Error::Launch(_))));
+    assert!(matches!(
+        runner.run(Game::U1, &[], None),
+        Err(Error::Launch(_))
+    ));
 }
 
 #[test]
