@@ -25,7 +25,7 @@ use std::ffi::{c_char, c_void, CStr};
 // The C functions the runtime calls, not ones it exports.
 /// cbindgen:ignore
 #[cfg(target_arch = "x86_64")]
-mod host;
+pub(crate) mod host;
 #[cfg(target_arch = "x86_64")]
 pub mod libc;
 

@@ -12,7 +12,7 @@ type File = c_void;
 extern "C" {
     fn puts(text: *const c_char) -> c_int;
     fn fputs(text: *const c_char, stream: *mut File) -> c_int;
-    pub(super) fn exit(code: c_int) -> !;
+    pub(crate) fn exit(code: c_int) -> !;
     pub(super) fn calloc(count: usize, size: usize) -> *mut c_void;
     pub(super) fn memset(dst: *mut c_void, value: c_int, size: usize) -> *mut c_void;
     pub(super) fn memcpy(dst: *mut c_void, src: *const c_void, size: usize) -> *mut c_void;
@@ -53,14 +53,14 @@ fn c_string(text: &str) -> CString {
 }
 
 /// `puts`: one line on the C stdout (the newline is added).
-pub(super) fn out_line(text: &str) {
+pub(crate) fn out_line(text: &str) {
     let line = c_string(text);
     // SAFETY: `line` is a NUL-terminated string.
     unsafe { puts(line.as_ptr()) };
 }
 
 /// `fputs(text, stderr)`; `text` carries its own newline.
-pub(super) fn err(text: &str) {
+pub(crate) fn err(text: &str) {
     let text = c_string(text);
     // SAFETY: `text` is a NUL-terminated string and `stderr()` the C library's stream.
     unsafe { fputs(text.as_ptr(), stderr()) };
@@ -77,9 +77,7 @@ mod loader {
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
-        pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
         pub fn runtime_trophy_resolve(name: *const c_char) -> usize;
-        pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
@@ -106,10 +104,13 @@ mod loader {
 }
 
 /// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
-/// `time` and `rtc`, piece 3.02), then the GPU library: the first that knows `name` answers.
+/// `time` and `rtc`, piece 3.02; `kernel` and `services`, piece 3.11), then the GPU library: the
+/// first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
+    use crate::kernel::ffi::runtime_kernel_resolve;
     use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::services::ffi::runtime_services_resolve;
     use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
@@ -142,7 +143,10 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
 /// Without the loader only the Rust modules answer, in the same order.
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    crate::time::resolve(name).or_else(|| crate::rtc::resolve(name))
+    crate::time::resolve(name)
+        .or_else(|| crate::kernel::resolve(name))
+        .or_else(|| crate::services::resolve(name))
+        .or_else(|| crate::rtc::resolve(name))
 }
 
 /// The C modules' report lines, in `runtime.c`'s order.
@@ -175,20 +179,26 @@ pub(super) fn report_modules() {}
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.
 #[cfg(uncharted_loader)]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     // SAFETY: `runtime_quit` takes any exit code and does not return.
     unsafe { loader::runtime_quit(code) }
 }
 
 #[cfg(not(uncharted_loader))]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     extern "C" {
-        fn fflush(stream: *mut File) -> c_int;
         fn _exit(code: c_int) -> !;
     }
-    // SAFETY: flushing every C stream and ending the process take no Rust state.
-    unsafe {
-        fflush(std::ptr::null_mut());
-        _exit(code)
+    flush();
+    // SAFETY: ending the process takes no Rust state.
+    unsafe { _exit(code) }
+}
+
+/// `fflush(NULL)`: every C output stream.
+pub(crate) fn flush() {
+    extern "C" {
+        fn fflush(stream: *mut File) -> c_int;
     }
+    // SAFETY: a null stream flushes every C stream; no Rust state is involved.
+    unsafe { fflush(std::ptr::null_mut()) };
 }
