@@ -1,9 +1,10 @@
 from paths import ROOT
 from pathlib import Path
+import os
 import subprocess
 import unittest
 
-EXE=ROOT/'out/sema-test'
+EXE=ROOT / ('out/sema-test' + ('.exe' if os.name=='nt' else ''))
 
 @unittest.skipUnless(EXE.exists(),'run bash build.sh --test first')
 class SemaphoreTests(unittest.TestCase):

@@ -1,0 +1,9 @@
+{
+  "linux": [
+    "test_launcher_cache_cleanup.ShaderCacheCleanupTests.test_locked_windows_cache_reports_real_filesystem_error",
+    "test_launcher_stop.GameJobTests.test_real_job_stops_parent_and_child",
+    "test_launcher_stop.ProcessTreeFallbackTests.test_real_taskkill_stops_parent_and_child",
+    "test_launcher_stop.StopActionTests.test_stop_fallback_ends_real_process_tree",
+    "test_trophies.DumpTests.test_the_three_sets"
+  ]
+}

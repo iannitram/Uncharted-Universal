@@ -3,13 +3,16 @@
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
-#include <setjmp.h>
+#include "bbport_toggles.h"
 // Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
 extern "C" {
-thread_local sigjmp_buf* runtime_fault_recover = nullptr;
-uint64_t runtime_disabled_optimizations = 0;
-uint64_t runtime_disabled_optimizations2 = 0;
-void* runtime_map_guest_memory(uint64_t) { std::abort(); }
+__thread sigjmp_buf* runtime_fault_recover = nullptr;
+std::uint64_t runtime_disabled_optimizations = 0;
+std::uint64_t runtime_disabled_optimizations2 = 0;
+void* runtime_map_guest_memory(std::uint64_t) { std::abort(); }
+#ifdef _WIN32
+[[noreturn]] void bb_longjmp(sigjmp_buf, int) { std::abort(); }
+#endif
 uint64_t runtime_tsc_frequency() { return 1000000000; }
 int runtime_file_translate(const char*, char*, size_t) { std::abort(); }
 uint64_t runtime_memory_clamp(uintptr_t, uint64_t) { std::abort(); }

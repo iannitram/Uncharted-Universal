@@ -1,25 +1,50 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Saved FSR 4 choices must be safe before the first rendered frame on older GPUs.
 #include <cassert>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <initializer_list>
+#include <string>
 #include <string_view>
-#include <unistd.h>
 #include "bbport_settings.h"
+
+static void SetEnv(const char* key, const char* value) {
+#ifdef _WIN32
+    if (_putenv_s(key, value) != 0) std::abort();
+#else
+    if (setenv(key, value, 1) != 0) std::abort();
+#endif
+}
+
+static void UnsetEnv(const char* key) {
+#ifdef _WIN32
+    if (_putenv_s(key, "") != 0) std::abort();
+#else
+    if (unsetenv(key) != 0) std::abort();
+#endif
+}
 
 int main() {
     using namespace BbSettings;
     // No driver is validated for FSR 3.1 yet (RADV = 3, NVIDIA proprietary = 4, none = 0).
     for (unsigned id : {0u, 1u, 3u, 4u, 27u}) assert(!FsrDriverValidated(id));
-    char path[] = "/tmp/bbport-upscaler-test-XXXXXX";
-    const int fd = mkstemp(path);
-    assert(fd >= 0);
-    close(fd);
-    setenv("BB_CONFIG", path, 1);
-    unsetenv("BB_UPSCALER");
-    unsetenv("BB_UPSCALE_PRESET");
-    unsetenv("BB_RENDER_RES");
+    const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto name = "bbport-upscaler-test-" + std::to_string(timestamp);
+    // An MSYS2 shell exports TMP=/tmp, which Windows cannot open: fall back to the working directory.
+    auto path = (std::filesystem::temp_directory_path() / name).string();
+    FILE* created = std::fopen(path.c_str(), "w");
+    if (!created) {
+        path = name;
+        created = std::fopen(path.c_str(), "w");
+    }
+    assert(created);
+    std::fclose(created);
+    SetEnv("BB_CONFIG", path.c_str());
+    UnsetEnv("BB_UPSCALER");
+    UnsetEnv("BB_UPSCALE_PRESET");
+    UnsetEnv("BB_RENDER_RES");
     auto& s = Get();
     s.upscaler = UpscalerTaa;
     s.preset = Performance;
@@ -52,7 +77,7 @@ int main() {
     for (bool fsr4 : {false, true}) {
         for (bool fsr411 : {false, true}) {
             for (int requested = 0; requested < UpscalerCount; ++requested) {
-                FILE* config = std::fopen(path, "w");
+                FILE* config = std::fopen(path.c_str(), "w");
                 assert(config);
                 std::fprintf(config, "upscaler=%s\npreset=3\noutput_res=2560x1440\n",
                              UpscalerName(requested));
@@ -80,7 +105,7 @@ int main() {
     s.upscaler = UpscalerFsr3;
     s.preset = Performance;
     assert(RenderPreset() == Performance && !ResolutionNeedsRestart());
-    setenv("BB_RENDER_RES", "1706x960", 1);
+    SetEnv("BB_RENDER_RES", "1706x960");
     assert(RenderPreset() == Quality && ResolutionNeedsRestart());
     s.preset = Quality;
     assert(!ResolutionNeedsRestart());
@@ -95,9 +120,9 @@ int main() {
     s.output_res = (output + 1) % OutputCount;
     assert(ResolutionNeedsRestart());
     s.output_res = output;
-    setenv("BB_RENDER_RES", "", 1);
+    SetEnv("BB_RENDER_RES", "");
     assert(!FixedRenderSession() && !ResolutionNeedsRestart());
-    unsetenv("BB_RENDER_RES");
-    std::remove(path);
+    UnsetEnv("BB_RENDER_RES");
+    std::remove(path.c_str());
     std::puts("Upscaler support: saved choices and FSR 3.1 fallback PASS");
 }

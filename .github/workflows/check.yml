@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native-linux:
+    name: Linux GPU and C tests
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/build.yml
+    # The reusable workflow declares contents: write for main releases; scope its caller grant here.
+    permissions:
+      contents: write
+    with:
+      ref: ${{ github.sha }}
+
   rust:
     # A public repo: CI runs on GitHub-hosted runners (R29). The Rust workspace is built and
     # tested on Linux, Windows and macOS on every push and pull request.
@@ -51,6 +61,30 @@ jobs:
           c++ -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim \
             tests/test_upscaler_support.cpp gpu/shim/bbport_settings.cpp -o /tmp/upscaler-support-test
           /tmp/upscaler-support-test
+
+  native-windows:
+    # CLANG64 builds the Windows GPU library and runs the GPU unit targets and portable native C harnesses (the Python suite is not yet Windows-ready); it is not a hardware GPU test.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Enable long paths for Git checkout
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install CLANG64 build dependencies
+        run: |
+          source ./msys2-env.sh
+          pacman -S --needed --noconfirm git patch \
+            mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
+            mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
+            mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
+            mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
+            mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
+      - name: Build GPU library and run portable C harnesses
+        run: BB_JOBS=2 bash build.sh --test
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no

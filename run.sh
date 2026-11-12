@@ -69,7 +69,9 @@ fps=${BB_FPS:-uncap}
 # BB_LIVE_RES=0/1, else bbport.ini live_resolution=0/1/auto (auto: the GPU check, strong
 # discrete GPUs get them); off when unset. 1080p output and TAA always use the live path.
 if [[ -z ${BB_RENDER_RES:-} ]]; then
-    read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
+    # Command substitution and a here-string, not <(...): the CI chroot has no /proc, so no /dev/fd.
+    scaled=$("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || scaled=
+    read -r scaled_render scaled_output <<< "$scaled" || true
 fi
 live=0
 if [[ -n ${scaled_output:-} ]]; then
@@ -84,8 +86,9 @@ if [[ -n ${scaled_output:-} ]]; then
         if [[ -n ${BB_PROBE:-} ]]; then caps=$(dirname -- "$BB_PROBE")/bb-gpu-capabilities
         elif [[ -n ${BB_PREBUILT:-} ]]; then caps=bin/bb-gpu-capabilities
         else caps=out/bb-gpu-capabilities; fi
-        live=$("$caps" --live-resolution 2> >(while IFS= read -r line; do
-            [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line"; done >&2)) || live=0
+        # Stderr through the MANGOHUD filter, stdout (the answer) to the substitution; no <(...), no external tools.
+        live=$({ "$caps" --live-resolution 2>&1 1>&3 3>&- | while IFS= read -r line || [[ -n $line ]]; do
+            [[ $line == *MANGOHUD* ]] || printf '%s\n' "$line" >&2; done; } 3>&1) || live=0
     fi
     [[ $live == 1 ]] || live=0
 fi

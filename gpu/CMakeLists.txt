@@ -273,7 +273,7 @@ if (WIN32)
     target_compile_definitions(bbgpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(bbgpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h)
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
-    target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
+    target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm onecore)
 else()
     # the xbyak submodule, as on Windows (no system package needed).
     target_include_directories(bbgpu PRIVATE third_party/xbyak)
@@ -353,8 +353,9 @@ target_include_directories(vertex-input-deny-test PRIVATE shim)
 target_compile_options(vertex-input-deny-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
 add_executable(expand-image-test EXCLUDE_FROM_ALL ../tests/test_expand_image.cpp)
-target_include_directories(expand-image-test PRIVATE shadps4)
-target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(expand-image-test PRIVATE shim shadps4)
+# vk_common.h carries clang-only pragmas; GCC (the Linux package build) must not fail on them.
+target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(expand-image-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.

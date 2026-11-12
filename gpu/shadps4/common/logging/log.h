@@ -45,19 +45,24 @@ void UpdateLogFlushLevel(std::string_view log_flush_level);
 static constexpr std::array level_string_views{"Trace", "Debug",    "Info", "Warning",
                                                "Error", "Critical", "Off"};
 
-[[nodiscard]] static constexpr std::string_view to_string_view(spdlog::level lvl) noexcept {
-    return level_string_views.at(level_to_number(lvl));
+[[nodiscard]] static constexpr const char* basename(const char* path) noexcept {
+    const char* name = path;
+    for (const char* cursor = path; *cursor; ++cursor) {
+        if (*cursor == '/' || *cursor == '\\') name = cursor + 1;
+    }
+    return name;
 }
 } // namespace Common::Log
 
 // Define the fmt lib macros
-#define LOG_GENERIC(log_class, log_level, format, ...)                                             \
+#define LOG_GENERIC(class_arg, level_arg, fmt_arg, ...)                                            \
     do {                                                                                           \
-        if (auto logger = Common::Log::ALL_LOGGERS[log_class];                                     \
-            logger && logger->should_log(log_level)) {                                             \
-            logger->log(log_level, "[{}] <{}> ({}) {}:{} {}: " format, log_class,                  \
-                        Common::Log::to_string_view(log_level), Common::GetCurrentThreadName(),    \
-                        spdlog::source_loc::basename(__FILE__), __LINE__,                          \
+        if (auto logger = Common::Log::ALL_LOGGERS[class_arg];                                     \
+            logger && logger->should_log(level_arg)) {                                             \
+            logger->log(level_arg, "[{}] <{}> ({}) {}:{} {}: " fmt_arg, class_arg,                 \
+                        Common::Log::level_string_views.at(static_cast<std::size_t>(level_arg)),    \
+                        Common::GetCurrentThreadName(),                                             \
+                        Common::Log::basename(__FILE__), __LINE__,                                 \
                         std::string_view(__func__) == "operator()" ? "lambda" : __func__,          \
                         ##__VA_ARGS__);                                                            \
         }                                                                                          \
