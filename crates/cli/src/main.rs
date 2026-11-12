@@ -30,9 +30,9 @@
 
 mod args;
 mod commands;
-mod setup;
 #[cfg(test)]
 mod fixtures;
+mod setup;
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
