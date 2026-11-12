@@ -429,7 +429,8 @@ pub fn extract(source: &dyn Source, out: &Path) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_PATH: AtomicU64 = AtomicU64::new(0);
 
     struct Bytes(Vec<u8>);
     impl Source for Bytes {
@@ -505,10 +506,7 @@ mod tests {
         Bytes(bytes)
     }
     fn temp_path() -> PathBuf {
-        let n = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        let n = NEXT_TEST_PATH.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!("uncharted-pkg-{}-{n}", std::process::id()))
     }
 
