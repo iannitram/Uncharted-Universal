@@ -295,26 +295,25 @@ if (WIN32)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     target_include_directories(bb-probe PRIVATE .. ../src)
     target_link_libraries(bb-probe PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread)
-    # BB_BENCHMARK=<seconds> (#173/#242): the benchmark logic is Rust (crates/runtime). When cargo and
-    # the x86_64-pc-windows-gnullvm target are there, its static library is linked into bb-probe;
-    # without them the build works and a BB_BENCHMARK request fails loudly (src/runtime_benchmark.c).
+    # crates/runtime (ADR 0002): the runtime modules already in Rust (trophy) as a static library for
+    # x86_64-pc-windows-gnullvm, which bb-probe needs. BB_BENCHMARK=<seconds> (#173/#242) is Rust as
+    # well and on in bb-probe (BB_RUST_BENCHMARK on src/runtime_benchmark.c).
     find_program(BB_CARGO cargo)
-    if (BB_CARGO AND NOT BB_NO_RUST)
-        set(bb_rust_dir "${CMAKE_CURRENT_BINARY_DIR}/rust")
-        set(bb_rust_lib "${bb_rust_dir}/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a")
-        add_custom_target(uncharted_runtime_rust
-            COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" ${BB_CARGO} build -p uncharted_runtime --lib
-                    --release --target x86_64-pc-windows-gnullvm
-            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
-            BYPRODUCTS "${bb_rust_lib}"
-            COMMENT "Building crates/runtime (Rust) for the benchmark mode"
-            USES_TERMINAL)
-        add_dependencies(bb-probe uncharted_runtime_rust)
-        set_source_files_properties(../src/runtime_benchmark.c PROPERTIES COMPILE_DEFINITIONS BB_RUST_BENCHMARK)
-        target_link_libraries(bb-probe PRIVATE "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
-    else()
-        message(STATUS "BB_BENCHMARK: cargo not found (or BB_NO_RUST set), building without the Rust benchmark")
+    if (NOT BB_CARGO)
+        message(FATAL_ERROR "Need cargo (rustup target add x86_64-pc-windows-gnullvm): crates/runtime is part of the loader")
     endif()
+    set(bb_rust_dir "${CMAKE_CURRENT_BINARY_DIR}/rust")
+    set(bb_rust_lib "${bb_rust_dir}/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a")
+    add_custom_target(uncharted_runtime_rust
+        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" ${BB_CARGO} build -p uncharted_runtime --lib
+                --release --target x86_64-pc-windows-gnullvm
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
+        BYPRODUCTS "${bb_rust_lib}"
+        COMMENT "Building crates/runtime (Rust)"
+        USES_TERMINAL)
+    add_dependencies(bb-probe uncharted_runtime_rust)
+    set_source_files_properties(../src/runtime_benchmark.c PROPERTIES COMPILE_DEFINITIONS BB_RUST_BENCHMARK)
+    target_link_libraries(bb-probe PRIVATE "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
     target_link_options(bb-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
