@@ -123,5 +123,5 @@ NVIDIA, GeForce RTX and DLSS are trademarks of NVIDIA Corporation.
 
 ## License
 
-GNU GPL v2 or later ([LICENSE](LICENSE)). Third-party components keep their own licenses
+GNU GPL v2 only ([LICENSE](LICENSE)), SPDX `GPL-2.0-only`. Several sources this port builds on (uncharted_pc, uncharted_Linux, Uncharted_Collection_PC, SpartanPort) ship plain GPL-2.0 with no "or later" grant, so this project cannot offer later versions; GPL-3.0 code is not accepted. Third-party components keep their own licenses
 (see `licenses/` in the download).
