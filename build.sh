@@ -143,8 +143,7 @@ read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3)"
 [[ -f third_party/Vulkan-Headers/include/vulkan/vulkan.h ]] || git submodule update --init third_party/Vulkan-Headers
 vulkan_headers=$PWD/third_party/Vulkan-Headers/include
 includes=(-I"$vulkan_headers" "${includes[@]}")
-# Linux fork: libavcodec/libavutil for runtime_ajm.c's MP3 decoder (Windows links them through CMake).
-read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3 libavcodec libavutil)"
+read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3)"
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libbbgpu.so.
 # BB_PGO: generate (instrumented build that writes pgo/ while the game runs), use, off.
 # Default: use the profile in pgo/ when there is one. BB_LTO=OFF disables link-time optimization.
@@ -168,13 +167,14 @@ done
 # GPU library first (CMake over gpu/ into out/gpu/libbbgpu.so, crates/runtime/build.rs) with the
 # CMake arguments below, joined by the unit separator. A failed GPU build stops the build there:
 # an older libbbgpu.so would otherwise be used silently. UNCHARTED_RUNTIME_LOADER=1 lets the
-# Rust side call the C modules that remain.
+# Rust side call the C modules that remain. Its build script also compiles LibAtrac9 (the ajm
+# module, piece 3.08) with the same C compiler.
 command -v cargo >/dev/null || { echo 'Need cargo (rustup): crates/runtime is part of the loader.' >&2; exit 1; }
 gpu_cmake=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo"
     -DVulkan_INCLUDE_DIR="$vulkan_headers")
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf '%s' "${gpu_cmake[*]}") \
-    UNCHARTED_GPU_LOG=$PWD/out/gpu-build.log UNCHARTED_RUNTIME_LOADER=1 \
+    UNCHARTED_GPU_LOG=$PWD/out/gpu-build.log UNCHARTED_RUNTIME_LOADER=1 CC="$CC" \
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
@@ -182,16 +182,9 @@ runtime=(src/runtime*.c)
 # Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
 # with the system libraries Rust's std needs (rustc --print native-static-libs).
 rust=(out/rust/release/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl)
-# Third-party decoders: compiled once, without this project's -Werror policy.
-atrac9=(third_party/LibAtrac9/C/src/*.c)
-if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
-    rm -rf out/atrac9 && mkdir -p out/atrac9
-    for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
-    ar rcs out/libatrac9.a out/atrac9/*.o
-fi
 # BB_BENCHMARK=<seconds> (#173/#242): BB_RUST_BENCHMARK sends the glue to the Rust benchmark in
 # bb-probe only; the C unit tests below keep the no-op glue.
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
@@ -211,19 +204,17 @@ if [[ ${1:-} == --test ]]; then
     for test in scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test; do "out/gpu/$test"; done
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_file_mods.c -o out/file-mods-test
     out/file-mods-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" "${rust[@]}" -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
-    out/ajm-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test
     out/speakers-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test
     out/settings-default-test

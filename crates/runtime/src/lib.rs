@@ -11,6 +11,8 @@
 //! wiring it into the fault/assertion handlers remains part of the loader port.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
 //! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
+//! [`ajm`] is libSceAjm (piece 3.08, the deleted `src/runtime_ajm.c`): audio decoder batches,
+//! ATRAC9 through LibAtrac9 (compiled by `build.rs`) and MP3 through Symphonia; x86-64 hosts only.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
 //!
@@ -18,7 +20,7 @@
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
+//! `audio`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -26,6 +28,8 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+#[cfg(target_arch = "x86_64")]
+pub mod ajm;
 pub mod benchmark;
 pub mod benchmark_run;
 pub mod crash;

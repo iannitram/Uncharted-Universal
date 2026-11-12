@@ -285,20 +285,17 @@ endif()
 if (WIN32)
     enable_language(RC)
     file(GLOB BB_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
-    file(GLOB BB_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
-    add_library(atrac9 STATIC ${BB_ATRAC9})
-    target_compile_options(atrac9 PRIVATE -w)
-    set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
     add_executable(bb-probe ../src/probe.c ../src/red_zone.c ../src/cpu_patch.c ${BB_RUNTIME} ../src/compat_win.c
         ../packaging/windows/bb-probe.rc)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     target_include_directories(bb-probe PRIVATE .. ../src)
-    target_link_libraries(bb-probe PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread)
+    target_link_libraries(bb-probe PRIVATE bbgpu Zydis::Zydis onecore bcrypt ws2_32 -pthread)
     # crates/runtime (piece 3.01): the runtime modules ported to Rust (src/runtime.c is now its
     # `abi`) and the benchmark mode (#173/#242), a static library linked into bb-probe. It needs
     # cargo with the x86_64-pc-windows-gnullvm target. UNCHARTED_RUNTIME_LOADER=1 lets it call the
-    # C modules that remain (crates/runtime/build.rs). Here CMake builds gpu/ and runs cargo; on
+    # C modules that remain (crates/runtime/build.rs), whose build script also compiles LibAtrac9
+    # (the ajm module, piece 3.08) with this C compiler. Here CMake builds gpu/ and runs cargo; on
     # Linux the crate's build script builds gpu/ instead (build.sh).
     find_program(BB_CARGO cargo)
     if (NOT BB_CARGO)
@@ -308,6 +305,7 @@ if (WIN32)
     set(bb_rust_lib "${bb_rust_dir}/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a")
     add_custom_target(uncharted_runtime_rust
         COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" UNCHARTED_RUNTIME_LOADER=1
+                "CC_x86_64_pc_windows_gnullvm=${CMAKE_C_COMPILER}"
                 ${BB_CARGO} build -p uncharted_runtime --lib --release --target x86_64-pc-windows-gnullvm
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
         BYPRODUCTS "${bb_rust_lib}"

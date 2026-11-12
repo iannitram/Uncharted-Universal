@@ -9,7 +9,8 @@
 // The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 // its copy of the header has and refuses to start on a mismatch (a stale static library).
 // Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-#define UNCHARTED_RUNTIME_ABI_VERSION 1
+// 2: `src/runtime_ajm.c` moved here (3.08).
+#define UNCHARTED_RUNTIME_ABI_VERSION 2
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -92,6 +93,20 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 // # Safety
 // `name` is null or a NUL-terminated string.
 const char *runtime_import_name(const char *name);
+
+#if defined(__x86_64__)
+// The address of this module's function for the scoped NID `name`, or 0
+// (`uintptr_t runtime_ajm_resolve(const char *name)`).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_ajm_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The module's counters on stdout (`runtime_report`).
+void runtime_ajm_report(void);
+#endif
 
 #ifdef __cplusplus
 }  // extern "C"

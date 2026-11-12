@@ -44,6 +44,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+      - name: Check out LibAtrac9 (crates/runtime compiles it for the ajm module on x86-64)
+        run: git submodule update --init third_party/LibAtrac9
       - name: Install Slint and gilrs system packages (Linux)
         # app/ (Slint + gilrs): udev for gilrs; fontconfig, freetype, xkbcommon and the
         # X11/Wayland/GL headers for Slint's winit and femtovg backends.

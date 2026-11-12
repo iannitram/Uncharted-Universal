@@ -75,8 +75,6 @@ void *runtime_map_guest_memory(uint64_t size);
 void *runtime_image_map(size_t size, int prot);
 /* Windows: reserves the PS4 user address range as a placeholder (no-op elsewhere). */
 void runtime_memory_reserve(void);
-uintptr_t runtime_ajm_resolve(const char *name);
-void runtime_ajm_report(void);
 uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);

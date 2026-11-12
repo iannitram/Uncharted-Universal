@@ -453,6 +453,8 @@ mod tests {
         assert_eq!(resolve(c"bzQExy189ZI#q#q", false), None);
         runtime_start(1);
         assert_eq!(resolve(c"bzQExy189ZI#wrong#module", false), None);
+        // The chain reaches the Ajm module (sceAjmInitialize).
+        assert!(resolve(c"dl+4eHSzUu4#N#O", false).is_some());
         assert_eq!(resolve(c"unknown", false), None);
         assert_eq!(resolve(c"8zTFvBIAIN8#q#q", true), None);
         assert_eq!(resolve(c"f7uOxY9mM1U#p#J", false), None);

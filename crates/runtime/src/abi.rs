@@ -13,9 +13,10 @@
 //! (`tests/test_boot_smoke.py`) stay green at every step. No behaviour changes in a port PR; a
 //! bug found while porting is its own issue.
 //!
-//! `runtime_resolve` asks this module's own contracts first, then the C modules in the order
-//! `runtime.c` did, then the GPU library. Those calls exist only in the loader build
-//! (`cfg(uncharted_loader)`, set by `build.rs`); elsewhere the chain ends here.
+//! `runtime_resolve` asks this module's own contracts first, then the modules in the order
+//! `runtime.c` did (the ported ones, such as `ajm`, in Rust), then the GPU library. The calls
+//! into C exist only in the loader build (`cfg(uncharted_loader)`, set by `build.rs`); elsewhere
+//! the chain ends with the Rust modules.
 //!
 //! Only this crate has `unsafe` and FFI; every `unsafe` block carries a `// SAFETY:` line.
 
@@ -24,14 +25,15 @@ use std::ffi::{c_char, c_void, CStr};
 // The C functions the runtime calls, not ones it exports.
 /// cbindgen:ignore
 #[cfg(target_arch = "x86_64")]
-mod host;
+pub(crate) mod host;
 #[cfg(target_arch = "x86_64")]
 pub mod libc;
 
 /// The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 /// its copy of the header has and refuses to start on a mismatch (a stale static library).
 /// Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 1;
+/// 2: `src/runtime_ajm.c` moved here (3.08).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 2;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -48,8 +50,8 @@ fn nid_entry(nid: &[u8]) -> Option<&'static CStr> {
 }
 
 /// Where a guest import `name` resolves to (`is_data`: a data symbol, not a function): this
-/// module's libc contracts, then each C library's resolver in turn and the GPU library (loader
-/// build only); `None` when nothing exports it or the runtime is not enabled (`runtime_start`
+/// module's libc contracts, then each library's resolver in turn (the C ones and the GPU
+/// library in the loader build only); `None` when nothing exports it or the runtime is not enabled (`runtime_start`
 /// without capability 1). Only x86-64 hosts run guest code; elsewhere this is always `None`.
 pub fn runtime_resolve(name: &CStr, is_data: bool) -> Option<usize> {
     #[cfg(target_arch = "x86_64")]
@@ -168,8 +170,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_is_raised_with_the_first_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 1);
+    fn version_is_raised_with_each_moved_module() {
+        assert_eq!(ffi::uncharted_runtime_version(), 2);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION

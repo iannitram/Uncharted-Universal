@@ -26,6 +26,17 @@ serde_json = "1"
 # loader gets an error message, not a missing-library failure. MIT or Apache-2.0.
 ash = { version = "0.38", default-features = false, features = ["loaded", "std"] }
 
+# libSceAjm's MP3 decoder (`src/ajm/mp3.rs`), pure Rust; MPL-2.0, which allows combining with
+# GPL-2.0 code (its Secondary Licenses clause). It replaced FFmpeg's libavcodec (#299). Only
+# x86-64 hosts run guest code, so only they build the `ajm` module.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+symphonia-core = { version = "0.5.5", default-features = false }
+symphonia-bundle-mp3 = { version = "0.5.5", default-features = false, features = ["mp3"] }
+
+[build-dependencies]
+# Compiles LibAtrac9 (MIT, third_party/LibAtrac9) into this library on x86-64 hosts (build.rs).
+cc = "1"
+
 [dev-dependencies]
 # Writes and checks include/uncharted_runtime.h (tests/header.rs); MPL-2.0, a test-only tool.
 cbindgen = { version = "0.29", default-features = false }

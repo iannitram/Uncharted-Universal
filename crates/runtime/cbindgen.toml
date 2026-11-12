@@ -21,6 +21,13 @@ exclude = [
     "uncharted_benchmark_pad",
     "uncharted_benchmark_frame",
     "uncharted_benchmark_crash",
+    # LibAtrac9, which the ajm module calls (src/ajm/at9.rs); its own header declares these.
+    "Atrac9GetHandle",
+    "Atrac9ReleaseHandle",
+    "Atrac9InitDecoder",
+    "Atrac9Decode",
+    "Atrac9GetCodecInfo",
+    "CodecInfo",
 ]
 item_types = ["functions", "constants", "structs"]
 

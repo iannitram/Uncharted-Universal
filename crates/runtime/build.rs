@@ -6,6 +6,8 @@
 //!   is linked into the C loader. Only then does the Rust side call the C modules that are still
 //!   C (their resolvers and reports, `runtime_quit`); `cargo test` and the mobile builds link
 //!   no C;
+//! - LibAtrac9 (MIT, `third_party/LibAtrac9`): on x86-64 hosts, compiled into this library for
+//!   the `ajm` module's ATRAC9 decoder (piece 3.08), without this project's warning policy;
 //! - the GPU library: with `UNCHARTED_GPU_BUILD=<build dir>`, CMake and Ninja build `gpu/` (the
 //!   `bbgpu` target) there before the crate is compiled. `build.sh` sets it on Linux; on Windows
 //!   CMake builds `gpu/` and the loader and runs cargo itself, so this step is not used there.
@@ -23,7 +25,42 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     nid_table(&root, &out);
     loader_cfg();
+    atrac9(&root);
     gpu(&root);
+}
+
+/// LibAtrac9's C sources into `libatrac9.a` (`atrac9.lib`), linked into this crate, when the
+/// target runs guest code (x86-64): the `ajm` module calls it. The submodule must be checked out.
+fn atrac9(root: &Path) {
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() != Ok("x86_64") {
+        return;
+    }
+    let source = root.join("third_party/LibAtrac9/C/src");
+    println!("cargo::rerun-if-changed={}", source.display());
+    let mut files: Vec<PathBuf> = fs::read_dir(&source)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| path.extension().is_some_and(|ext| ext == "c"))
+                .collect()
+        })
+        .unwrap_or_default();
+    if files.is_empty() {
+        panic!(
+            "{}: LibAtrac9 is missing; run: git submodule update --init third_party/LibAtrac9",
+            source.display()
+        );
+    }
+    files.sort();
+    let mut build = cc::Build::new();
+    build.files(&files).include(&source).warnings(false);
+    if build.get_compiler().is_like_msvc() {
+        // libatrac9.h declares its functions dllimport for MSVC unless it builds the library.
+        build.define("COMPILING_DLL", None);
+    } else {
+        build.flag("-std=c99").flag("-w");
+    }
+    build.compile("atrac9");
 }
 
 /// Every `{"nid","symbol"},` line of `import_names.inc`, sorted by NID (bytewise, as `strcmp`).
