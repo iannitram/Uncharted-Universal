@@ -190,9 +190,10 @@ if [[ ${1:-} == --test ]]; then
         echo 'GPU test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
     fi
     for test in "${tests[@]:0:6}"; do "out/gpu/$test"; done
-    if [[ -s /usr/share/vulkan/icd.d/lvp_icd.x86_64.json ]]; then
-        export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
-    fi
+    for candidate in /run/opengl-driver/share/vulkan/icd.d/lvp_icd*.json /usr/share/vulkan/icd.d/lvp_icd*.json; do
+        if [[ -f $candidate ]]; then export VK_ICD_FILENAMES=$candidate; break; fi
+    done
+    if [[ -n ${VK_ICD_FILENAMES:-} ]]; then echo "GPU tests: VK_ICD_FILENAMES=$VK_ICD_FILENAMES"; fi
     for test in scene-resolution-test taa-shader-test camera-motion-test; do "out/gpu/$test"; done
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
