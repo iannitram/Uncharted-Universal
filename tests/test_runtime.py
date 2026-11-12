@@ -4,7 +4,7 @@ import os
 import subprocess
 import unittest
 
-EXE = ROOT / 'out/runtime-test'+('.exe' if os.name=='nt' else '')
+EXE = ROOT / ('out/runtime-test' + ('.exe' if os.name=='nt' else ''))
 
 
 @unittest.skipUnless(EXE.exists(), 'run bash build.sh --test first')

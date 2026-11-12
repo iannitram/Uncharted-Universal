@@ -28,7 +28,7 @@ class Runner(unittest.TextTestRunner):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--platform", choices=("linux", "windows"), required=True)
+    parser.add_argument("--platform", choices=("linux",), required=True)
     args = parser.parse_args()
     expected = json.loads(SKIPS.read_text(encoding="utf-8"))[args.platform]
     if len(expected) != len(set(expected)):

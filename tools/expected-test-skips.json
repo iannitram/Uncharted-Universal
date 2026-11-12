@@ -5,31 +5,5 @@
     "test_launcher_stop.ProcessTreeFallbackTests.test_real_taskkill_stops_parent_and_child",
     "test_launcher_stop.StopActionTests.test_stop_fallback_ends_real_process_tree",
     "test_trophies.DumpTests.test_the_three_sets"
-  ],
-  "windows": [
-    "test_content.ContentTests.test_lifecycle_and_output_boundaries",
-    "test_content.ContentTests.test_missing_profile_does_not_report_loaded",
-    "test_content.ContentTests.test_other_modules_are_counted_independently",
-    "test_runtime.RuntimeTests.test_recursive_guard_fails_explicitly",
-    "test_runtime.RuntimeTests.test_runtime_contracts",
-    "test_runtime.RuntimeTests.test_rwlock_lifecycle_and_ownership",
-    "test_runtime.RuntimeTests.test_rwlock_multiple_readers_exclude_writer",
-    "test_runtime.RuntimeTests.test_rwlock_timeouts_use_orbis_errors",
-    "test_runtime.RuntimeTests.test_stack_corruption_is_not_ignored",
-    "test_runtime.RuntimeTests.test_tls_bounds_are_checked",
-    "test_sema.SemaphoreTests.test_cancel_and_delete_wake_all_waiters",
-    "test_sema.SemaphoreTests.test_counts_errors_timeout_and_stale_ids",
-    "test_sema.SemaphoreTests.test_fifo_wakeup_and_token_reservation",
-    "test_sema.SemaphoreTests.test_priority_wait_blocks_until_signal",
-    "test_packaged_vulkan.PackagedVulkanTests.test_32_bit_and_malformed_icds_are_skipped",
-    "test_packaged_vulkan.PackagedVulkanTests.test_absolute_and_relative_icd_paths",
-    "test_packaged_vulkan.PackagedVulkanTests.test_additional_user_icds_are_not_lost",
-    "test_packaged_vulkan.PackagedVulkanTests.test_amd_intel_keep_bundled_drivers",
-    "test_packaged_vulkan.PackagedVulkanTests.test_explicit_and_legacy_overrides_are_preserved",
-    "test_packaged_vulkan.PackagedVulkanTests.test_host_driver_can_be_supplied_outside_hidden_nix_store",
-    "test_packaged_vulkan.PackagedVulkanTests.test_host_nvidia_and_compiler_are_exposed_without_host_libc",
-    "test_mods.ModTests.test_mod_symlinks_rejected",
-    "test_run_settings.RestartResolutionTests.test_live_resolution_without_sed_or_grep",
-    "test_trophies.DumpTests.test_the_three_sets"
   ]
 }

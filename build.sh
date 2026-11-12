@@ -38,11 +38,11 @@ MINGW*|MSYS*)
             echo 'GPU unit test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
         fi
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_file_mods.c -o out/file-mods-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c src/compat_win.c -lbcrypt -lws2_32 -lonecore -o out/file-mods-test.exe
         out/file-mods-test.exe
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c src/runtime_speakers.c -lm -o out/speakers-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test.exe
         out/speakers-test.exe
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
+        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
         out/cpu-patch-test.exe
     fi
     exit 0

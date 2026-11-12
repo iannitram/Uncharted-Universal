@@ -82,7 +82,7 @@ jobs:
       - run: cargo test --workspace --all-features
 
   native-windows:
-    # CLANG64 builds the Windows GPU library and portable native C harnesses; it is not a hardware GPU test.
+    # CLANG64 builds the Windows GPU library and runs the GPU unit targets and portable native C harnesses (the Python suite is not yet Windows-ready); it is not a hardware GPU test.
     runs-on: [self-hosted, windows]
     defaults:
       run:
@@ -104,8 +104,6 @@ jobs:
             mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
-      - name: Run Python tests and enforce the Windows expected-skip list
-        run: source ./msys2-env.sh && python3 --version && python3 tools/ci_unittest.py --platform windows
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no

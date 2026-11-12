@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import content_profile
 
-EXE=ROOT/'out/content-test'+('.exe' if os.name=='nt' else '')
+EXE=ROOT / ('out/content-test' + ('.exe' if os.name=='nt' else ''))
 
 class ProfileTests(unittest.TestCase):
     def test_sfo_parameters_and_explicit_trial_profile(self):

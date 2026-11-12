@@ -30,10 +30,14 @@ int main() {
     // No driver is validated for FSR 3.1 yet (RADV = 3, NVIDIA proprietary = 4, none = 0).
     for (unsigned id : {0u, 1u, 3u, 4u, 27u}) assert(!FsrDriverValidated(id));
     const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto config_path = std::filesystem::temp_directory_path() /
-        ("bbport-upscaler-test-" + std::to_string(timestamp));
-    const auto path = config_path.string();
+    const auto name = "bbport-upscaler-test-" + std::to_string(timestamp);
+    // An MSYS2 shell exports TMP=/tmp, which Windows cannot open: fall back to the working directory.
+    auto path = (std::filesystem::temp_directory_path() / name).string();
     FILE* created = std::fopen(path.c_str(), "w");
+    if (!created) {
+        path = name;
+        created = std::fopen(path.c_str(), "w");
+    }
     assert(created);
     std::fclose(created);
     SetEnv("BB_CONFIG", path.c_str());

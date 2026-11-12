@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-EXE = ROOT / 'out/bb-probe'+('.exe' if os.name=='nt' else '')
+EXE = ROOT / ('out/bb-probe' + ('.exe' if os.name=='nt' else ''))
 
 
 def package(code, relocs=(), names=(), capabilities=None):
