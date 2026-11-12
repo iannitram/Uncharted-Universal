@@ -53,9 +53,8 @@ for exe in bb-probe.exe bb-gpu-capabilities.exe; do
 done
 # Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
-    awk '/\/clang64\/bin\// {print $3}' | sort -u | while read -r dll; do
-        cp -u "$dll" "$dest/bin/"
-    done
+    awk '/\/clang64\/bin\// {print $3}' | sort -u > out/bundled-dlls.txt
+while read -r dll; do cp -u "$dll" "$dest/bin/"; done < out/bundled-dlls.txt
 # Only what run.py runs to prepare a game (Bloodborne's patch and mod tools stay out).
 cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py scripts/trophies.py "$dest/scripts/"
 cp run.py LICENSE "$dest/"
@@ -88,10 +87,13 @@ fi
 for license in gpu/third_party/wepoll/LICENSE:wepoll gpu/third_party/httplib/LICENSE:cpp-httplib; do
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
 done
-for package in protobuf abseil-cpp openssl miniupnpc zlib; do
-    license=/clang64/share/licenses/$package/LICENSE
-    if [[ -f $license ]]; then cp "$license" "$dest/licenses/$package-LICENSE.txt"; fi
-done
+# Every bundled DLL: its MSYS2 package's licence files go to licenses/<package>/. A DLL with no
+# owning package or no licence files fails the package step with its name (#302).
+mapfile -t dlls < out/bundled-dlls.txt
+# MSYS2's own Python (CLANG64), so pacman is on its PATH; MSYS2_ARG_CONV_EXCL keeps the /clang64 paths
+# as they are for pacman.
+MSYS2_LICENSES=$(cygpath -m /clang64/share/licenses) MSYS2_ARG_CONV_EXCL='*'     python3 packaging/licence_check.py windows "$dest/licenses" "${dlls[@]}" ||
+    { echo 'A bundled DLL has no licence text (see above).' >&2; exit 1; }
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 mkdir -p dist
 rm -f dist/uncharted-windows.zip

@@ -580,3 +580,15 @@ Ordered by value for effort:
 - SignPath Foundation terms: https://signpath.org/terms
 - Valve, Add Non-Steam Game: https://developer.valvesoftware.com/wiki/Add_Non-Steam_Game
 - steam-static-shortcuts: https://github.com/amini-allight/steam-static-shortcuts
+
+---
+
+## Update 2026-11-12: bundled library licence texts (#302)
+
+The Windows package now ships the licence files of the MSYS2 package that owns each bundled DLL
+(found with `pacman -Qqo`, copied from `/clang64/share/licenses/<package>/` to `licenses/<package>/`).
+The Linux package ships the Debian `copyright` file of each bundled library's package. In both,
+a library with no owning package or no licence file fails the package step and is named. The rule
+lives in `packaging/licence_check.py` and is tested with fake inputs (`tests/test_licence_check.py`).
+This covers FFmpeg, x264, x265, SDL3 and libc++ texts only as far as MSYS2 and Debian provide them.
+Choosing a GPL-2.0-compatible FFmpeg build is still open in #299.
