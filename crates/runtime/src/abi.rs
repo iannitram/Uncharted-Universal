@@ -24,14 +24,15 @@ use std::ffi::{c_char, c_void, CStr};
 // The C functions the runtime calls, not ones it exports.
 /// cbindgen:ignore
 #[cfg(target_arch = "x86_64")]
-mod host;
+pub(crate) mod host;
 #[cfg(target_arch = "x86_64")]
 pub mod libc;
 
 /// The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 /// its copy of the header has and refuses to start on a mismatch (a stale static library).
 /// Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 1;
+/// 2: `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 2;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -168,8 +169,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_is_raised_with_the_first_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 1);
+    fn version_is_raised_with_each_moved_module() {
+        assert_eq!(ffi::uncharted_runtime_version(), 2);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION
