@@ -90,10 +90,13 @@ done
 # Every bundled DLL: its MSYS2 package's licence files go to licenses/<package>/. A DLL with no
 # owning package or no licence files fails the package step with its name (#302).
 mapfile -t dlls < out/bundled-dlls.txt
+# Libraries linked statically into the binaries (gpu/CMakeLists.txt) ship no DLL; their archives
+# name the packages whose licences must ship too.
+for archive in libprotobuf libabsl_base libssl libminiupnpc libz; do dlls+=("/clang64/lib/$archive.a"); done
 # MSYS2's own Python (CLANG64), so pacman is on its PATH; MSYS2_ARG_CONV_EXCL keeps the /clang64 paths
 # as they are for pacman.
 MSYS2_LICENSES=$(cygpath -m /clang64/share/licenses) MSYS2_ARG_CONV_EXCL='*'     python3 packaging/licence_check.py windows "$dest/licenses" "${dlls[@]}" ||
-    { echo 'A bundled DLL has no licence text (see above).' >&2; exit 1; }
+    { echo 'A bundled library has no licence text (see above).' >&2; exit 1; }
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
 mkdir -p dist
 rm -f dist/uncharted-windows.zip
