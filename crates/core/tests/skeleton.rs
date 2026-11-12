@@ -2,17 +2,17 @@
 //! constant data reads back. Delete a case here when its module is built (its own tests
 //! replace it).
 
+use uncharted_core::artwork;
 use uncharted_core::error::Error;
 use uncharted_core::games::{self, Game};
 use uncharted_core::platform::AppDirs;
-use uncharted_core::{artwork, cheats};
 
 #[test]
 fn a_stub_returns_not_built_with_a_stable_code() {
-    let err = cheats::parse("").unwrap_err();
-    assert_eq!(err, Error::NotBuilt("cheats::parse"));
+    let err = games::title_region(games::TITLE_IDS[0]).unwrap_err();
+    assert_eq!(err, Error::NotBuilt("games::title_region"));
     assert_eq!(err.code(), "not_built");
-    assert_eq!(err.to_string(), "not built yet: cheats::parse");
+    assert_eq!(err.to_string(), "not built yet: games::title_region");
 }
 
 #[test]
