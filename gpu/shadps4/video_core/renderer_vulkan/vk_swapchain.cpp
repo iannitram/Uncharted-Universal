@@ -227,7 +227,7 @@ void Swapchain::FindPresentMode() {
         present_mode = vk::PresentModeKHR::eMailbox;
     } else if (requested_mode == "Fifo") {
         present_mode = vk::PresentModeKHR::eFifo;
-    } else if (requested_mode == "FifoRelaxed") {   // (Linux fork: the launcher's FIFO Relaxed choice)
+    } else if (requested_mode == "FifoRelaxed") { // from spacepepperoni/uncharted_Linux fd92c7453 (#245)
         present_mode = vk::PresentModeKHR::eFifoRelaxed;
     } else if (requested_mode == "Immediate") {
         present_mode = vk::PresentModeKHR::eImmediate;
