@@ -3,7 +3,7 @@
 //! profile. The player's own variables always win. Replaces `fix_defaults` and the environment
 //! assembly in `main` of `run.py`.
 
-use crate::error::{not_built, Result};
+use crate::error::Result;
 use crate::games::Game;
 use crate::profile::DeviceProfile;
 use std::collections::BTreeMap;
@@ -25,7 +25,43 @@ pub struct Settings {
 /// the same copy64 pair, `BB_TOGGLE2=12`. U3: `BB_GPU_MERGE=0`, `BB_TINY_READBACK=0`, copy64
 /// `0`/`0`, `BB_TOGGLE2=12`. Setting `BB_SCALAR_COPY64_SYNC` drops both copy64 defaults.
 pub fn fix_defaults(player_env: &BTreeMap<String, String>, game: Game) -> BTreeMap<String, String> {
-    not_built!("run_env::fix_defaults")
+    let mut defaults = BTreeMap::new();
+
+    let (gpu_merge, tiny_readback, copy64_sync, copy64_defer) = match game {
+        Game::U1 => ("0", "0", "2", "1"),
+        Game::U2 => ("0", "1", "2", "1"),
+        Game::U3 => ("0", "0", "0", "0"),
+    };
+
+    for (name, value) in [
+        ("BB_GPU_MERGE", gpu_merge),
+        ("BB_TINY_READBACK", tiny_readback),
+    ] {
+        if !player_env.contains_key(name) {
+            defaults.insert(name.to_owned(), value.to_owned());
+        }
+    }
+
+    if !player_env.contains_key("BB_SCALAR_COPY64_SYNC") {
+        defaults.insert("BB_SCALAR_COPY64_SYNC".to_owned(), copy64_sync.to_owned());
+        defaults.insert("BB_SCALAR_COPY64_DEFER".to_owned(), copy64_defer.to_owned());
+    }
+
+    if game == Game::U2 {
+        if !player_env.contains_key("BB_READBACK_SMALL_BUFFERS") {
+            defaults.insert("BB_READBACK_SMALL_BUFFERS".to_owned(), "1".to_owned());
+        }
+    } else if !player_env.contains_key("BB_TOGGLE2") {
+        defaults.insert("BB_TOGGLE2".to_owned(), "12".to_owned());
+    }
+
+    // An explicit scalar-copy mode disables both defaults as a pair.
+    if player_env.contains_key("BB_SCALAR_COPY64_SYNC") {
+        defaults.remove("BB_SCALAR_COPY64_SYNC");
+        defaults.remove("BB_SCALAR_COPY64_DEFER");
+    }
+
+    defaults
 }
 
 /// The full environment to start `game` with, in name order: `fix_defaults`, then the device
@@ -36,5 +72,32 @@ pub fn build_env(
     profile: &DeviceProfile,
     player_env: &BTreeMap<String, String>,
 ) -> Result<Vec<(String, String)>> {
-    not_built("run_env::build_env")
+    let mut env = fix_defaults(player_env, game);
+
+    // Device defaults, launcher settings, and explicit player variables override in that order.
+    env.extend(
+        profile
+            .env
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
+    );
+    if let Some(resolution) = &settings.resolution {
+        env.insert("BB_RESOLUTION".to_owned(), resolution.clone());
+    }
+    if let Some(quality) = &settings.upscale_quality {
+        env.insert("BB_UPSCALE_QUALITY".to_owned(), quality.clone());
+    }
+    env.extend(settings.extra.clone());
+    env.extend(player_env.clone());
+
+    // Preserve the legacy `run.py::game_res` behavior: canonicalize a valid explicit game size,
+    // derive its heap sizes, and discard an invalid/default 1080p value. Existing numeric heap
+    // overrides are passed through by `game_res_env`.
+    let game_res = crate::render_size::game_res_env(&env);
+    if env.contains_key("BB_GAME_RES") && !game_res.contains_key("BB_GAME_RES") {
+        env.remove("BB_GAME_RES");
+    }
+    env.extend(game_res);
+
+    Ok(env.into_iter().collect())
 }

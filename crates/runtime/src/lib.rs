@@ -5,6 +5,8 @@
 //! [`abi`] has one exported symbol, plus stubs for `runtime_resolve` and the NID table.
 //! [`savedata`] has the local save-location metadata commit (#168); the guest savedata ABI
 //! and loader are still pending, so no C symbols have moved yet.
+//! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
+//! wiring it into the fault/assertion handlers remains part of the loader port.
 //!
 //! # Remaining planned modules
 //!
@@ -20,5 +22,6 @@
 
 pub mod abi;
 pub mod benchmark;
+pub mod crash;
 pub mod pad;
 pub mod savedata;

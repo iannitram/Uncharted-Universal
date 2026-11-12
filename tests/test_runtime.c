@@ -10,6 +10,9 @@ void runtime_restart(void) { abort(); }
 #include <stdlib.h>
 #include <pthread.h>
 #include <stdatomic.h>
+/* Every exit and STOP of the runtime ends through runtime_quit, which is in probe.c
+ * (upstream 0.3.14). Tests end at once, with the output flushed. */
+void runtime_quit(int code) { fflush(NULL); _Exit(code); }
 #include <time.h>
 
 typedef int (ABI *Register)(GuestCallback);
