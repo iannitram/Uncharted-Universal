@@ -1593,6 +1593,9 @@ int main(int argc, char **argv) {
         sfo_value(sfo,"APP_VER",version,sizeof(version),NULL);
         bbnet_configure(app0,serial,title,version);
     }
+    /* crates/runtime: a static library left from an older build would miss symbols moved since. */
+    if (uncharted_runtime_version() < 1) fail("crates/runtime is older than this loader (rebuild it with build.sh)");
+    runtime_trophy_bind(runtime_file_user_dir, bbgpu_trophy_notify);
     if (trophy_dir) runtime_trophy_configure(trophy_dir);
     if (runtime_benchmark_start(user_dir ? user_dir : "user") < 0) return 2; /* BB_BENCHMARK set but unusable */
     bbgpu_register_kernel();
