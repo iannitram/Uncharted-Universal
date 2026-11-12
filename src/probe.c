@@ -1598,6 +1598,7 @@ int main(int argc, char **argv) {
         sfo_value(sfo,"APP_VER",version,sizeof(version),NULL);
         bbnet_configure(app0,serial,title,version);
     }
+    runtime_trophy_bind(runtime_file_user_dir, bbgpu_trophy_notify);
     if (trophy_dir) runtime_trophy_configure(trophy_dir);
     if (runtime_benchmark_start(user_dir ? user_dir : "user") < 0) return 2; /* BB_BENCHMARK set but unusable */
     bbgpu_register_kernel();

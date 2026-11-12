@@ -14,8 +14,23 @@ no_includes = true
 "target_arch = x86_64" = "__x86_64__"
 
 [export]
-# The benchmark glue keeps its own declarations (src/runtime_benchmark.c, #173).
+# The benchmark glue keeps its own declarations (src/runtime_benchmark.c, #173), and so does
+# trophy (src/runtime.h: its callback types are written out there; its constants stay Rust's).
 exclude = [
+    "runtime_trophy_bind",
+    "runtime_trophy_configure",
+    "runtime_trophy_resolve",
+    "INVALID_ARGUMENT",
+    "INVALID_HANDLE",
+    "INVALID_CONTEXT",
+    "INVALID_TROPHY_ID",
+    "ALREADY_UNLOCKED",
+    "PLATINUM_CANNOT_UNLOCK",
+    "MAX_TROPHIES",
+    "GAME_DETAILS_SIZE",
+    "GAME_DATA_SIZE",
+    "TROPHY_DETAILS_SIZE",
+    "TROPHY_DATA_SIZE",
     "uncharted_benchmark_start",
     "uncharted_benchmark_active",
     "uncharted_benchmark_pad",

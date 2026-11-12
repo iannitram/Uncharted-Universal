@@ -78,7 +78,6 @@ mod loader {
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
-        pub fn runtime_trophy_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
@@ -121,7 +120,8 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         runtime_rwlock_resolve,
         runtime_memory_resolve,
         runtime_kernel_resolve,
-        runtime_trophy_resolve,
+        // Rust since 3.05 (`crate::trophy`).
+        crate::trophy::runtime_trophy_resolve,
         runtime_services_resolve,
         runtime_ajm_resolve,
         runtime_audio_resolve,
