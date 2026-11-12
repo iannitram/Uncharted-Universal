@@ -80,3 +80,27 @@ fn per_game_defaults_are_applied_only_when_the_player_did_not_set_them() {
     assert!(!defaults.contains_key("BB_SCALAR_COPY64_DEFER"));
     assert_eq!(defaults["BB_TOGGLE2"], "12");
 }
+
+#[test]
+fn small_buffer_readback_is_explicitly_off_for_uncharted_1_and_3() {
+    for game in [Game::U1, Game::U3] {
+        let defaults = fix_defaults(&BTreeMap::new(), game);
+        assert_eq!(defaults["BB_READBACK_SMALL_BUFFERS"], "0", "{game:?}");
+
+        let player = map(&[("BB_READBACK_SMALL_BUFFERS", "1")]);
+        let defaults = fix_defaults(&player, game);
+        assert!(
+            !defaults.contains_key("BB_READBACK_SMALL_BUFFERS"),
+            "{game:?}"
+        );
+    }
+
+    let defaults = fix_defaults(&BTreeMap::new(), Game::U2);
+    assert_eq!(defaults["BB_READBACK_SMALL_BUFFERS"], "1");
+}
+
+#[test]
+fn small_buffer_player_override_is_kept_in_the_launch_env() {
+    let built = env(&[("BB_READBACK_SMALL_BUFFERS", "1")]);
+    assert_eq!(built["BB_READBACK_SMALL_BUFFERS"], "1");
+}

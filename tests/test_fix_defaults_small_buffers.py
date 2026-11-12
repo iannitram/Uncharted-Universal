@@ -21,9 +21,14 @@ class SmallBuffers(unittest.TestCase):
     def test_uncharted_2_gets_the_fix(self):
         self.assertEqual(run.fix_defaults(frozen(), U2)[KEY], '1')
 
-    def test_uncharted_1_and_3_do_not(self):
-        self.assertNotIn(KEY, run.fix_defaults(frozen(), U1))
-        self.assertNotIn(KEY, run.fix_defaults(frozen(), U3))
+    def test_uncharted_1_and_3_are_explicitly_off(self):
+        self.assertEqual(run.fix_defaults(frozen(), U1)[KEY], '0')
+        self.assertEqual(run.fix_defaults(frozen(), U3)[KEY], '0')
+
+    def test_uncharted_1_and_3_keep_a_player_override(self):
+        for exe in (U1, U3):
+            for value in ('0', '1', ''):
+                self.assertNotIn(KEY, run.fix_defaults(frozen(**{KEY: value}), exe), (exe, value))
 
     def test_unknown_executable_gets_nothing(self):
         self.assertEqual(run.fix_defaults(frozen(), 'other.elf'), {})

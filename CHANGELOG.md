@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-11 Small-buffer readback off for Uncharted 1 and 3 (#192): `run.py` and `run_env.rs` now set `BB_READBACK_SMALL_BUFFERS=0` unless the player set it, so the launcher's "Automatic: off" is true; the C++ default is unchanged and #191 still decides on measurements. Tests added in both suites.
 - 2026-11-11 Upstream sync: Supermedo main 4fd77bf (28 commits, 0.3.14: low latency mode with NVIDIA Reflex and AMD Anti-Lag 2, PGO build options and profile, exit and device-lost handling, audio driver fallbacks, effect-shader loop clamp, U2/U3 fixes) merged into `sync/2026-11-11`; six conflicts resolved, ours kept where it differs (the speaker-layout helper and `BB_AUDIO_STEREO`, the old-swapchain retirement, the translated FPS line, the launcher defaults and Linux hooks, `player_env` in `run.py`). The four new launcher texts are translated into es, pt, fr, de, it and ja. No native build or game run was done for it.
 - 2026-11-11 Roadmap map: the roadmap now opens with a dated features block of 15 feature ids (campaign, gpu, perf, crash-help, prep, launcher, runtime, hubs, steamos, windows, android, apple, saves, builds, later), taken from its existing Musts and stages; each issue gets one feature label and the 1.0 or After 1.0 milestone. No scope changed.
 - 2026-11-11 Docs: added CLAUDE.md pointing to AGENTS.fork.md and replaced a home-folder path in docs/maps/overview.md (repo-lint, R01); upstream-owned docs left as they are.

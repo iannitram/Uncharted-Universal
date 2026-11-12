@@ -55,6 +55,9 @@ def fix_defaults(player_env, exe):
         if 'BB_SCALAR_COPY64_SYNC' not in player_env:
             result['BB_SCALAR_COPY64_SYNC'] = '2'
             result['BB_SCALAR_COPY64_DEFER'] = '1'
+        # Brightness flicker fix: on in U2 only (issue #192 makes U1 explicitly off, as U3 is).
+        if 'BB_READBACK_SMALL_BUFFERS' not in player_env:
+            result['BB_READBACK_SMALL_BUFFERS'] = '0'
     elif exe == EXECUTABLES['u3']:
         if 'BB_GPU_MERGE' not in player_env:
             result['BB_GPU_MERGE'] = '0'
@@ -63,6 +66,9 @@ def fix_defaults(player_env, exe):
         if 'BB_SCALAR_COPY64_SYNC' not in player_env:
             result['BB_SCALAR_COPY64_SYNC'] = '0'
             result['BB_SCALAR_COPY64_DEFER'] = '0'
+        # Brightness flicker fix: on in U2 only; off here as the owner's 2026-11-02 ruling (issue #192).
+        if 'BB_READBACK_SMALL_BUFFERS' not in player_env:
+            result['BB_READBACK_SMALL_BUFFERS'] = '0'
     else:
         return {}
     # End-of-shader/display-label shortcuts have only been measured in U2.
@@ -532,6 +538,7 @@ def main():
     # (fewer whole-frame waits on the Deck, spacepepperoni/uncharted_Linux).
     # Aim and turret blur: the game reads a tiny render result (focus depth) on the CPU, so it is read back
     # (BB_TINY_READBACK). On for U2 only; U3 stays off until measured (issue #191); U1 unchanged.
+    # Brightness flicker fix (BB_READBACK_SMALL_BUFFERS): on for U2 only; U1 and U3 get an explicit 0 (issue #192).
     all_cheats = env.setdefault('BB_CHEATS_ALL', env.get('BB_CHEATS', ''))
     # Take a copy of the environment once before the loop
     player_env = dict(env)

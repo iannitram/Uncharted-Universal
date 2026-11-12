@@ -26,6 +26,7 @@ class FixDefaults(unittest.TestCase):
         got = run.fix_defaults(frozen(), U1)
         self.assertEqual(got['BB_TINY_READBACK'], '0')
         self.assertEqual(got['BB_GPU_MERGE'], '0')  # every game since the 2026-11-06 sync
+        self.assertEqual(got['BB_READBACK_SMALL_BUFFERS'], '0')  # issue #192: explicitly off
 
     def test_uncharted_2_gets_all_four_of_its_fixes(self):
         self.assertEqual(run.fix_defaults(frozen(), U2),
@@ -36,7 +37,7 @@ class FixDefaults(unittest.TestCase):
     def test_uncharted_3_keeps_the_copies_off_because_they_cost_94_to_54_fps(self):
         self.assertEqual(run.fix_defaults(frozen(), U3),
                          {'BB_GPU_MERGE': '0', 'BB_TINY_READBACK': '0', 'BB_SCALAR_COPY64_SYNC': '0',
-                          'BB_SCALAR_COPY64_DEFER': '0', 'BB_TOGGLE2': '12'})
+                          'BB_SCALAR_COPY64_DEFER': '0', 'BB_READBACK_SMALL_BUFFERS': '0', 'BB_TOGGLE2': '12'})
 
     def test_a_copy_setting_the_player_chose_removes_both_copy_defaults(self):
         got = run.fix_defaults(frozen(BB_SCALAR_COPY64_SYNC='0'), U1)
