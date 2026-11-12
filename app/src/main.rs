@@ -4,7 +4,8 @@
 //!
 //! `uncharted-app --play <u1|u2|u3> [-- <runtime arguments>]` starts that game at once (as a
 //! Steam shortcut does) and shows the after-crash screen when it crashes; a run the app did not
-//! see end is picked up on the next start.
+//! see end is picked up on the next start. When that pickup shows the after-crash screen,
+//! `--play` waits for it: the screen's Play again button starts the game.
 
 mod focus;
 mod input;
@@ -301,6 +302,13 @@ impl App {
     }
 }
 
+/// The game `--play` starts at once: none when the pickup of an unfinished run put the
+/// after-crash screen up, since starting would replace that screen before it is drawn. The
+/// screen's Play again button starts the game instead.
+fn start_now(play: Option<Game>, page: Page) -> Option<Game> {
+    play.filter(|_| page != Page::AfterCrash)
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let args = match parse_args(&args) {
@@ -335,7 +343,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(game) = unfinished {
             app.run_ended(&window, game);
         }
-        if let Some(game) = args.play {
+        if let Some(game) = start_now(args.play, app.page) {
             app.start(&window, game);
         }
     }
@@ -436,5 +444,17 @@ mod tests {
         assert!(parse_args(&args(&["--play"])).is_err());
         assert!(parse_args(&args(&["--play", "u9"])).is_err());
         assert!(parse_args(&args(&["--fast"])).is_err());
+    }
+
+    #[test]
+    fn play_waits_for_the_after_crash_screen() {
+        // No pickup screen: --play starts its game at once.
+        assert_eq!(start_now(Some(Game::U2), Page::Home), Some(Game::U2));
+        // The pickup of an unfinished run showed the after-crash screen: keep it up.
+        assert_eq!(start_now(Some(Game::U2), Page::AfterCrash), None);
+        assert_eq!(start_now(Some(Game::U1), Page::AfterCrash), None);
+        // Without --play nothing starts.
+        assert_eq!(start_now(None, Page::Home), None);
+        assert_eq!(start_now(None, Page::AfterCrash), None);
     }
 }
