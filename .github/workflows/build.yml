@@ -64,6 +64,8 @@ jobs:
         run: |
           sudo chroot "$CHROOT" bash -euc '
             git config --global --add safe.directory "*"
+            # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
+            mkdir -p "$HOME/.local/share"
             cd /work
             BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh --test
           '
@@ -71,6 +73,8 @@ jobs:
         run: |
           sudo chroot "$CHROOT" bash -euc '
             git config --global --add safe.directory "*"
+            # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
+            mkdir -p "$HOME/.local/share"
             cd /work
             python3 tools/ci_unittest.py --platform linux
           '
@@ -80,6 +84,8 @@ jobs:
         run: |
           sudo chroot "$CHROOT" bash -euc '
             git config --global --add safe.directory "*"
+            # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
+            mkdir -p "$HOME/.local/share"
             cd /work
             bash packaging/linux/build_dlss.sh
           '
