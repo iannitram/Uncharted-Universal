@@ -8,6 +8,8 @@
 extern "C" {
 __thread sigjmp_buf* runtime_fault_recover = nullptr;
 std::uint64_t runtime_disabled_optimizations = 0;
+std::uint64_t runtime_disabled_optimizations2 = 0;
+void* runtime_map_guest_memory(std::uint64_t) { std::abort(); }
 #ifdef _WIN32
 [[noreturn]] void bb_longjmp(sigjmp_buf, int) { std::abort(); }
 #endif

@@ -164,7 +164,7 @@ cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pg
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 # A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
 if ! ninja ${BB_JOBS:+-j"$BB_JOBS"} -C out/gpu bbgpu > out/gpu-build.log 2>&1; then
-    tail -40 out/gpu-build.log >&2
+    awk 'substr($0, 1, 1) != "["' out/gpu-build.log | tail -40 >&2 || true
     echo 'GPU library build failed (full log: out/gpu-build.log)' >&2; exit 1
 fi
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
