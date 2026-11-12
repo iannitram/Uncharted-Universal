@@ -21,7 +21,7 @@ icon.size = max(icon.ico.sizes())
 icon.convert('RGBA').save('launcher/uncharted.png')
 EOF
 hidden=()
-for module in argparse base64 collections hashlib json re shlex shutil struct tempfile zlib cheats xml.etree.ElementTree \
+for module in argparse base64 collections hashlib json re shlex shutil struct tempfile zlib cheats save_slots xml.etree.ElementTree \
               uncharted_art uncharted_fonts uncharted_i18n uncharted_widgets uncharted_linux uncharted_logs bbport_steam PIL.ImageTk PIL._tkinter_finder; do
     hidden+=(--hidden-import "$module")
 done
@@ -63,7 +63,7 @@ ldd out/bb-probe out/gpu/libbbgpu.so out/bb-gpu-capabilities | awk '/=> \// {pri
         [[ $name == libbbgpu.so ]] && continue
         [[ $name =~ $system ]] || cp -L "$path" "$dest/bin/lib/$name"
     done
-cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py scripts/render_720p.py scripts/render_res.py scripts/trophies.py scripts/cheats.py scripts/patches.py scripts/pkg.py "$dest/scripts/"
+cp scripts/prepare.py scripts/link_modules.py scripts/link_libc.py scripts/content_profile.py scripts/render_720p.py scripts/render_res.py scripts/trophies.py scripts/cheats.py scripts/patches.py scripts/pkg.py scripts/save_slots.py "$dest/scripts/"
 cp run.py LICENSE "$dest/"
 cp launcher/uncharted.png "$dest/launcher/"
 cp README.md "$dest/README.md"
