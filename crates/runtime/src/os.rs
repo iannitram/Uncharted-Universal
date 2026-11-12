@@ -52,14 +52,16 @@ impl Description {
         Ok(n)
     }
 
-    /// Read at `offset`; the shared position is unchanged (`pread`).
+    /// Read at `offset`; the shared position is unchanged (`pread`). An offset past
+    /// `i64::MAX` is refused with `InvalidInput` (`EINVAL`) before any host call.
     pub fn read_at(&self, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
-        read_at(&self.file, buffer, offset)
+        read_at(&self.file, buffer, host_offset(offset)?)
     }
 
-    /// Write at `offset`; the shared position is unchanged (`pwrite`).
+    /// Write at `offset`; the shared position is unchanged (`pwrite`). An offset past
+    /// `i64::MAX` is refused with `InvalidInput` (`EINVAL`) before any host call.
     pub fn write_at(&self, buffer: &[u8], offset: u64) -> io::Result<usize> {
-        write_at(&self.file, buffer, offset)
+        write_at(&self.file, buffer, host_offset(offset)?)
     }
 
     /// Move the shared position (`lseek`) and return it. A target before the start of the
@@ -92,6 +94,22 @@ impl Description {
     // A poisoned lock still holds a valid position: a panic never leaves it half-updated.
     fn lock(&self) -> std::sync::MutexGuard<'_, u64> {
         self.position.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+// A caller's offset as a host offset: it must fit an `off_t`, as `pread` and `pwrite` (and
+// `compat_win.c`) require. Windows takes the bits as a signed offset, so one past `i64::MAX`
+// would arrive negative, where -1 writes at the end of the file and -2 reads or writes at the
+// handle's own file pointer. The shared position needs no check: `seek` keeps it within
+// `i64::MAX`, and no file holds a byte past it.
+fn host_offset(offset: u64) -> io::Result<u64> {
+    if i64::try_from(offset).is_ok() {
+        Ok(offset)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "file offset past i64::MAX",
+        ))
     }
 }
 
@@ -382,5 +400,42 @@ mod tests {
         assert_eq!(file.read_at(&mut buffer, BYTES + 100).unwrap(), 0);
         assert_eq!(file.write(&1u32.to_le_bytes()).unwrap(), 4);
         assert_eq!(fs::metadata(&path).unwrap().len(), BYTES + 12);
+    }
+
+    /// An offset past `i64::MAX` is no `off_t`: `read_at` and `write_at` refuse it with
+    /// `InvalidInput` (`EINVAL`) before any host call. Windows would take its bits as a
+    /// negative offset, where -1 appends and -2 uses the handle's own file pointer.
+    #[test]
+    fn os_positioned_calls_refuse_an_offset_past_i64_max_before_the_host() {
+        let dir = TempDir::new("offset-range");
+        let path = dir.0.join("made-up.bin");
+        fs::write(&path, counters()).unwrap();
+        let file = open(&path);
+        assert_eq!(file.seek(SeekFrom::Start(8)).unwrap(), 8);
+
+        let mut buffer = [0u8; 4];
+        let mut reached = Vec::new();
+        for offset in [1 << 63, u64::MAX - 1, u64::MAX] {
+            let read = file.read_at(&mut buffer, offset);
+            let write = file.write_at(b"abcd", offset);
+            for (call, result) in [("read_at", read), ("write_at", write)] {
+                match result {
+                    Err(e)
+                        if e.kind() == io::ErrorKind::InvalidInput
+                            && e.raw_os_error().is_none() => {}
+                    other => reached.push(format!("{call} at {offset:#x}: {other:?}")),
+                }
+            }
+        }
+        let after = fs::read(&path).unwrap();
+        if after != counters() {
+            let first = after.iter().zip(counters()).position(|(a, b)| *a != b);
+            reached.push(format!(
+                "file: {} bytes, first change at {first:?}",
+                after.len()
+            ));
+        }
+        assert!(reached.is_empty(), "reached the host: {reached:#?}");
+        assert_eq!(file.position(), 8);
     }
 }
