@@ -7,13 +7,15 @@
 //! and loader are still pending, so no C symbols have moved yet.
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
 //! wiring it into the fault/assertion handlers remains part of the loader port.
+//! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
+//! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
 //! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
-//! `cpu_patch` and `red_zone`, `os`, `loader` (and the `uncharted-run` binary). The `gpu`
+//! `cpu_patch` and `red_zone`, `os`, `loader` (in the `uncharted-run` binary). The `gpu`
 //! build script (CMake over `gpu/`, piece 3.01) and the `cbindgen` header come with the
 //! scaffold piece, not here.
 
@@ -24,4 +26,5 @@ pub mod abi;
 pub mod benchmark;
 pub mod crash;
 pub mod pad;
+pub mod probe;
 pub mod savedata;
