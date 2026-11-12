@@ -104,3 +104,108 @@ fn small_buffer_player_override_is_kept_in_the_launch_env() {
     let built = env(&[("BB_READBACK_SMALL_BUFFERS", "1")]);
     assert_eq!(built["BB_READBACK_SMALL_BUFFERS"], "1");
 }
+
+fn env_for(game: Game, pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    let plain = DeviceProfile {
+        env: &[],
+        ..PROFILE
+    };
+    build_env(game, &Settings::default(), &plain, &map(pairs))
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+#[test]
+fn fixed_renderer_values_and_vblank_default_are_set_unless_the_player_sets_them() {
+    let built = env_for(Game::U2, &[]);
+    assert_eq!(built["BB_VELOCITY_PS"], "f4b18264");
+    assert_eq!(built["BB_UPSCALE_BEFORE_CS"], "aec539f0");
+    assert_eq!(built["BB_HUDLESS_PS"], "484cdbf5");
+    assert_eq!(built["BB_JITTER_PS"], "f614041e,b2a42acf,1a08df2d");
+    assert_eq!(built["BB_VBLANK_HZ"], "60");
+
+    let built = env_for(Game::U2, &[("BB_VBLANK_HZ", "30"), ("BB_HUDLESS_PS", "x")]);
+    assert_eq!(built["BB_VBLANK_HZ"], "30");
+    assert_eq!(built["BB_HUDLESS_PS"], "x");
+}
+
+#[test]
+fn profile_vblank_beats_the_default_and_settings_beat_the_profile() {
+    const HANDHELD: &[(&str, &str)] = &[("BB_VBLANK_HZ", "30"), ("BB_RESOLUTION", "1280x720")];
+    let profile = DeviceProfile {
+        env: HANDHELD,
+        ..PROFILE
+    };
+    let settings = Settings {
+        resolution: Some("2560x1440".to_owned()),
+        upscale_quality: Some("balanced".to_owned()),
+        ..Settings::default()
+    };
+    let built: BTreeMap<_, _> = build_env(Game::U1, &settings, &profile, &BTreeMap::new())
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(built["BB_VBLANK_HZ"], "30");
+    assert_eq!(built["BB_RESOLUTION"], "2560x1440");
+    assert_eq!(built["BB_UPSCALE_QUALITY"], "balanced");
+}
+
+#[test]
+fn copy64_eop_readback_is_on_for_u3_only_and_the_player_wins() {
+    assert_eq!(env_for(Game::U3, &[])["BB_COPY64_EOP_READBACK"], "1");
+    assert!(!env_for(Game::U1, &[]).contains_key("BB_COPY64_EOP_READBACK"));
+    assert!(!env_for(Game::U2, &[]).contains_key("BB_COPY64_EOP_READBACK"));
+    let built = env_for(Game::U3, &[("BB_COPY64_EOP_READBACK", "0")]);
+    assert_eq!(built["BB_COPY64_EOP_READBACK"], "0");
+    let built = env_for(Game::U2, &[("BB_COPY64_EOP_READBACK", "1")]);
+    assert_eq!(built["BB_COPY64_EOP_READBACK"], "1");
+}
+
+#[test]
+fn u1_skips_the_collection_menu_unless_told_otherwise() {
+    assert_eq!(env_for(Game::U1, &[])["BB_SKIP_COLLECTION_MENU"], "1");
+    let built = env_for(Game::U1, &[("BB_SKIP_COLLECTION_MENU", "0")]);
+    assert_eq!(built["BB_SKIP_COLLECTION_MENU"], "0");
+    let built = env_for(Game::U1, &[("BB_U1_DIRECT", "1")]);
+    assert!(!built.contains_key("BB_SKIP_COLLECTION_MENU"));
+    assert!(!env_for(Game::U2, &[]).contains_key("BB_SKIP_COLLECTION_MENU"));
+    assert!(!env_for(Game::U3, &[]).contains_key("BB_SKIP_COLLECTION_MENU"));
+}
+
+#[test]
+fn game_res_sets_scene_and_movie_size_and_stale_derived_values_are_dropped() {
+    let built = env_for(Game::U2, &[("BB_GAME_RES", "2560x1440")]);
+    assert_eq!(built["BB_SCENE_SIZE"], "2560x1440");
+    assert_eq!(built["BB_MOVIE_SIZE"], "2560x1440");
+    assert_eq!(built["BB_DMEM_MB_USER"], built["BB_DMEM_MB"]);
+
+    let built = env_for(
+        Game::U2,
+        &[
+            ("BB_SCENE_SIZE", "1x1"),
+            ("BB_RENDER_RES", "1x1"),
+            ("BB_OUTPUT_RES", "1x1"),
+        ],
+    );
+    for name in ["BB_SCENE_SIZE", "BB_RENDER_RES", "BB_OUTPUT_RES"] {
+        assert!(!built.contains_key(name), "{name}");
+    }
+}
+
+#[test]
+fn a_direct_memory_size_the_player_set_is_remembered() {
+    let built = env_for(Game::U2, &[("BB_DMEM_MB", "8192")]);
+    assert_eq!(built["BB_DMEM_MB_USER"], "8192");
+    assert!(!env_for(Game::U2, &[]).contains_key("BB_DMEM_MB_USER"));
+}
+
+#[test]
+fn u3_defaults_match_run_py() {
+    let defaults = fix_defaults(&BTreeMap::new(), Game::U3);
+    assert_eq!(defaults["BB_SCALAR_COPY64_SYNC"], "0");
+    assert_eq!(defaults["BB_SCALAR_COPY64_DEFER"], "0");
+    assert_eq!(defaults["BB_TINY_READBACK"], "0");
+    assert_eq!(defaults["BB_TOGGLE2"], "12");
+    assert!(!fix_defaults(&BTreeMap::new(), Game::U2).contains_key("BB_TOGGLE2"));
+}
