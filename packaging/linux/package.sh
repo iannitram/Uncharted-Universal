@@ -56,18 +56,12 @@ fi
 # FSR 4 assets (tools/fetch_fsr4_assets.sh) when present: run.py starts the game in the package
 # folder, where vk_fsr4.cpp looks for fsr4_shaders/ by default.
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; echo 'FSR 4: assets packaged'; fi
-# Libraries every desktop and SteamOS have, or that must match the graphics driver, stay out
-# (whole families: libX*, libdrm_*, libpulse*, ...). libva is bundled: the bundled ffmpeg (Debian 13)
-# needs libva 2.21+ (vaMapBuffer2) and Ubuntu 24.04 / Mint 22 / Pop!_OS 24.04 have 2.20, so no game
-# started there. The game decodes in software and never loads a VA driver.
-system='^(ld-linux|libc\.|libm\.|libdl\.|libpthread|librt\.|libresolv|libutil\.|libgcc_s|libstdc\+\+|libvulkan|libX|libxcb|libxkb|libwayland|libdrm|libGL|libEGL|libgbm|libasound|libpulse|libpipewire|libdbus|libudev|libsystemd|libz\.|libzstd|libexpat|libelf|libLLVM|libffi|libcap\.|libgcrypt|libgpg-error|liblzma|libmount|libblkid|libglib|libgobject|libgio|libgmodule|libpcre2|libdecor|libxshmfence|libsensors|libfontconfig|libfreetype)'
-# The Rust faces have no RUNPATH to bin/lib: everything they load must be a system library
-# (Slint opens X11, Wayland, xkbcommon and GL itself; fontconfig and udev are linked).
+# shellcheck source=packaging/linux/system_libraries.sh
+source packaging/linux/system_libraries.sh
+# The Rust faces load only system libraries (Slint opens X11, Wayland, xkbcommon and GL itself;
+# fontconfig and udev are linked): foreign_needed checks the libraries each names itself.
 for face in "${faces[@]}"; do
-    foreign=$(ldd "$dest/$face" | awk '/=> \// {print $1}' | while read -r name; do
-        name=$(basename -- "$name")
-        [[ $name =~ $system ]] || echo "$name"
-    done)
+    foreign=$(readelf -d "$dest/$face" | foreign_needed)
     [[ -z $foreign ]] || { echo "$face links libraries a player's system may lack: $foreign" >&2; exit 1; }
 done
 ldd out/bb-probe out/gpu/libbbgpu.so out/bb-gpu-capabilities | awk '/=> \// {print $1, $3}' | sort -u |
