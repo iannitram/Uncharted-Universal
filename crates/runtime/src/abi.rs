@@ -14,13 +14,28 @@
 //! Only this crate has `unsafe` and FFI; every `unsafe` block carries a `// SAFETY:` line.
 
 /// NID to symbol name for eboot and linked libc imports (diagnostics only): the C
-/// `import_names.inc`, `{"bzQExy189ZI#q#q", "_init_env"}` and so on. Empty until the port of
-/// this module fills it; sorted by NID so a lookup can bisect.
-pub static NID_TABLE: &[(&str, &str)] = &[];
+/// `import_names.inc`, `{"bzQExy189ZI#q#q", "_init_env"}` and so on. Holds the entries of the
+/// libraries already in Rust (their resolvers look their imports up here; the C table keeps the
+/// rest until the port of this module moves it whole); sorted by NID so a lookup can bisect.
+pub static NID_TABLE: &[(&str, &str)] = &[
+    // libSceNpTrophy (crate::trophy).
+    ("28xmRUFao68#l#m", "sceNpTrophyUnlockTrophy"),
+    ("E1Wrwd07Lr8#l#m", "sceNpTrophyDestroyContext"),
+    ("GNcF4oidY0Y#l#m", "sceNpTrophyDestroyHandle"),
+    ("LHuSmO3SLd8#l#m", "sceNpTrophyGetTrophyUnlockState"),
+    ("TJCAxto9SEU#l#m", "sceNpTrophyRegisterContext"),
+    ("XbkjbobZlCY#l#m", "sceNpTrophyCreateContext"),
+    ("YYP3f2W09og#l#m", "sceNpTrophyGetGameInfo"),
+    ("q7U6tEAQf7c#l#m", "sceNpTrophyCreateHandle"),
+    ("qqUVGDgQBm0#l#m", "sceNpTrophyGetTrophyInfo"),
+];
 
 /// The symbol name for `nid`, if it is in [`NID_TABLE`] (the C `runtime_symbol`).
 pub fn nid_name(nid: &str) -> Option<&'static str> {
-    unimplemented!("not built yet: abi::nid_name")
+    NID_TABLE
+        .binary_search_by(|(entry, _)| (*entry).cmp(nid))
+        .ok()
+        .map(|index| NID_TABLE[index].1)
 }
 
 /// Where a guest import `name` resolves to (the C `uintptr_t runtime_resolve(const char *name,
@@ -31,10 +46,10 @@ pub fn runtime_resolve(name: &str, is_data: bool) -> Option<usize> {
     unimplemented!("not built yet: abi::runtime_resolve")
 }
 
-/// The runtime's ABI version, which the loader is to check at start. `0` meant no C symbol
-/// had moved to Rust; `1`: [`crate::memory`] (piece 3.12) exports the `src/runtime_memory.c`
-/// symbols on Linux and Android. Exists so the static library links and a test can call
-/// across the C ABI from day one.
+/// The runtime's ABI version. `0` meant no C symbol had moved to Rust yet; `1` since the first
+/// ported module (`trophy`, 3.05; [`crate::memory`], piece 3.12, exports the
+/// `src/runtime_memory.c` symbols on Linux and Android). The loader checks it at start, so a
+/// stale static library fails there instead of at a missing symbol.
 #[no_mangle]
 pub extern "C" fn uncharted_runtime_version() -> u32 {
     1
@@ -42,8 +57,20 @@ pub extern "C" fn uncharted_runtime_version() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn version_is_one_since_memory_moved() {
-        assert_eq!(super::uncharted_runtime_version(), 1);
+    fn version_is_one_since_the_first_module_moved() {
+        assert_eq!(uncharted_runtime_version(), 1);
+    }
+
+    #[test]
+    fn the_nid_table_is_sorted_and_bisects() {
+        assert!(NID_TABLE.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        for (nid, name) in NID_TABLE {
+            assert_eq!(nid_name(nid), Some(*name));
+        }
+        assert_eq!(nid_name("XbkjbobZlCY#l#"), None);
+        assert_eq!(nid_name(""), None);
     }
 }
