@@ -22,6 +22,17 @@ features:
 
 From `SPEC.md` (approved 2026-11-01) to 1.0: Uncharted 1, 2 and 3 on the AMD handheld, the Strix Halo tablet and the RTX 3090 Ti desktop, the same save on each, each game start to finish on the AMD handheld, and our code in Rust. Mac, iPhone/iPad and Android are 1.x (scope ruling 2026-11-12, #268). The code map is `docs/code-map.md`; the decisions are `docs/adr/` (0001 workspace, 0002 runtime to Rust in strangler order, 0003 Slint launcher, 0004 build hubs, 0005 Android through FEXCore, 0006 Apple through a recompiled library and Metal). Every piece is an issue titled `<id>: ...`; `Blocked by` in each issue sets the order. The plan of 2026-10-24 (`docs/review-2026-10-24/ROADMAP-proposed.md`) is history now; its open work is carried into the stages below.
 
+## Game files
+
+On the RTX 3090 Ti desktop (`desktop-3090ti`), recorded 2026-11-12. These files never go into a repo or a bundle (M9).
+
+| | Path |
+|---|---|
+| Raw package (US, v1.02, CUSA02320) | `L:\Dropbox\Software\Emulation\roms\PS4\Uncharted The Nathan Drake Collection - [US] [EN] [1.02].pkg` (read only; never install or extract into Dropbox) |
+| Installed copy (55.7 GB, 16,156 entries) | `B:\games-donotdelete\Uncharted-Universal\CUSA02320\` (`eboot.bin`, `u1data`, `u2data`, `u3data`, `sce_sys`) |
+
+How it was made: the shadPS4 fork's `shadps4.exe --extract-pkg <pkg> --extract-dir <new empty folder> --extract-threads 8`. shadPS4's `config.toml` `installDirs` points at `B:/games-donotdelete/Uncharted-Universal`.
+
 ## Features, by Must
 
 | Must | Pieces |
