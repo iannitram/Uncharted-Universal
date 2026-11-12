@@ -16,6 +16,13 @@ int bbgpu_mouse_sample(float *dx, float *dy, uint32_t *buttons, int *wheel) {
 }
 int bbgpu_camera_yaw(float *yaw_degrees, double *age_seconds) { (void)yaw_degrees; (void)age_seconds; return 0; }
 void bbgpu_prompts_controller(int device) { (void)device; }
+static int benchmark_owns_pad; /* BB_BENCHMARK (runtime_benchmark.c): the scripted pad */
+int runtime_benchmark_pad(RuntimeBenchmarkPad *out) {
+    if (!benchmark_owns_pad) return 0;
+    out->buttons=BTN_CROSS;
+    out->left_x=10; out->left_y=20; out->right_x=30; out->right_y=40;
+    return 1;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -113,6 +120,13 @@ int main(void) {
     capture=1;
     assert(pad_read_state(1,&data)==0 && data.touch_count==0 && data.buttons==0);
     capture=0;
+    /* Benchmark mode replaces the whole read: the real pad and the replay file are ignored. */
+    benchmark_owns_pad=1;
+    assert(pad_read_state(1,&data)==0);
+    assert(data.buttons==BTN_CROSS && data.l2==0 && data.r2==0);
+    assert(data.left_x==10 && data.left_y==20 && data.right_x==30 && data.right_y==40);
+    benchmark_owns_pad=0;
+    assert(pad_read_state(1,&data)==0 && data.buttons!=BTN_CROSS); /* the real pad again */
     assert(SDL_SetJoystickVirtualTouchpad(joystick,0,0,false,0,0,0));
     assert(SDL_SetJoystickVirtualTouchpad(joystick,0,1,false,0,0,0));
     SDL_UpdateJoysticks();

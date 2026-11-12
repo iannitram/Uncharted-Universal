@@ -39,6 +39,10 @@ void NotePresent();
 /// trophy's icon file or empty). Notices are shown at the top of the screen one after the other.
 void NotifyTrophy(int grade, std::string game, std::string name, std::vector<unsigned char> png);
 
+/// Any thread: device-local video memory in use, in MiB (0 until the overlay is initialised).
+/// Read about once a second; BB_BENCHMARK samples it every frame.
+u64 DeviceLocalMemoryMiB();
+
 /// The menu is open or a text entry is shown: the game's input is held neutral.
 bool CapturesInput();
 

@@ -89,6 +89,7 @@ float frame_ms_avg = 0.0f, last_present_ms = 0.0f;
 vk::PhysicalDevice memory_gpu{};
 VmaAllocator memory_allocator{};
 bool memory_budget = false;
+std::atomic<bool> memory_ready{false}; // memory_gpu/allocator/budget are set (end of Init)
 std::chrono::steady_clock::time_point memory_at{};
 double ram_gib = -1.0, ram_total_gib = 0.0, vram_gib = 0.0, vram_total_gib = 0.0;
 
@@ -863,6 +864,7 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     memory_gpu = instance.GetPhysicalDevice();
     memory_allocator = instance.GetAllocator();
     memory_budget = instance.CanReportMemoryUsage();
+    memory_ready.store(true, std::memory_order_release);
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
@@ -1034,6 +1036,39 @@ void NotifyTrophy(int grade, std::string game, std::string name, std::vector<uns
         toast_queue.push_back({grade, std::move(game), std::move(name), std::move(png)});
         toast_busy = true;
     }
+}
+
+u64 DeviceLocalMemoryMiB() {
+    // BB_BENCHMARK sampling: called once per flip, so the answer is kept for a second.
+    static std::atomic<u64> cached{0};
+    static std::atomic<s64> cached_at_ms{-1};
+    if (!memory_ready.load(std::memory_order_acquire) || !memory_gpu) {
+        return 0;
+    }
+    const s64 now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    const s64 at = cached_at_ms.load(std::memory_order_relaxed);
+    if (at >= 0 && now_ms - at < 1000) {
+        return cached.load(std::memory_order_relaxed);
+    }
+    vk::PhysicalDeviceMemoryBudgetPropertiesEXT budget{};
+    vk::PhysicalDeviceMemoryProperties2 props{.pNext = memory_budget ? &budget : nullptr};
+    memory_gpu.getMemoryProperties2(&props);
+    VmaBudget tracked[VK_MAX_MEMORY_HEAPS]{};
+    if (!memory_budget && memory_allocator) {
+        vmaGetHeapBudgets(memory_allocator, tracked);
+    }
+    u64 used = memory_budget ? 0 : Vulkan::Vram::arena_bytes.load(std::memory_order_relaxed);
+    for (u32 i = 0; i < props.memoryProperties.memoryHeapCount; ++i) {
+        if (props.memoryProperties.memoryHeaps[i].flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+            used += memory_budget ? budget.heapUsage[i] : tracked[i].statistics.blockBytes;
+        }
+    }
+    const u64 mib = used / (1024 * 1024);
+    cached.store(mib, std::memory_order_relaxed);
+    cached_at_ms.store(now_ms, std::memory_order_relaxed);
+    return mib;
 }
 
 bool CapturesInput() {
