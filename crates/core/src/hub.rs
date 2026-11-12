@@ -9,7 +9,8 @@
 //! it (`format_pairing_code`); the player types it on the client (`parse_pairing_code`). The hub
 //! runs a `PairingServer`, whose accept loop keeps one `PairingLimiter` per remote address and
 //! stores the new `Peer` in `peers.json`; the client runs `pair_with_hub`, which stores the hub.
-//! `remove_peer` forgets a device. mDNS discovery and bundle serving remain unimplemented.
+//! `remove_peer` forgets a device. mDNS discovery and the announce side live in `hub/discovery.rs`
+//! (roadmap 4.01; `mdns-sd`). Bundle serving remains unimplemented.
 
 use crate::bundle::Bundle;
 use crate::error::{not_built, Error, Result};
@@ -24,6 +25,12 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
+
+mod discovery;
+pub use discovery::{
+    announce, discover, discover_on, found, parse_txt, txt, withdraw, Announcement, Mdns,
+    MdnsDaemon, MemoryMdns, Record, TXT_HUB, TXT_TARGETS,
+};
 
 /// The mDNS service a hub announces.
 pub const SERVICE: &str = "_uncharted-universal._tcp.local.";
@@ -213,11 +220,6 @@ pub fn is_home_network(addr: IpAddr) -> bool {
                 || (s[0] & 0xffc0) == 0xfe80 // fe80::/10
         }
     }
-}
-
-/// Hubs announcing `SERVICE`, waited for up to `wait_ms`.
-pub fn discover(wait_ms: u64) -> Result<Vec<Found>> {
-    not_built("hub::discover")
 }
 
 /// A random six-digit pairing code from the operating system's random source, uniform over
