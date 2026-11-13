@@ -1,6 +1,11 @@
-# Builds the Linux / Steam Deck package. Every build of main is published as a
-# release (v<upstream version>-linux.<run>), which the launcher's update check looks for.
-name: Build Linux package
+# Builds the release packages (roadmap 2.10): the Linux / Steam Deck AppImage and tarball, the
+# Windows zip, and the macOS app bundle. Each carries the Rust launcher (uncharted-app, with
+# uncharted-universal and uncharted-run beside it; packaging/rust_faces.sh) and, until roadmap
+# 2.11, the classic PyInstaller launcher. Every build of main is published as a release
+# (v<upstream version>-linux.<run>, the tag the Linux launcher's update check looks for) with
+# the Linux and Windows packages, one manifest.json and one SHA256SUMS over them. The macOS
+# bundle is built and kept as a CI artifact only: the Mac app that ships is roadmap 1.x.
+name: Build release packages
 
 on:
   # A push that only touches these files changes nothing in the package.
@@ -30,6 +35,8 @@ jobs:
   build:
     # GitHub-hosted Linux runner (R29): this repo is public.
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.package.outputs.tag }}
     # Ubuntu 24.04 has no SDL3 package. So the build runs in a Debian 13 chroot (glibc 2.41, no newer than SteamOS 3.7+).
     env:
       CHROOT: /var/tmp/trixie-build
@@ -58,22 +65,24 @@ jobs:
         run: |
           sudo chroot "$CHROOT" bash -euc '
             apt-get update -q
-            DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends               git ca-certificates curl build-essential cmake ninja-build pkgconf file binutils               python3 python3-venv python3-dev python3-tk python3-pil               libsdl3-dev libvulkan-dev mesa-vulkan-drivers libfmt-dev libboost-dev robin-map-dev               libvulkan-memory-allocator-dev libxxhash-dev libx11-dev libzydis-dev libzycore-dev               libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev               libprotobuf-dev protobuf-compiler nlohmann-json3-dev libssl-dev zlib1g-dev               libminiupnpc-dev glslang-tools glslang-dev spirv-headers
+            DEBIAN_FRONTEND=noninteractive apt-get install -yq --no-install-recommends               git ca-certificates curl build-essential cmake ninja-build pkgconf file binutils               python3 python3-venv python3-dev python3-tk python3-pil               libsdl3-dev libvulkan-dev mesa-vulkan-drivers libfmt-dev libboost-dev robin-map-dev               libvulkan-memory-allocator-dev libxxhash-dev libx11-dev libzydis-dev libzycore-dev               libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev               libprotobuf-dev protobuf-compiler nlohmann-json3-dev libssl-dev zlib1g-dev               libminiupnpc-dev glslang-tools glslang-dev spirv-headers               libudev-dev libfontconfig-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev               libxcb1-dev libxcursor-dev libxrandr-dev libxi-dev libwayland-dev libgl-dev libegl-dev
           '
           # rustup-init needs /proc/self/exe, which is intentionally not mounted in this
           # unprivileged chroot. Run its installer on the host, targeting the chroot's /root.
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup-init.sh"
           sudo env RUSTUP_HOME="$CHROOT/root/.rustup" CARGO_HOME="$CHROOT/root/.cargo" \
-            sh "$RUNNER_TEMP/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain 1.88.0
+            sh "$RUNNER_TEMP/rustup-init.sh" -y --no-modify-path --profile minimal --default-toolchain 1.92.0
           rm -f "$RUNNER_TEMP/rustup-init.sh"
           # Rustup's proxy and the toolchain's $ORIGIN rpath both need /proc/self/exe; call the
           # toolchain binaries directly with LD_LIBRARY_PATH.
-          sudo chroot "$CHROOT" env LD_LIBRARY_PATH=/root/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib /root/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --version
+          sudo chroot "$CHROOT" env LD_LIBRARY_PATH=/root/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/lib /root/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin/rustc --version
       - name: Build
         run: |
           sudo chroot "$CHROOT" bash -euc '
-            export PATH="$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:$PATH"
-            export LD_LIBRARY_PATH="$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib"
+            export PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH"
+            export LD_LIBRARY_PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/lib"
+            # Rust 1.90+ links with its own lld here, and its wrapper needs /proc/self/exe: use the system linker.
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C linker-features=-lld"
             git config --global --add safe.directory "*"
             # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
             mkdir -p "$HOME/.local/share"
@@ -130,12 +139,15 @@ jobs:
           sudo rm -rf "$CHROOT/work/out/appimagetool-extracted"
           sudo cp -a "$staging/squashfs-root" "$CHROOT/work/out/appimagetool-extracted"
       - name: Package
+        id: package
+        # Slint (the Rust app) needs Rust 1.92: the toolchain above is pinned to it.
         run: |
           version=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)
-          echo "TAG=v$version-linux.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "tag=v$version-linux.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           sudo chroot "$CHROOT" bash -euc "
-            export PATH=\$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin:\$PATH
-            export LD_LIBRARY_PATH=\$HOME/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/lib
+            export PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:\$PATH
+            export LD_LIBRARY_PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/lib
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS='-C linker-features=-lld'
             git config --global --add safe.directory '*'
             cd /work
             APPIMAGETOOL=/work/out/appimagetool-extracted/AppRun LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh
@@ -146,6 +158,18 @@ jobs:
             cd /work
             test -s /usr/share/vulkan/icd.d/lvp_icd.json
             VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json out/gpu/vulkan-smoke-test > dist/vulkan-smoke.txt
+          '
+      - name: Start the Rust faces from the AppDir
+        # AppRun hands `--help` to uncharted-universal; the runtime (only --probe so far) answers
+        # anything else with its usage line.
+        # With a Steam-like LD_PRELOAD set (empty: the loader ignores it), the command line
+        # still starts and answers.
+        run: |
+          sudo chroot "$CHROOT" bash -euc '
+            cd /work/out/stage/Uncharted.AppDir
+            HOME=/tmp ./AppRun --help | grep -q "uncharted-universal"
+            { ./uncharted-run --help 2>&1 || true; } | grep -q "usage: uncharted-run"
+            LD_PRELOAD= HOME=/tmp ./uncharted-universal --help >/dev/null
           '
       - name: Copy dist back to the workspace
         run: |
@@ -165,6 +189,8 @@ jobs:
           PY
           python3 tools/write_ci_manifest.py --directory dist --platform linux --revision "$GITHUB_SHA" \
             --smoke-result dist/vulkan-smoke.txt --dependencies "$RUNNER_TEMP/ci-dependencies.json"
+          mkdir -p "$RUNNER_TEMP/dependencies"
+          cp "$RUNNER_TEMP/ci-dependencies.json" "$RUNNER_TEMP/dependencies/"
       - uses: actions/upload-artifact@v4
         with:
           name: uncharted-linux
@@ -175,12 +201,117 @@ jobs:
             dist/manifest.json
             dist/SHA256SUMS
             dist/vulkan-smoke.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-dependencies
+          retention-days: 3
+          path: ${{ runner.temp }}/dependencies/ci-dependencies.json
+
+  windows:
+    # The Windows zip: the GPU library and loader with CLANG64 (as check.yml's native-windows),
+    # the Rust faces with the runner's MSVC toolchain, the classic launcher with PyInstaller.
+    # No DLSS, XeSS or FSR 4 here: packaging/windows/package.sh leaves them out when their
+    # build or fetch scripts have not run.
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Enable long paths for Git checkout
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: '3.12'
+      - name: Install CLANG64 build dependencies
+        run: |
+          source ./msys2-env.sh
+          pacman -S --needed --noconfirm git patch \
+            mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
+            mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
+            mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
+            mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
+            mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
+      - name: Add the Rust target that matches CLANG64 (the BB_BENCHMARK mode links crates/runtime)
+        run: rustup target add x86_64-pc-windows-gnullvm
+      - name: Build
+        run: BB_JOBS=2 bash build.sh
+      - name: Package
+        run: WINPYTHON="$(cygpath -u '${{ steps.python.outputs.python-path }}')" bash packaging/windows/package.sh
+      - name: Start the Rust faces from the package
+        run: |
+          cd out/stage/uncharted-windows
+          ./uncharted-universal.exe --help | grep -q "uncharted-universal"
+          { ./uncharted-run.exe --help 2>&1 || true; } | grep -q "usage: uncharted-run"
+          test -s licenses/rust-crates.txt
+          test ! -e "Play Uncharted.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uncharted-windows
+          retention-days: 3
+          path: dist/uncharted-windows.zip
+
+  macos:
+    # The macOS app bundle, kept as an artifact: it is not released (the Mac app is 1.x).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || '' }}
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Bundle
+        run: bash packaging/macos/bundle.sh
+      - name: Start the Rust faces from the bundle
+        run: |
+          app="out/stage/Uncharted Universal.app"
+          "$app/Contents/MacOS/uncharted-universal" --help | grep -q "uncharted-universal"
+          { "$app/Contents/MacOS/uncharted-run" --help 2>&1 || true; } | grep -q "usage: uncharted-run"
+          plutil -lint "$app/Contents/Info.plist"
+          codesign --verify --deep "$app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uncharted-macos
+          retention-days: 3
+          path: dist/uncharted-macos.zip
+
+  release:
+    # main only: the Linux and Windows packages in one release, with one manifest.json and one
+    # SHA256SUMS over both (the Linux job's software Vulkan smoke result stands for the build).
+    needs: [build, windows]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.ref
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: uncharted-linux
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: uncharted-windows
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-dependencies
+          path: ${{ runner.temp }}/dependencies
+      - name: Manifest and checksums over every package
+        run: |
+          rm -f release/manifest.json release/SHA256SUMS
+          python3 tools/write_ci_manifest.py --directory release --platform linux,windows --revision "$GITHUB_SHA" \
+            --smoke-result release/vulkan-smoke.txt --dependencies "$RUNNER_TEMP/dependencies/ci-dependencies.json"
+          (cd release && sha256sum -c SHA256SUMS)
       - name: Release
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.ref
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
         run: |
-          command -v gh >/dev/null || sudo apt-get install -yq --no-install-recommends gh >/dev/null
-          gh release create "$TAG" dist/Uncharted-x86_64.AppImage dist/uncharted-linux.tar.gz dist/manifest.json dist/SHA256SUMS dist/vulkan-smoke.txt --repo "$GITHUB_REPOSITORY" \
-            --target "$GITHUB_SHA" --title "Uncharted for Linux/Steam Deck $TAG" \
+          gh release create "$TAG" release/Uncharted-x86_64.AppImage release/uncharted-linux.tar.gz \
+            release/uncharted-windows.zip release/manifest.json release/SHA256SUMS release/vulkan-smoke.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Uncharted $TAG (Linux, Steam Deck, Windows)" \
             --notes "Built from $(git log -1 --format='%h %s'). Install steps: see the README."

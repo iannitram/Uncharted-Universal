@@ -2,9 +2,10 @@
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
 //! the C modules' resolvers and reports and `runtime_quit`. The modules already in Rust
-//! ([`crate::sync`], [`crate::content`], [`crate::time`] and [`crate::rtc`]) keep their place in
-//! the chain and the reports. Without the loader the chain holds only those, and quitting flushes
-//! stdio and ends the process at once, as `tests/test_runtime.c`'s `runtime_quit` did.
+//! ([`crate::sync`], [`crate::content`], [`crate::time`], [`crate::rtc`], [`crate::audio`] and
+//! [`crate::file`]) keep their place in the chain and the reports. Without the loader the chain
+//! holds only those, and quitting flushes stdio and ends the process at once, as
+//! `tests/test_runtime.c`'s `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
@@ -84,7 +85,6 @@ mod loader {
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
-        pub fn runtime_file_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
 
@@ -94,7 +94,6 @@ mod loader {
         pub fn runtime_ajm_report();
         pub fn runtime_pad_report();
         pub fn runtime_savedata_report();
-        pub fn runtime_file_report();
         pub fn runtime_fiber_report();
 
         pub fn runtime_quit(code: c_int) -> !;
@@ -104,11 +103,12 @@ mod loader {
 use crate::sync::ffi as sync;
 
 /// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
-/// `sync`, piece 3.03, `content`, piece 3.04, `time` and `rtc`, piece 3.02, and `audio`, piece
-/// 3.07), then the GPU library: the first that knows `name` answers.
+/// `sync`, piece 3.03, `content`, piece 3.04, `time` and `rtc`, piece 3.02, `audio`, piece 3.07,
+/// and `file`, piece 3.09), then the GPU library: the first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     use crate::content::ffi::runtime_content_resolve;
+    use crate::file::ffi::runtime_file_resolve;
     use crate::rtc::ffi::runtime_rtc_resolve;
     use crate::time::ffi::runtime_time_resolve;
     use loader::*;
@@ -154,12 +154,14 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| ask(sync::runtime_rwlock_resolve))
         .or_else(|| crate::rtc::resolve(name))
         .or_else(|| crate::audio::resolve(name))
+        .or_else(|| crate::file::resolve(name))
 }
 
 /// The modules' report lines, in `runtime.c`'s order.
 #[cfg(uncharted_loader)]
 pub(super) fn report_modules() {
     use crate::content::ffi::runtime_content_report;
+    use crate::file::ffi::runtime_file_report;
     use loader::*;
     let reports: [unsafe extern "C" fn(); 12] = [
         runtime_thread_report,
@@ -189,6 +191,7 @@ pub(super) fn report_modules() {
     sync::runtime_sema_report();
     crate::content::ffi::runtime_content_report();
     crate::audio::runtime_audio_report();
+    crate::file::report();
 }
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no

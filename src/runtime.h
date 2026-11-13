@@ -15,9 +15,11 @@ typedef bb_jmp_buf sigjmp_buf;
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
  * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header, as are
  * runtime_time_resolve and runtime_rtc_resolve (crates/runtime/src/time.rs and rtc.rs), the
- * content and display modules (runtime_content_*, runtime_display_patch: 3.04) and the mutex,
- * semaphore and rwlock resolvers and reports (runtime_mutex_resolve, runtime_sema_report,
- * runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). */
+ * content and display modules (runtime_content_*, runtime_display_patch: 3.04), the file layer
+ * (runtime_file_configure, _mount, _unmount, _translate, _open, _close, _read, _pread, _write,
+ * _lseek, _stat, _fstat, _getdents, _user_dir, _resolve, _report: crates/runtime/src/file.rs, 3.09)
+ * and the mutex, semaphore and rwlock resolvers and reports (runtime_mutex_resolve,
+ * runtime_sema_report, runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
@@ -39,22 +41,7 @@ void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 uintptr_t runtime_kernel_resolve(const char *name);
-uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
-void runtime_file_report(void);
-void runtime_file_configure(const char *app0, const char *user);
-int runtime_file_mount(const char *guest, const char *host);
-void runtime_file_unmount(const char *guest);
-int runtime_file_translate(const char *guest, char *out, size_t size);
-int64_t runtime_file_open(const char *path, int flags, int mode);
-int64_t runtime_file_close(int fd);
-int64_t runtime_file_read(int fd, void *buffer, uint64_t size);
-int64_t runtime_file_pread(int fd, void *buffer, uint64_t size, int64_t offset);
-int64_t runtime_file_write(int fd, const void *buffer, uint64_t size);
-int64_t runtime_file_lseek(int fd, int64_t offset, int whence);
-int64_t runtime_file_stat(const char *path, void *guest_stat);
-int64_t runtime_file_fstat(int fd, void *guest_stat);
-int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base);
 void runtime_thread_keys_cleanup(void);
 /* The PS4's floating-point state for guest code on this thread (MXCSR, x87 control word). */
 void runtime_set_guest_fpu(void);
@@ -72,7 +59,6 @@ uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 int runtime_pad_tool(int test, int strength);
 int runtime_pad_watch(int seconds);
-const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
 /* Trophies (Rust: crates/runtime/src/trophy.rs, roadmap 3.05). The loader binds the user folder and
