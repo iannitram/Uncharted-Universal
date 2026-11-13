@@ -1,6 +1,6 @@
 [package]
 name = "uncharted-app"
-description = "The launcher: Rust + Slint (ADR 0003). The Continue screen (piece 2.04), About and the seven languages (2.09), and the Fleet page (2.08)."
+description = "The launcher: Rust + Slint (ADR 0003). The Continue screen (piece 2.04), Saves and Settings (2.06), the Fleet page (2.08), About and the seven languages (2.09)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,6 +21,8 @@ sys-locale = "0.3.2"
 uncharted_core = { path = "../crates/core" }
 # The device's time zone for "Saved today 21:14".
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+# settings.json, tune.json and the benchmark reports.
+serde_json = "1"
 
 [dev-dependencies]
 # The headless Slint runs of the window in `cargo test` (src/main.rs); same version as slint.
