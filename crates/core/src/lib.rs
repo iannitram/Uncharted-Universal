@@ -51,6 +51,7 @@ pub mod render_size;
 pub mod run_env;
 pub mod savecard;
 pub mod saves;
+pub mod setup;
 pub mod sfo;
 pub mod steam;
 pub mod trophies;

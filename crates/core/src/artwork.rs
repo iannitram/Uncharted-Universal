@@ -36,6 +36,12 @@ const COLLECTION_ART: [(&str, &[u8]); 5] = [
     ),
 ];
 
+/// The collection emblem: a 256 x 256 PNG, the size `size(Art::Icon)` asks for, so it serves
+/// as the Steam shortcut's icon as it is.
+pub fn emblem_png() -> &'static [u8] {
+    COLLECTION_ART[4].1
+}
+
 /// Write the original collection artwork without a runtime Python dependency.
 ///
 /// The fixed output assets preserve the prior generator's composition exactly and make repeated
