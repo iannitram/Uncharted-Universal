@@ -289,24 +289,26 @@ if (WIN32)
     add_library(atrac9 STATIC ${BB_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(bb-probe ../src/probe.c ../src/red_zone.c ../src/cpu_patch.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
+    add_executable(bb-probe ../src/probe.c ../src/red_zone.c ../src/cpu_patch.c ${BB_RUNTIME} ../src/compat_win.c
         ../packaging/windows/bb-probe.rc)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     target_include_directories(bb-probe PRIVATE .. ../src)
     target_link_libraries(bb-probe PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread)
-    # crates/runtime (ADR 0002): the runtime modules already in Rust (trophy) as a static library for
-    # x86_64-pc-windows-gnullvm, which bb-probe needs. BB_BENCHMARK=<seconds> (#173/#242) is Rust as
-    # well and on in bb-probe (BB_RUST_BENCHMARK on src/runtime_benchmark.c).
+    # crates/runtime (piece 3.01): the runtime modules ported to Rust (src/runtime.c is now its
+    # `abi`) and the benchmark mode (#173/#242), a static library linked into bb-probe. It needs
+    # cargo with the x86_64-pc-windows-gnullvm target. UNCHARTED_RUNTIME_LOADER=1 lets it call the
+    # C modules that remain (crates/runtime/build.rs). Here CMake builds gpu/ and runs cargo; on
+    # Linux the crate's build script builds gpu/ instead (build.sh).
     find_program(BB_CARGO cargo)
     if (NOT BB_CARGO)
-        message(FATAL_ERROR "Need cargo (rustup target add x86_64-pc-windows-gnullvm): crates/runtime is part of the loader")
+        message(FATAL_ERROR "bb-probe needs cargo (rustup target add x86_64-pc-windows-gnullvm): crates/runtime is part of the loader")
     endif()
     set(bb_rust_dir "${CMAKE_CURRENT_BINARY_DIR}/rust")
     set(bb_rust_lib "${bb_rust_dir}/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a")
     add_custom_target(uncharted_runtime_rust
-        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" ${BB_CARGO} build -p uncharted_runtime --lib
-                --release --target x86_64-pc-windows-gnullvm
+        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" UNCHARTED_RUNTIME_LOADER=1
+                ${BB_CARGO} build -p uncharted_runtime --lib --release --target x86_64-pc-windows-gnullvm
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
         BYPRODUCTS "${bb_rust_lib}"
         COMMENT "Building crates/runtime (Rust)"
@@ -376,6 +378,13 @@ target_include_directories(expand-image-test PRIVATE shim shadps4)
 # vk_common.h carries clang-only pragmas; GCC (the Linux package build) must not fail on them.
 target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(expand-image-test PRIVATE bbgpu)
+
+# Vulkan backend smoke test (command submission and readback, no game graphics): needs a Vulkan
+# device, so CI runs it on Mesa lavapipe (.github/workflows/build.yml). It was bb-probe --vulkan-only.
+add_executable(vulkan-smoke-test EXCLUDE_FROM_ALL ../tests/test_vulkan_smoke.c)
+set_target_properties(vulkan-smoke-test PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+target_compile_options(vulkan-smoke-test PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(vulkan-smoke-test PRIVATE Vulkan::Vulkan)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
