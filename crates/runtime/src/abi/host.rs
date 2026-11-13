@@ -70,12 +70,17 @@ pub(super) fn err(text: &str) {
 mod loader {
     use std::ffi::{c_char, c_int};
 
+    // Rust on Linux and Android since 3.12 (`crate::memory`); Windows keeps the C file.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use crate::memory::linux::{runtime_memory_report, runtime_memory_resolve};
+
     extern "C" {
         pub fn runtime_mutex_resolve(name: *const c_char) -> usize;
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         pub fn runtime_content_resolve(name: *const c_char) -> usize;
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
@@ -92,6 +97,7 @@ mod loader {
         pub fn runtime_rwlock_report();
         pub fn runtime_sema_report();
         pub fn runtime_content_report();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
         pub fn runtime_audio_report();

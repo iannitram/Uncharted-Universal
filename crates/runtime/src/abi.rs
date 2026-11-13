@@ -32,7 +32,8 @@ pub mod libc;
 /// The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 /// its copy of the header has and refuses to start on a mismatch (a stale static library).
 /// Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
-/// [`crate::trophy`] (3.05); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
+/// [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
+/// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 /// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02).
 pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 3;
 
