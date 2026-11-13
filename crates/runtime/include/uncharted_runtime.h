@@ -13,8 +13,9 @@
 // (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 // `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
 // `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
-// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09).
-#define UNCHARTED_RUNTIME_ABI_VERSION 6
+// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09); 7:
+// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
+#define UNCHARTED_RUNTIME_ABI_VERSION 7
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -239,6 +240,51 @@ void runtime_file_report(void);
 // # Safety
 // `name` is null or a NUL-terminated string.
 uintptr_t runtime_rtc_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The mutex, condition variable and attribute function for scoped NID `name`, or 0.
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_mutex_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The mutex and condition variable counters, two lines on stdout.
+void runtime_mutex_report(void);
+#endif
+
+#if defined(__x86_64__)
+// The kernel semaphore function for scoped NID `name`, or 0.
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_sema_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The semaphore counters, one line on stdout.
+void runtime_sema_report(void);
+#endif
+
+#if defined(__x86_64__)
+// How many threads wait on semaphore `id` now (0 for an unknown id). For tests and
+// diagnostics; guest code cannot call it.
+uint32_t runtime_sema_waiters(uint32_t id);
+#endif
+
+#if defined(__x86_64__)
+// The rwlock function for scoped NID `name`, or 0.
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_rwlock_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The rwlock counters, one line on stdout.
+void runtime_rwlock_report(void);
 #endif
 
 #if defined(__x86_64__)

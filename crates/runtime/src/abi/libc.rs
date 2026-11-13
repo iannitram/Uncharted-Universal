@@ -472,6 +472,21 @@ mod tests {
     }
 
     #[test]
+    fn sync_imports_resolve_through_the_chain() {
+        // `tests/test_sema.c`'s setup: the ported modules answer after this module, by scoped NID.
+        let _guard = enabled();
+        assert_eq!(
+            resolve(c"188x57JYp0g#p#J", false),
+            crate::sync::resolve(b"188x57JYp0g#p#J")
+        );
+        assert!(resolve(c"9UK1vLZQft4#p#J", false).is_some());
+        assert!(resolve(c"Ox9i0c7L5w0#p#J", false).is_some());
+        assert_eq!(resolve(c"188x57JYp0g#I#J", false), None);
+        assert_eq!(resolve(c"188x57JYp0g#p#J", true), None);
+        assert_eq!(resolve(c"dQHWEsJtoE4#q#q", false), None);
+    }
+
+    #[test]
     fn rust_modules_answer_after_the_libc_contracts() {
         let _guard = enabled();
         // `gettimeofday` (libScePosix) is `time`'s; `sceRtcGetTick` is `rtc`'s.

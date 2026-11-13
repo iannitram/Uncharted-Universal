@@ -183,7 +183,7 @@ renderer targets do not, so those are run by hand.
 
 - **Python** (`tests/test_*.py`) — preparation, linking, patches, mods and
   launcher settings. `python -m unittest discover -s tests`.
-- **C** (`tests/test_*.c`) — runtime contracts: semaphores, threads, memory,
+- **C** (`tests/test_*.c`) — runtime contracts: threads, memory,
   the file layer. `bash build.sh --test` on Linux; the MSYS2 CLANG64 shell
   builds the same set through CMake.
 - **C++** (`tests/test_*.cpp`) — renderer and shader behaviour. Each is an

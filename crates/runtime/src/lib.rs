@@ -20,6 +20,10 @@
 //! `src/runtime_time.c` and `src/runtime_rtc.c`; `abi`'s resolver chain asks them in the C order.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
+//! [`sync`] is the guest's mutexes, condition variables, semaphores and rwlocks (piece 3.03),
+//! exporting the C symbols of the deleted `src/runtime_mutex.c`, `runtime_sema.c` and
+//! `runtime_rwlock.c`.
+//!
 //! [`content`] is the system module and app content ABI of the deleted `src/runtime_content.c`
 //! (piece 3.04, x86-64 only: its guest functions use the System V ABI); [`display`] is the
 //! `BB_GAME_RES` patch of the loaded executable from the deleted `src/runtime_display.c`.
@@ -31,8 +35,7 @@
 //!
 //! # Remaining planned modules
 //!
-//! Each module arrives with its own piece (ROADMAP stage 3), in this order: `sync`,
-//! the rest of `savedata`,
+//! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
 //! `ajm`, `pad`, `services` and `kernel`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
@@ -61,5 +64,7 @@ pub mod pad;
 pub mod probe;
 pub mod rtc;
 pub mod savedata;
+#[cfg(target_arch = "x86_64")]
+pub mod sync;
 pub mod time;
 pub mod trophy;

@@ -15,9 +15,11 @@ typedef bb_jmp_buf sigjmp_buf;
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
  * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header, as are
  * runtime_time_resolve and runtime_rtc_resolve (crates/runtime/src/time.rs and rtc.rs), the
- * content and display modules (runtime_content_*, runtime_display_patch: 3.04) and the file layer
+ * content and display modules (runtime_content_*, runtime_display_patch: 3.04), the file layer
  * (runtime_file_configure, _mount, _unmount, _translate, _open, _close, _read, _pread, _write,
- * _lseek, _stat, _fstat, _getdents, _user_dir, _resolve, _report: crates/runtime/src/file.rs, 3.09). */
+ * _lseek, _stat, _fstat, _getdents, _user_dir, _resolve, _report: crates/runtime/src/file.rs, 3.09)
+ * and the mutex, semaphore and rwlock resolvers and reports (runtime_mutex_resolve,
+ * runtime_sema_report, runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
@@ -25,8 +27,6 @@ extern __thread sigjmp_buf *runtime_fault_recover;
 void runtime_restart(void);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
-uintptr_t runtime_mutex_resolve(const char *name);
-void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
@@ -34,16 +34,11 @@ int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
  * code (TerminateProcess; ExitProcess could hang in libsrt's detach, and exit()'s destructors
  * waited for the GPU). Every exit of the game and every STOP go through it. */
 __attribute__((noreturn)) void runtime_quit(int code);
-uintptr_t runtime_rwlock_resolve(const char *name);
-void runtime_rwlock_report(void);
 uintptr_t runtime_thread_resolve(const char *name);
 void runtime_thread_report(void);
 void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
-uintptr_t runtime_sema_resolve(const char *name);
-void runtime_sema_report(void);
-unsigned runtime_sema_waiters(uint32_t id);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 uintptr_t runtime_kernel_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
