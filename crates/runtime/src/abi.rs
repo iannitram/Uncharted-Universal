@@ -36,8 +36,7 @@ pub mod libc;
 /// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 /// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
 /// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
-/// moved to [`crate::audio`] (3.07, its own PR); 6: `src/runtime_file.c` moved to [`crate::file`]
-/// (3.09).
+/// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09).
 pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 6;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
