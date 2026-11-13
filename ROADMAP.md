@@ -135,7 +135,7 @@ holds one row per build. This project still builds no sync service of its own.
 | iannitram/totk-native | MIT | `vdf`, `steam`, `platform`, `bundle`, `hub`, `fleet`, `savecard`, Continue brief | copy with credit as already planned |
 | iannitram/save-relay | MIT | `relay` and cross-platform saves | adopted at 1.0 (2026-11-11) in every build, tracker #249; #163 is the desktop adapter; no separate sync service |
 | slint-ui/slint | royalty-free (attribution) | `app/` | dependency; About carries notice |
-| gilrs, mdns-sd, spake2, chacha20poly1305, sha2, cbindgen, cmake | MIT or Apache-2.0 | `app/`, `hub`, `runtime` | dependencies |
+| gilrs, mdns-sd, spake2, chacha20poly1305, sha2, cbindgen, cmake, roxmltree, serde_json, sys-locale | MIT or Apache-2.0 | `app/`, `hub`, `patches`, `language`, `runtime` | dependencies; the ones the app and core link are credited on About (`app/src/vm/about.rs`, tested against this table) |
 | Revivedx/SavageWindRecomp | MIT | packaging | learn, for 2.10 |
 | bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings | learn, for 1.16 and 2.06 |
 | GNSB/UFC-3-PS4-PORT-LINUX-WINDOWS | GPL-2.0 | sibling PS4 port | watch |
