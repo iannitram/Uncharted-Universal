@@ -1,9 +1,10 @@
 //! What [`super::libc`] calls on the C side: C stdio (the loader's stdout is unbuffered C stdio,
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
-//! the C modules' resolvers and reports and `runtime_quit`. The Rust modules ported since
-//! ([`crate::file`]) keep their place in the chain and the reports. Without the loader only they
-//! are in it, and quitting flushes stdio and ends the process at once, as
+//! the C modules' resolvers and reports and `runtime_quit`. The modules already in Rust
+//! ([`crate::content`], [`crate::time`], [`crate::rtc`] and [`crate::file`]) keep their place in
+//! the chain and the reports. Without the loader the chain holds only those, and quitting flushes
+//! stdio and ends the process at once, as
 //! `tests/test_runtime.c`'s `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -13,7 +14,7 @@ type File = c_void;
 extern "C" {
     fn puts(text: *const c_char) -> c_int;
     fn fputs(text: *const c_char, stream: *mut File) -> c_int;
-    pub(super) fn exit(code: c_int) -> !;
+    pub(crate) fn exit(code: c_int) -> !;
     pub(super) fn calloc(count: usize, size: usize) -> *mut c_void;
     pub(super) fn memset(dst: *mut c_void, value: c_int, size: usize) -> *mut c_void;
     pub(super) fn memcpy(dst: *mut c_void, src: *const c_void, size: usize) -> *mut c_void;
@@ -71,21 +72,22 @@ pub(crate) fn err(text: &str) {
 mod loader {
     use std::ffi::{c_char, c_int};
 
+    // Rust on Linux and Android since 3.12 (`crate::memory`); Windows keeps the C file.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use crate::memory::linux::{runtime_memory_report, runtime_memory_resolve};
+
     extern "C" {
         pub fn runtime_mutex_resolve(name: *const c_char) -> usize;
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
-        pub fn runtime_content_resolve(name: *const c_char) -> usize;
-        pub fn runtime_time_resolve(name: *const c_char) -> usize;
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
-        pub fn runtime_trophy_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
-        pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
@@ -94,7 +96,7 @@ mod loader {
         pub fn runtime_mutex_report();
         pub fn runtime_rwlock_report();
         pub fn runtime_sema_report();
-        pub fn runtime_content_report();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
         pub fn runtime_audio_report();
@@ -106,11 +108,15 @@ mod loader {
     }
 }
 
-/// The modules' resolvers in `runtime.c`'s order, then the GPU library: the first that knows
-/// `name` answers.
+/// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
+/// `content`, piece 3.04, `time` and `rtc`, piece 3.02, and `file`, piece 3.09), then the GPU
+/// library: the first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
+    use crate::content::ffi::runtime_content_resolve;
     use crate::file::ffi::runtime_file_resolve;
+    use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
         runtime_mutex_resolve,
@@ -121,7 +127,8 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         runtime_rwlock_resolve,
         runtime_memory_resolve,
         runtime_kernel_resolve,
-        runtime_trophy_resolve,
+        // Rust since 3.05 (`crate::trophy`).
+        crate::trophy::runtime_trophy_resolve,
         runtime_services_resolve,
         runtime_ajm_resolve,
         runtime_audio_resolve,
@@ -139,14 +146,19 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .find(|&address| address != 0)
 }
 
+/// Without the loader only the Rust modules answer, in the same order.
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    crate::file::resolve(name)
+    crate::content::resolve(name)
+        .or_else(|| crate::time::resolve(name))
+        .or_else(|| crate::rtc::resolve(name))
+        .or_else(|| crate::file::resolve(name))
 }
 
 /// The modules' report lines, in `runtime.c`'s order.
 #[cfg(uncharted_loader)]
 pub(super) fn report_modules() {
+    use crate::content::ffi::runtime_content_report;
     use crate::file::ffi::runtime_file_report;
     use loader::*;
     let reports: [unsafe extern "C" fn(); 12] = [
@@ -169,21 +181,23 @@ pub(super) fn report_modules() {
     }
 }
 
+/// Without the loader only the modules already in Rust report.
 #[cfg(not(uncharted_loader))]
 pub(super) fn report_modules() {
+    crate::content::ffi::runtime_content_report();
     crate::file::report();
 }
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.
 #[cfg(uncharted_loader)]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     // SAFETY: `runtime_quit` takes any exit code and does not return.
     unsafe { loader::runtime_quit(code) }
 }
 
 #[cfg(not(uncharted_loader))]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     extern "C" {
         fn fflush(stream: *mut File) -> c_int;
         fn _exit(code: c_int) -> !;

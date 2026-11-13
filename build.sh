@@ -178,10 +178,20 @@ UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf 
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-runtime=(src/runtime*.c)
+# Linux and Android build the memory module from crates/runtime (piece 3.12), so
+# src/runtime_memory.c is Windows only.
+runtime=()
+for source in src/runtime*.c; do
+    if [[ $source != src/runtime_memory.c ]]; then runtime+=("$source"); fi
+done
 # Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
-# with the system libraries Rust's std needs (rustc --print native-static-libs).
-rust=(out/rust/release/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl)
+# with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only
+# libbbgpu.so asks for (memory's): --undefined makes the linker take them from the archive.
+rust=(out/rust/release/libuncharted_runtime.a)
+for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2; do
+    rust+=(-Wl,--undefined="$symbol")
+done
+rust+=(-lgcc_s -lutil -lrt -lpthread -lm -ldl)
 # Third-party decoders: compiled once, without this project's -Werror policy.
 atrac9=(third_party/LibAtrac9/C/src/*.c)
 if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
@@ -219,8 +229,6 @@ if [[ ${1:-} == --test ]]; then
     out/sema-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
     out/ajm-test
-    "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
-    out/content-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test
     out/speakers-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
