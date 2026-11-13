@@ -15,7 +15,7 @@ use uncharted_core::games::Game;
 use uncharted_core::launch::{self, Keep, Paths, Relay, Runner, Session, Sync};
 use uncharted_core::patches::{self, Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
-use uncharted_core::prepare::{self, PatchSource, PrepareOptions};
+use uncharted_core::prepare::{self, PrepareOptions};
 use uncharted_core::profile::DeviceProfile;
 use uncharted_core::run_env::Settings;
 use uncharted_core::steam::{self, Shortcut};
