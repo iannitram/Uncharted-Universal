@@ -52,9 +52,6 @@ msgstr "Voltar"
 msgid "Up and down scroll. A or B goes back."
 msgstr "Para cima e para baixo rolam. A ou B volta."
 
-msgid "Continue screen goes here"
-msgstr "A tela Continuar fica aqui"
-
 msgid "Language: {}"
 msgstr "Idioma: {}"
 

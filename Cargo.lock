@@ -5003,6 +5003,7 @@ dependencies = [
 name = "uncharted-app"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "gilrs",
  "i-slint-backend-testing",
  "slint",
