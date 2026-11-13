@@ -47,8 +47,9 @@ pub fn runtime_resolve(name: &str, is_data: bool) -> Option<usize> {
 }
 
 /// The runtime's ABI version. `0` meant no C symbol had moved to Rust yet; `1` since the first
-/// ported module (`trophy`, 3.05). The loader checks it at start, so a stale static library
-/// fails there instead of at a missing symbol.
+/// ported module (`trophy`, 3.05; [`crate::memory`], piece 3.12, exports the
+/// `src/runtime_memory.c` symbols on Linux and Android). The loader checks it at start, so a
+/// stale static library fails there instead of at a missing symbol.
 #[no_mangle]
 pub extern "C" fn uncharted_runtime_version() -> u32 {
     1
