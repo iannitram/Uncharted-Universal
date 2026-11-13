@@ -177,10 +177,15 @@ fn from_host_code(code: i32) -> Option<Errno> {
     }
 }
 
-/// Other hosts number errno as FreeBSD does for the values the guest sees.
+/// Other hosts are BSDs: Darwin numbers errno 1..=81 and EOVERFLOW (84) as FreeBSD does, and
+/// its ECANCELED (89) is FreeBSD's 85; the rest go by their kind.
 #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
-fn from_host_code(_code: i32) -> Option<Errno> {
-    None
+fn from_host_code(code: i32) -> Option<Errno> {
+    match code {
+        1..=81 | 84 => Some(Errno(code)),
+        89 => Some(Errno(85)), // ECANCELED
+        _ => None,
+    }
 }
 
 impl From<io::Error> for Errno {

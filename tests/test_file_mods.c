@@ -1,3 +1,4 @@
+#define _GNU_SOURCE /* mkdtemp and symlink under -std=c11 (portable.h) */
 /* The C side's link check of crates/runtime's file module (piece 3.09; src/runtime_file.c is
  * gone): a linked mod overlay and writable saves, through the exported C helpers and the guest
  * entry points runtime_file_resolve gives. Errors are FreeBSD errno values; the ones below have
