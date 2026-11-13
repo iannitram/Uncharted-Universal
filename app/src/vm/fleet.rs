@@ -118,7 +118,7 @@ impl FleetVm {
 
     /// Focus item `index` (a click); `false`, and no change, past the Back button.
     pub fn focus_on(&mut self, index: usize) -> bool {
-        self.focus.focus_on(index)
+        self.focus.set(index)
     }
 
     /// Puts focus back on the first item (each time the page opens).

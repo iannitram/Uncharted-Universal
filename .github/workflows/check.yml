@@ -78,7 +78,7 @@ jobs:
         # build and test app/ with everything else.
         run: |
           cargo build -p uncharted-app
-          cargo test -p uncharted-app -- vm::fleet pages
+          cargo test -p uncharted-app -- vm::fleet focus::
       - name: Run the DLSS settings fallback regression test
         if: matrix.os == 'linux'
         run: |

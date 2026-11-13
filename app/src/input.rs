@@ -83,6 +83,7 @@ fn button_action(button: Button) -> Option<Action> {
         Button::DPadRight => Some(Action::Move(Nav::Right)),
         // "South" is A on Xbox pads and Cross on PlayStation pads.
         Button::South => Some(Action::Activate),
+        // "East" is B on Xbox pads and Circle on PlayStation pads.
         Button::East => Some(Action::Back),
         _ => None,
     }

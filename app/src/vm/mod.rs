@@ -1,6 +1,7 @@
-//! One view model per page (ADR 0003): plain Rust state, focus order and what each `Nav` press
-//! does. No Slint types here; the `.slint` file only draws these and sends its callbacks.
+//! View models: what each screen shows, built in plain Rust so it is tested without a window
+//! (docs/code-map.md, `app/src/vm/`). No Slint types here; the `.slint` file only draws these.
 
+pub mod about;
 pub mod fleet;
 
 pub use fleet::FleetVm;
