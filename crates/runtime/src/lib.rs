@@ -16,11 +16,13 @@
 //! [`content`] is the system module and app content ABI of the deleted `src/runtime_content.c`
 //! (piece 3.04, x86-64 only: its guest functions use the System V ABI); [`display`] is the
 //! `BB_GAME_RES` patch of the loaded executable from the deleted `src/runtime_display.c`.
+//! [`trophy`] is libSceNpTrophy (3.05), the port of the deleted `src/runtime_trophy.c`. The
+//! loader links this library and binds the user folder and the trophy notice into it.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
-//! `rtc`, `sync`, `trophy`, the rest of `savedata`,
+//! `rtc`, `sync`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
@@ -42,3 +44,4 @@ pub mod pad;
 /// cbindgen:ignore
 pub mod probe;
 pub mod savedata;
+pub mod trophy;

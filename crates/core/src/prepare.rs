@@ -161,7 +161,7 @@ pub fn load_image(executable: &[u8]) -> Result<Image> {
             .ok_or_else(|| fail("invalid memory image"))
     }
 
-    let is_self = executable.starts_with(b"\x00\x15=\x1d");
+    let is_self = executable.starts_with(b"\x4f\x15\x3d\x1d");
     let base = if is_self {
         let count = u16le(executable, 24)? as u64;
         let table_bytes = count
@@ -187,7 +187,9 @@ pub fn load_image(executable: &[u8]) -> Result<Image> {
     }
     let (header, program_headers) = parse_headers(executable, base)?;
     for ph in &program_headers {
-        if ph.filesz > ph.memsz {
+        // Only loadable segments map memory; PT_SCE_DYNLIBDATA and similar file-only
+        // segments carry `p_memsz` 0 in real executables (`prepare()` in `prepare.py`).
+        if matches!(ph.kind, PT_LOAD | PT_SCE_RELRO) && ph.filesz > ph.memsz {
             return Err(fail("segment file size exceeds memory size"));
         }
         let _ = checked_end(ph.offset, ph.filesz)?;
@@ -422,7 +424,7 @@ mod image_tests {
 
     fn self_fixture() -> Vec<u8> {
         let mut data = vec![0; 0x210];
-        data[..4].copy_from_slice(b"\x00\x15=\x1d");
+        data[..4].copy_from_slice(b"\x4f\x15\x3d\x1d");
         put_u16(&mut data, 24, 1);
         put_u64(&mut data, 32, 0x800);
         put_u64(&mut data, 40, 0x200);
@@ -534,6 +536,19 @@ mod image_tests {
         assert!(
             matches!(load_image(&fixture), Err(Error::Prepare(message)) if message == "unsupported blocked segment layout")
         );
+    }
+
+    #[test]
+    fn accepts_file_only_segments_with_zero_memory_size() {
+        // A PT_SCE_DYNLIBDATA header as real executables carry it: file bytes, p_memsz 0.
+        let mut fixture = vec![0; 0x1110];
+        elf_header(&mut fixture, 0, 2, 0);
+        program_header(&mut fixture, 64, 1, 0x1000, 0, 16, 32);
+        program_header(&mut fixture, 120, 0x6100_0000, 0x1010, 0, 0x100, 0);
+        fixture[0x1010] = 0xaa;
+        let image = load_image(&fixture).unwrap();
+        assert_eq!(image.elf[0x1010], 0xaa);
+        assert_eq!(image.bytes.len(), 32);
     }
 
     #[test]

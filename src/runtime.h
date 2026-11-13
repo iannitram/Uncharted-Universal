@@ -83,7 +83,11 @@ uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
-/* Trophies (runtime_trophy.c): the folder run.py prepared for the running game (scripts/trophies.py). */
+/* Trophies (Rust: crates/runtime/src/trophy.rs, roadmap 3.05). The loader binds the user folder and
+ * the in-game notice (bbgpu_trophy_notify) first, then gives the folder run.py prepared for the
+ * running game (scripts/trophies.py). */
+void runtime_trophy_bind(const char *(*user_dir)(void),
+                         void (*notify)(int grade, const char *game, const char *name, const void *png, uint64_t png_size));
 void runtime_trophy_configure(const char *dir);
 uintptr_t runtime_trophy_resolve(const char *name);
 void runtime_savedata_report(void);

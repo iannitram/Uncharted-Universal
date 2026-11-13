@@ -30,9 +30,10 @@ pub mod libc;
 
 /// The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 /// its copy of the header has and refuses to start on a mismatch (a stale static library).
-/// Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-/// 2: `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 2;
+/// Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
+/// [`crate::trophy`] (3.05); 2: `src/runtime.c` moved here (3.01); 3: `src/runtime_content.c`
+/// and `src/runtime_display.c` moved here (3.04).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 3;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -170,7 +171,7 @@ mod tests {
 
     #[test]
     fn version_is_raised_with_each_moved_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 2);
+        assert_eq!(ffi::uncharted_runtime_version(), 3);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION

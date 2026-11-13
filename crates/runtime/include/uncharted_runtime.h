@@ -8,9 +8,10 @@
 
 // The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 // its copy of the header has and refuses to start on a mismatch (a stale static library).
-// Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-// 2: `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
-#define UNCHARTED_RUNTIME_ABI_VERSION 2
+// Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
+// [`crate::trophy`] (3.05); 2: `src/runtime.c` moved here (3.01); 3: `src/runtime_content.c`
+// and `src/runtime_display.c` moved here (3.04).
+#define UNCHARTED_RUNTIME_ABI_VERSION 3
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
