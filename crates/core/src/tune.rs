@@ -13,6 +13,11 @@
 //! No game files are needed. `choices` supplies the memory, RTX and laptop gates;
 //! `upscalers` adds the DLSS and FSR rules and the default upscaler on top of them (#147), and
 //! `pick_for` keeps the three cards to them.
+//!
+//! # Benchmark reports (#173)
+//! `parse_bench` reads one `benchmark.json` from `BB_BENCHMARK`, `bench_from` turns one report
+//! per card into the [`Bench`] the cards step down from, and `cards_from` runs probe, bench
+//! and `pick_for` in one call. The per-chapter fixes are `recipe::CHAPTER_FIXES` (#178).
 
 use crate::error::{Error, Result};
 use serde_json::Value;
@@ -297,6 +302,101 @@ pub struct Bench {
     pub handheld30: Option<f64>,
     pub balanced60: Option<f64>,
     pub max: Option<f64>,
+}
+
+/// One `benchmark.json` from the runtime's benchmark mode (#173, `BB_BENCHMARK`): the fields
+/// the picker reads. The runtime writes it as `{"game", "seconds", "settings", "frame_ms":
+/// {"p50", "p95", "p99"}, "avg_fps", "vram_peak_mib", "stalls_over_40ms", "ended"}`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BenchReport {
+    /// `u1`, `u2` or `u3`.
+    pub game: String,
+    pub seconds: u32,
+    pub avg_fps: f64,
+    /// The run reached the end of its path (`ended` is `ok`); a `crash` did not.
+    pub finished: bool,
+}
+
+/// Parse one benchmark report. Every key the runtime writes is required and checked for its
+/// type; extra keys are ignored for future runtime versions. A damaged report gives a fixed
+/// error without echoing its contents.
+pub fn parse_bench(json: &str) -> Result<BenchReport> {
+    let damaged = || Error::Launch("The benchmark report is damaged".into());
+    let report: Value = serde_json::from_str(json).map_err(|_| damaged())?;
+    let positive = |value: &Value| value.as_f64().filter(|n| n.is_finite() && *n > 0.0);
+    let game = report["game"].as_str().ok_or_else(damaged)?;
+    if !matches!(game, "u1" | "u2" | "u3") {
+        return Err(damaged());
+    }
+    let seconds = report["seconds"]
+        .as_u64()
+        .and_then(|n| u32::try_from(n).ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(damaged)?;
+    let avg_fps = positive(&report["avg_fps"]).ok_or_else(damaged)?;
+    let finished = match report["ended"].as_str() {
+        Some("ok") => true,
+        Some("crash") => false,
+        _ => return Err(damaged()),
+    };
+    let frame_ms_ok = ["p50", "p95", "p99"]
+        .iter()
+        .all(|key| positive(&report["frame_ms"][*key]).is_some());
+    if !frame_ms_ok
+        || !report["settings"].is_object()
+        || report["vram_peak_mib"].as_u64().is_none()
+        || report["stalls_over_40ms"].as_u64().is_none()
+    {
+        return Err(damaged());
+    }
+    Ok(BenchReport {
+        game: game.to_owned(),
+        seconds,
+        avg_fps,
+        finished,
+    })
+}
+
+/// The [`Bench`] for [`pick_for`] from up to one report per card, each run with that card's
+/// settings. A card without a report, or whose run crashed before the end of its path, is not
+/// benchmarked (`None`): a partial run's rate is not compared with the target. The reports
+/// must all be of one game.
+pub fn bench_from(
+    handheld30: Option<&str>,
+    balanced60: Option<&str>,
+    max: Option<&str>,
+) -> Result<Bench> {
+    let parse = |json: Option<&str>| json.map(parse_bench).transpose();
+    let (handheld30, balanced60, max) = (parse(handheld30)?, parse(balanced60)?, parse(max)?);
+    let games: Vec<&str> = [&handheld30, &balanced60, &max]
+        .into_iter()
+        .flatten()
+        .map(|report| report.game.as_str())
+        .collect();
+    if games.windows(2).any(|pair| pair[0] != pair[1]) {
+        return Err(Error::Launch(
+            "The benchmark reports are of different games".into(),
+        ));
+    }
+    let rate = |report: Option<BenchReport>| report.filter(|r| r.finished).map(|r| r.avg_fps);
+    Ok(Bench {
+        handheld30: rate(handheld30),
+        balanced60: rate(balanced60),
+        max: rate(max),
+    })
+}
+
+/// The Settings page's whole chain (2.06): the probe report of `uncharted-run --probe`, the
+/// benchmark reports of the cards that were run, then [`pick_for`].
+pub fn cards_from(
+    probe_json: &str,
+    handheld30: Option<&str>,
+    balanced60: Option<&str>,
+    max: Option<&str>,
+) -> Result<Cards> {
+    let report = parse_probe(probe_json)?;
+    let bench = bench_from(handheld30, balanced60, max)?;
+    Ok(pick_for(&report, &bench))
 }
 
 /// The settings of one card.

@@ -214,7 +214,8 @@ fn a_hub_refuses_to_announce_what_no_device_would_accept() {
 }
 
 /// A fake hub on loopback: a TCP listener on 127.0.0.1 announced through `net`. It accepts one
-/// device and pairs with it, as the hub's accept loop will.
+/// device and pairs with it, as the hub's accept loop will. Each side sends its own name and
+/// gets back the other's.
 fn fake_hub(net: &dyn Mdns, code: &'static str) -> std::thread::JoinHandle<String> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let port = listener.local_addr().unwrap().port();

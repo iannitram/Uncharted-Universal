@@ -221,8 +221,15 @@ pub struct MdnsDaemon {
 impl MdnsDaemon {
     /// A daemon on every interface.
     pub fn new() -> Result<Self> {
+        let daemon = mdns_sd::ServiceDaemon::new().map_err(mdns_error)?;
+        // `uncharted-universal` is 19 bytes, past RFC 6763's 15; under mdns-sd's default limit
+        // `register` succeeds but the daemon drops the service with only a log line.
+        let name_len = SERVICE.len() - "._tcp.local.".len() - 1;
+        daemon
+            .set_service_name_len_max(name_len as u8)
+            .map_err(mdns_error)?;
         Ok(Self {
-            daemon: mdns_sd::ServiceDaemon::new().map_err(mdns_error)?,
+            daemon,
             registered: Mutex::new(Vec::new()),
         })
     }
