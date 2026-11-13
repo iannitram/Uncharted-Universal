@@ -19,6 +19,8 @@ pacman -S --needed git patch \
 ```
 
 magic_enum, miniz and xbyak (not packaged by MSYS2) are submodules under `gpu/third_party/`.
+The loader also links `crates/runtime` (Rust), so the build needs
+[rustup](https://rustup.rs) with `rustup target add x86_64-pc-windows-gnullvm`.
 Then, in the repository:
 
 ```bash

@@ -12,11 +12,12 @@ use uncharted_core::artwork::{self, Art};
 use uncharted_core::dump::{self, DumpReport};
 use uncharted_core::fleet::{self, DeviceRecord, Drift};
 use uncharted_core::games::Game;
-use uncharted_core::launch::{self, Keep, Relay, Runner, Sync};
+use uncharted_core::launch::{self, Keep, Paths, Relay, Runner, Session, Sync};
 use uncharted_core::patches::{self, Patch, Selection, Target};
-use uncharted_core::platform::{AppDirs, Vars};
+use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::prepare::{self, PrepareOptions};
-use uncharted_core::run_env::{self, Settings};
+use uncharted_core::profile::DeviceProfile;
+use uncharted_core::run_env::Settings;
 use uncharted_core::steam::{self, Shortcut};
 use uncharted_core::{host_env, profile, saves, Error, Result};
 
@@ -36,7 +37,7 @@ pub fn dispatch(command: &str, args: &[String], ctx: &Ctx) -> Outcome {
         "play" => play(args, ctx),
         "steam-add" => steam_add(args, ctx),
         "patches" => patches(args, ctx),
-        "hub" => hub(args),
+        "hub" => hub::hub(args, ctx),
         "fleet" => fleet(args, ctx),
         "generate-art" => generate_art(args),
         other => unreachable!("dispatch is only called with a listed command, not {other}"),
@@ -169,9 +170,14 @@ pub struct PlayPlan {
     pub install: PathBuf,
     /// The selected save slot's folder: what save-relay syncs (`saves::relay_saves_dir`).
     pub saves_dir: PathBuf,
-    /// `run_env::build_env` for this device, then `BB_EXE` and `BB_USER_DIR` as `run.py`
-    /// takes them.
-    pub env: Vec<(String, String)>,
+    /// `run.py`'s folders: the install is its `BB_DATA_DIR` (`out/` inside it), the user
+    /// folder is `saves::user_dir`.
+    pub paths: Paths,
+    /// This device's profile (`profile::detect_with_os_release`).
+    pub profile: &'static DeviceProfile,
+    /// The player's own `BB_*` variables; they win over every default.
+    pub player_env: BTreeMap<String, String>,
+    pub settings: Settings,
     /// `BB_RUNTIME`, else `uncharted-run` beside this program.
     pub program: PathBuf,
 }
@@ -189,10 +195,11 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
         .collect();
     let (cpu_model, os_release) = device_strings(ctx);
     let device = profile::detect_with_os_release(ctx.os, &cpu_model, &os_release);
-    let mut env = run_env::build_env(game, &Settings::default(), device, &player_env)?;
-    env.retain(|(name, _)| name != "BB_EXE" && name != "BB_USER_DIR");
-    env.push(("BB_EXE".into(), game.key().into()));
-    env.push(("BB_USER_DIR".into(), user_dir.display().to_string()));
+    let paths = Paths {
+        data_dir: install.clone(),
+        out_dir: install.join("out"),
+        user_dir,
+    };
     let program = ctx
         .var("BB_RUNTIME")
         .map(PathBuf::from)
@@ -200,9 +207,26 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
     Ok(PlayPlan {
         install,
         saves_dir,
-        env,
+        paths,
+        profile: device,
+        player_env,
+        settings: Settings::default(),
         program,
     })
+}
+
+impl PlayPlan {
+    /// The session `launch::play` builds each start's environment from (`Session::env`:
+    /// `run_env::build_env`, the path variables of `run.py`, `BB_EXE`).
+    pub fn session(&self, os: Os) -> Session<'_> {
+        Session {
+            settings: &self.settings,
+            profile: self.profile,
+            player_env: &self.player_env,
+            paths: &self.paths,
+            os,
+        }
+    }
 }
 
 /// `/proc/cpuinfo` "model name" and `/etc/os-release` on Linux (the profile picks the AMD
@@ -263,8 +287,13 @@ pub struct RuntimeRunner {
 }
 
 impl RuntimeRunner {
-    pub fn command(&self, env: &[(String, String)]) -> Command {
+    /// `guest_argv`: the `--guest-argv` file after a LoadExec switch, before the player's
+    /// arguments (`run.py` `main`).
+    pub fn command(&self, env: &[(String, String)], guest_argv: Option<&Path>) -> Command {
         let mut command = Command::new(&self.program);
+        if let Some(file) = guest_argv {
+            command.arg("--guest-argv").arg(file);
+        }
         command
             .args(&self.extra_args)
             .envs(env.iter().map(|(name, value)| (name, value)))
@@ -275,8 +304,8 @@ impl RuntimeRunner {
 }
 
 impl Runner for RuntimeRunner {
-    fn run(&self, _game: Game, env: &[(String, String)]) -> Result<i32> {
-        let status = self.command(env).status().map_err(|error| {
+    fn run(&self, _game: Game, env: &[(String, String)], guest_argv: Option<&Path>) -> Result<i32> {
+        let status = self.command(env, guest_argv).status().map_err(|error| {
             Error::Launch(format!(
                 "could not start {}: {error}",
                 self.program.display()
@@ -347,7 +376,7 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
     };
     let plan = core("play", play_plan(game, ctx))?;
     let runner = RuntimeRunner {
-        program: plan.program,
+        program: plan.program.clone(),
         extra_args: p.rest,
         host: host_env::changes(ctx.os, |name| ctx.var(name)),
     };
@@ -360,7 +389,7 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
             &runner,
             game,
             &plan.saves_dir,
-            &plan.env,
+            &plan.session(ctx.os),
             &choose,
         ),
     )?;
@@ -700,22 +729,8 @@ fn write_patches(out: &mut Outcome, report: &DumpReport, all: &[Patch], selectio
 
 // ---- hub ----
 
-fn hub(args: &[String]) -> Done {
-    let p = parsed("hub", args, &[], 1)?;
-    let what = match p.positional.first().map(String::as_str) {
-        None => return Err(Outcome::usage("hub", "name serve, pair or pull")),
-        Some("serve") => "hub serve (roadmap 4.05)",
-        Some("pair") => "hub pair (roadmap 4.05)",
-        Some("pull") => "hub pull (roadmap 4.05)",
-        Some(other) => {
-            return Err(Outcome::usage(
-                "hub",
-                &format!("unknown hub command '{other}' (use serve, pair or pull)"),
-            ))
-        }
-    };
-    Ok(Outcome::error("hub", &Error::NotBuilt(what)))
-}
+mod hub;
+pub use hub::DETAILS as HUB_DETAILS;
 
 // ---- fleet ----
 

@@ -2,7 +2,26 @@
 // file only draws; the view model, focus and button handling live in Rust (src/screen.rs,
 // src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
 // `Input::from_code`); the controller reaches the same handler from src/input.rs; clicks go
-// through `clicked(area, index)` (`Screen::click`).
+// through `clicked(area, index)` (`Screen::click`; area 7 is About's buttons). About (2.09) is
+// drawn over the Continue screen while `page` is 1, and Fleet (2.08, area 8, its rows from
+// src/vm/fleet.rs) while `page` is 2; their texts are `@tr(...)`, translated by the
+// catalogues in lang/ (src/lang.rs). The Continue screen's texts are English until they are in
+// the catalogues.
+
+import { AboutSlint, ScrollView } from "std-widgets.slint";
+
+export struct PatchRow {
+    name: string,
+    author: string,
+    status: string,
+    available: bool,
+}
+
+export struct LicenceRow {
+    name: string,
+    licence: string,
+    role: string,
+}
 
 export struct CardData {
     title: string,
@@ -155,6 +174,221 @@ component Hint inherits Text {
     font-size: self.unit * 0.9;
 }
 
+component LauncherButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> focused;
+    callback activated();
+
+    height: 56px;
+    min-width: 160px;
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #5a6270;
+    background: focused ? #2d3544 : #1f2430;
+    accessible-role: button;
+    accessible-label: root.label;
+    Text {
+        text: root.label;
+        color: white;
+        font-size: 18px;
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// One paired device, as src/vm/fleet.rs formats it.
+export struct FleetRow {
+    name: string,
+    detail: string,
+    sync: string,
+    free: string,
+}
+
+component FleetRowView inherits Rectangle {
+    in property <FleetRow> device;
+    in property <bool> focused;
+    callback activated();
+
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #2d3544;
+    background: focused ? #2d3544 : #1a1f2a;
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 16px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Text {
+                text: root.device.name;
+                color: white;
+                font-size: 18px;
+            }
+            Text {
+                text: root.device.detail;
+                color: #c3cad6;
+                font-size: 14px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: root.device.sync;
+                color: #c3cad6;
+                font-size: 14px;
+                horizontal-alignment: right;
+            }
+            Text {
+                text: root.device.free;
+                color: #8a93a3;
+                font-size: 14px;
+                horizontal-alignment: right;
+            }
+        }
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+component Heading inherits Text {
+    color: #f2b134;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+component Body inherits Text {
+    color: #c8cdd6;
+    font-size: 14px;
+    wrap: word-wrap;
+}
+
+component Licences inherits VerticalLayout {
+    in property <[LicenceRow]> rows;
+    spacing: 6px;
+    for row in root.rows: VerticalLayout {
+        Text {
+            text: row.name + "  ·  " + row.licence;
+            color: white;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+        Body {
+            text: row.role;
+            color: #8a93a3;
+        }
+    }
+}
+
+component AboutPage inherits Rectangle {
+    // A name, never translated.
+    in property <string> product: "Uncharted Universal";
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped;
+    in property <[LicenceRow]> learned;
+    // The language button's value, and which of the two buttons has focus (`AboutFocus`).
+    in property <string> language-name;
+    in property <int> focused-index;
+    // A click on button <int>: 0 the language button, 1 Back.
+    callback clicked(int);
+
+    // Up and down on the controller: one step is a few lines.
+    public function scroll(steps: int) {
+        view.content-y = clamp(view.content-y + steps * 64px, min(0px, view.visible-height - view.content-height), 0px);
+    }
+
+    VerticalLayout {
+        spacing: 16px;
+
+        view := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 12px;
+
+                Text {
+                    text: @tr("About");
+                    color: white;
+                    font-size: 28px;
+                    font-weight: 700;
+                }
+                Body {
+                    text: root.product + "  ·  " + @tr("Version {}", root.version);
+                }
+                Body {
+                    text: @tr("Uncharted Universal is free software under the GNU General Public License, version 2 only.");
+                }
+
+                Heading { text: @tr("Patches"); }
+                if root.patches.length == 0: Body {
+                    text: @tr("No patches yet: the patches of a prepared game are listed here.");
+                }
+                for patch in root.patches: VerticalLayout {
+                    Text {
+                        text: patch.name + (patch.author == "" ? "" : "  ·  " + patch.author);
+                        color: patch.available ? white : #8a93a3;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                    }
+                    Body {
+                        text: patch.status;
+                        color: patch.available ? #9fd49f : #8a93a3;
+                    }
+                }
+
+                Heading { text: @tr("Licences"); }
+                Licences { rows: root.shipped; }
+                Body {
+                    text: @tr("Each bundled library's licence text is in the licenses folder next to the app.");
+                }
+
+                Heading { text: @tr("Learned from"); }
+                Body {
+                    text: @tr("Studied for how they work; no code was copied from them.");
+                }
+                Licences { rows: root.learned; }
+
+                Heading { text: @tr("Built with Slint"); }
+                // Slint's royalty-free licence asks for this notice on the About screen.
+                Body {
+                    text: @tr("This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).");
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    AboutSlint {
+                        max-width: 320px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: space-between;
+            // The language button is here until Settings (2.06) exists (owner ruling 2026-11-12).
+            LauncherButton {
+                label: @tr("Language: {}", root.language-name);
+                focused: root.focused-index == 0;
+                activated => { root.clicked(0); }
+            }
+            LauncherButton {
+                label: @tr("Back");
+                focused: root.focused-index == 1;
+                activated => { root.clicked(1); }
+            }
+            Body {
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                text: @tr("Up and down scroll. A or B goes back.");
+                color: #8a93a3;
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "Uncharted Universal";
     min-width: 640px;
@@ -204,11 +438,33 @@ export component AppWindow inherits Window {
     in property <[SideData]> sides;
     in property <int> side-index;
 
+    // 0 = the Continue screen, 1 = About over it, 2 = Fleet over it (`Ui::about`, `Ui::fleet`
+    // in src/main.rs).
+    in property <int> page: 0;
+    in property <int> about-focus;
+    // The language button's value: a language's own name, or "Automatic (<name>)".
+    in property <string> language-name;
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped-licences;
+    in property <[LicenceRow]> learned-licences;
+    in property <[FleetRow]> fleet-rows;
+    in property <int> fleet-focus: 0;
+    in property <int> fleet-back-index: 0;
+    in property <string> fleet-warning;
+    in property <string> fleet-empty;
+
     // 0 Up, 1 Down, 2 Left, 3 Right, 4 Tab, 5 Shift+Tab, 6 A, 7 B, 8 LB, 9 RB, 10 Y
     // (`Input::from_code`).
     callback input(int);
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
+
+    public function scroll-about(steps: int) {
+        if (root.page == 1) {
+            about.scroll(steps);
+        }
+    }
 
     FocusScope {
         init => {
@@ -265,6 +521,7 @@ export component AppWindow inherits Window {
         VerticalLayout {
             padding: root.unit;
             spacing: root.unit * 0.8;
+            visible: root.page == 0;
 
             // The game strip: LB / RB change game.
             HorizontalLayout {
@@ -375,14 +632,6 @@ export component AppWindow inherits Window {
                     unit: root.unit;
                     text: "B  Quit";
                 }
-            }
-
-            // Slint's royalty-free licence asks for this notice.
-            Text {
-                text: "About: this application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).";
-                color: Theme.dim;
-                font-size: max(9px, root.unit * 0.6);
-                wrap: word-wrap;
             }
         }
 
@@ -635,6 +884,85 @@ export component AppWindow inherits Window {
                 color: Theme.text;
                 font-size: root.unit * 1.3;
                 horizontal-alignment: center;
+            }
+        }
+
+        // About, from the page row; Slint's royalty-free licence notice is on it.
+        about := AboutPage {
+            x: 24px;
+            y: 24px;
+            width: root.width - 48px;
+            height: root.height - 48px;
+            visible: root.page == 1;
+            version: root.version;
+            patches: root.patches;
+            shipped: root.shipped-licences;
+            learned: root.learned-licences;
+            language-name: root.language-name;
+            focused-index: root.about-focus;
+            clicked(index) => {
+                root.clicked(7, index);
+            }
+        }
+
+        // Fleet, from the page row.
+        if root.page == 2: VerticalLayout {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            padding: 24px;
+            spacing: 12px;
+
+            Text {
+                text: @tr("Fleet");
+                color: white;
+                font-size: 26px;
+            }
+
+            if root.fleet-warning != "": Rectangle {
+                border-radius: 8px;
+                background: #4a3410;
+                border-width: 1px;
+                border-color: #f2b134;
+                HorizontalLayout {
+                    padding: 12px;
+                    Text {
+                        text: root.fleet-warning;
+                        color: #ffe2a8;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    for row[i] in root.fleet-rows: FleetRowView {
+                        device: row;
+                        focused: root.fleet-focus == i;
+                        activated => { root.clicked(8, i); }
+                    }
+                    if root.fleet-empty != "": Text {
+                        text: root.fleet-empty;
+                        color: #8a93a3;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                LauncherButton {
+                    width: 160px;
+                    label: @tr("Back");
+                    focused: root.fleet-focus == root.fleet-back-index;
+                    activated => { root.clicked(8, root.fleet-back-index); }
+                }
             }
         }
     }

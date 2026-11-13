@@ -81,11 +81,23 @@ jobs:
           sudo chroot "$CHROOT" bash -euc '
             export PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:$PATH"
             export LD_LIBRARY_PATH="$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/lib"
+            # Rust 1.90+ links with its own lld here, and its wrapper needs /proc/self/exe: use the system linker.
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C linker-features=-lld"
             git config --global --add safe.directory "*"
             # shadPS4 makes ~/.local/share/shadPS4 with a non-recursive create; a bare CI home lacks the parent.
             mkdir -p "$HOME/.local/share"
             cd /work
             BB_JOBS=2 CARGO_BUILD_JOBS=2 bash build.sh --test
+          '
+      - name: Boot smoke test
+        # The loader with crates/runtime linked in boots a synthetic image through the Rust libc
+        # contracts and exits cleanly (tests/test_boot_smoke.py, piece 3.01). bb-probe must exist,
+        # so the test cannot pass by being skipped.
+        run: |
+          sudo chroot "$CHROOT" bash -euc '
+            cd /work
+            test -x out/bb-probe
+            cd tests && python3 -m unittest -v test_boot_smoke
           '
       - name: Run Python tests and enforce the Linux expected-skip list
         run: |
@@ -135,6 +147,7 @@ jobs:
           sudo chroot "$CHROOT" bash -euc "
             export PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:\$PATH
             export LD_LIBRARY_PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/lib
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS='-C linker-features=-lld'
             git config --global --add safe.directory '*'
             cd /work
             APPIMAGETOOL=/work/out/appimagetool-extracted/AppRun LINUX_BUILD='$version-linux.${{ github.run_number }}' bash packaging/linux/package.sh
@@ -144,8 +157,8 @@ jobs:
           sudo chroot "$CHROOT" bash -euc '
             cd /work
             test -s /usr/share/vulkan/icd.d/lvp_icd.json
-            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json out/bb-probe --vulkan-only > dist/vulkan-smoke.txt
-          '''
+            VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json out/gpu/vulkan-smoke-test > dist/vulkan-smoke.txt
+          '
       - name: Start the Rust faces from the AppDir
         # AppRun hands `--help` to uncharted-universal; the runtime (only --probe so far) answers
         # anything else with its usage line.

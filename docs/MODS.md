@@ -2,6 +2,34 @@
 
 _Translated from Russian; original: [ru/MODS.md](ru/MODS.md)._
 
+## Uncharted layouts (`crates/core` `mods`, piece 1.11)
+
+The text after this section came with the Bloodborne launcher and describes
+`scripts/mods.py`, whose layouts use Bloodborne's `dvdroot_ps4` folder. Uncharted's dump has
+no `dvdroot_ps4`: its game files sit in `u1data/`, `u2data/`, `u3data/` and `shareddata/`
+beside the executables. The Rust `mods` module (`crates/core/src/mods.rs`), which the Rust
+launcher and runtime use (pieces 1.25 and 3.09), accepts these layouts instead:
+
+```text
+mods/
+  Mod name/
+    u1data/...        (and/or u2data/, u3data/, shareddata/)
+```
+
+- `Mod name/app0/u1data/...`, and `Mod name/CUSA02320/u1data/...` (or one of the other
+  collection title ids: `CUSA02343`, `CUSA02344`, `CUSA02826`);
+- one extra wrapper folder around any of these, as after extracting an archive into a folder
+  named after it: `Mod name/Mod name v1.2/u1data/...` (`.txt`, `.md`, `.jpg`, `.png` and
+  `.ini` files may sit beside the wrapper).
+
+Name case does not matter, and dotfiles are ignored. Files outside the four game folders
+(a readme, screenshots) are not mounted. A mod that replaces `eboot.bin`,
+`big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`, `sce_discmap.plt`, `sce_module` or
+`sce_sys`, or that holds a symbolic link or junction, is refused. shadPS4's sibling folder
+is `CUSA02320-mods/u1data/...` beside the game folder. Nothing in the dump or the mods is
+changed: the module writes a list of the replaced and added files, and the runtime's file
+system serves them in place of the game's.
+
 The launcher now has a **Mods** group: folder selection, a master toggle,
 per-mod enable switches and arrows for load order. Changes apply on the
 next launch. The lowest enabled mod has the highest priority; when files

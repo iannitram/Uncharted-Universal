@@ -134,7 +134,14 @@ fn every_command_runs_with_its_documented_exit_status() {
     assert_eq!(code(&uu(&root.0, &["prepare"])), 2);
     assert_eq!(code(&uu(&root.0, &["play", "u4"])), 2);
     assert_eq!(code(&uu(&root.0, &["hub"])), 2);
-    assert_eq!(code(&uu(&root.0, &["hub", "serve"])), 3);
+    // Without the hub feature `hub serve` is not built (3); with it, there is no builds folder
+    // yet (and Windows refuses paired-device storage), so it fails (1). It never listens here.
+    let serve = uu(
+        &root.0,
+        &["hub", "serve", "--bind", "127.0.0.1", "--port", "0"],
+    );
+    let expected = if cfg!(feature = "hub") { 1 } else { 3 };
+    assert_eq!(code(&serve), expected, "{serve:?}");
 
     let patches = uu(
         &root.0,
