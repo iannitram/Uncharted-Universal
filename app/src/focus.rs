@@ -1,7 +1,7 @@
 //! Focus on the Continue screen (docs/continue-screen.md, "Controller path"): two rows of
-//! buttons, the action row on top and the page row below. The Saves and Settings pages (2.06)
-//! use [`Grid`]: any number of rows, each with its own buttons. Plain Rust, so it is tested
-//! without a window.
+//! buttons, the action row on top and the page row below; and on About, its two buttons. The
+//! Saves and Settings pages (2.06) use [`Grid`]: any number of rows, each with its own buttons.
+//! Plain Rust, so it is tested without a window.
 
 /// A direction from the keyboard or the controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,6 +172,105 @@ impl Grid {
     }
 }
 
+/// Which of `len` buttons has focus. Moves wrap around.
+#[derive(Debug)]
+pub struct FocusRing {
+    len: usize,
+    index: usize,
+}
+
+impl FocusRing {
+    pub fn new(len: usize) -> Self {
+        assert!(len > 0, "a focus ring needs at least one button");
+        FocusRing { len, index: 0 }
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Focus button `index` (a click); out of range is ignored.
+    pub fn set(&mut self, index: usize) {
+        if index < self.len {
+            self.index = index;
+        }
+    }
+
+    /// Up/Left go to the previous button, Down/Right to the next.
+    pub fn step(&mut self, nav: Nav) {
+        self.index = match nav {
+            Nav::Up | Nav::Left => (self.index + self.len - 1) % self.len,
+            Nav::Down | Nav::Right => (self.index + 1) % self.len,
+        };
+    }
+}
+
+/// About's buttons, in focus order. The language button is on About until Settings (2.06)
+/// exists (owner ruling 2026-11-12).
+pub const LANGUAGE_BUTTON: usize = 0;
+pub const BACK_BUTTON: usize = 1;
+const ABOUT_BUTTONS: usize = 2;
+
+/// What the window must do after an input on About.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effect {
+    None,
+    /// Draw the focus on this About button.
+    Focus(usize),
+    /// Scroll About by this many steps (positive is towards the top).
+    Scroll(i32),
+    /// Step the interface language to the next choice.
+    NextLanguage,
+    /// Back to the Continue screen.
+    Close,
+}
+
+/// Focus on About: left and right (and Tab) move between its buttons, up and down scroll.
+#[derive(Debug)]
+pub struct AboutFocus {
+    ring: FocusRing,
+}
+
+impl Default for AboutFocus {
+    fn default() -> Self {
+        AboutFocus {
+            ring: FocusRing::new(ABOUT_BUTTONS),
+        }
+    }
+}
+
+impl AboutFocus {
+    pub fn focused(&self) -> usize {
+        self.ring.index()
+    }
+
+    pub fn nav(&mut self, nav: Nav) -> Effect {
+        match nav {
+            Nav::Up => Effect::Scroll(1),
+            Nav::Down => Effect::Scroll(-1),
+            Nav::Left | Nav::Right => {
+                self.ring.step(nav);
+                Effect::Focus(self.ring.index())
+            }
+        }
+    }
+
+    /// A or Enter on the focused button.
+    pub fn activate(&self) -> Effect {
+        match self.ring.index() {
+            LANGUAGE_BUTTON => Effect::NextLanguage,
+            BACK_BUTTON => Effect::Close,
+            _ => Effect::None,
+        }
+    }
+
+    /// A click or tap on button `index`: focus it, then activate it.
+    pub fn click(&mut self, index: usize) -> Effect {
+        self.ring.set(index);
+        self.activate()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,5 +365,37 @@ mod tests {
         assert_eq!(Grid::at(0, 0).clamp(&[0, 0, 1]), Grid::at(2, 0));
         assert_eq!(Grid::at(1, 1).clamp(&[]), Grid::at(0, 0));
         assert_eq!(Grid::first(&[0, 0, 3]), Grid::at(2, 0));
+    }
+
+    #[test]
+    fn ring_moves_and_wraps() {
+        let mut ring = FocusRing::new(2);
+        assert_eq!(ring.index(), 0);
+        ring.step(Nav::Right);
+        assert_eq!(ring.index(), 1);
+        ring.step(Nav::Down);
+        assert_eq!(ring.index(), 0);
+        ring.step(Nav::Left);
+        assert_eq!(ring.index(), 1);
+        ring.step(Nav::Up);
+        assert_eq!(ring.index(), 0);
+        ring.set(1);
+        assert_eq!(ring.index(), 1);
+        ring.set(7);
+        assert_eq!(ring.index(), 1);
+    }
+
+    #[test]
+    fn about_buttons_and_scrolling() {
+        let mut about = AboutFocus::default();
+        assert_eq!(about.focused(), LANGUAGE_BUTTON);
+        assert_eq!(about.activate(), Effect::NextLanguage);
+        assert_eq!(about.nav(Nav::Down), Effect::Scroll(-1));
+        assert_eq!(about.nav(Nav::Up), Effect::Scroll(1));
+        assert_eq!(about.nav(Nav::Right), Effect::Focus(BACK_BUTTON));
+        assert_eq!(about.activate(), Effect::Close);
+        assert_eq!(about.nav(Nav::Right), Effect::Focus(LANGUAGE_BUTTON));
+        assert_eq!(about.click(BACK_BUTTON), Effect::Close);
+        assert_eq!(about.click(LANGUAGE_BUTTON), Effect::NextLanguage);
     }
 }

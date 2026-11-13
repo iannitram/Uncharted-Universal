@@ -11,8 +11,8 @@ MINGW*|MSYS*)
     # MSYS2's Vulkan headers, as on the GitHub runner: an installed Vulkan SDK (VULKAN_SDK) would
     # point CMake at its own, older headers, which lack extensions the port uses.
     unset VULKAN_SDK
-    # cargo (rustup, with the x86_64-pc-windows-gnullvm target) builds crates/runtime, which the
-    # loader links (the runtime modules already in Rust, ADR 0002).
+    # cargo (rustup, with the x86_64-pc-windows-gnullvm target) builds crates/runtime, part of the
+    # loader since piece 3.01 (gpu/CMakeLists.txt runs it).
     [[ -d $HOME/.cargo/bin ]] && PATH=$PATH:$HOME/.cargo/bin
     command -v cargo >/dev/null || { echo "Need cargo (rustup target add x86_64-pc-windows-gnullvm): crates/runtime is part of the loader." >&2; exit 1; }
     for tool in clang cmake ninja pkg-config; do
@@ -163,23 +163,35 @@ for patch in gpu/patches/fsr-vulkan/*.patch; do
         git -C gpu/third_party/fsr-vulkan apply --ignore-whitespace "$PWD/$patch"
     fi
 done
-cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
-    -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" -DVulkan_INCLUDE_DIR="$vulkan_headers" >/dev/null
+# crates/runtime (piece 3.01): the runtime modules ported to Rust (src/runtime.c is now its `abi`)
+# and the benchmark mode, a static library linked into the loader. Its build script builds the
+# GPU library first (CMake over gpu/ into out/gpu/libbbgpu.so, crates/runtime/build.rs) with the
+# CMake arguments below, joined by the unit separator. A failed GPU build stops the build there:
+# an older libbbgpu.so would otherwise be used silently. UNCHARTED_RUNTIME_LOADER=1 lets the
+# Rust side call the C modules that remain.
+command -v cargo >/dev/null || { echo 'Need cargo (rustup): crates/runtime is part of the loader.' >&2; exit 1; }
+gpu_cmake=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo"
+    -DVulkan_INCLUDE_DIR="$vulkan_headers")
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
-# A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
-if ! ninja ${BB_JOBS:+-j"$BB_JOBS"} -C out/gpu bbgpu > out/gpu-build.log 2>&1; then
-    awk 'substr($0, 1, 1) != "["' out/gpu-build.log | tail -40 >&2 || true
-    echo 'GPU library build failed (full log: out/gpu-build.log)' >&2; exit 1
-fi
+UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf '%s' "${gpu_cmake[*]}") \
+    UNCHARTED_GPU_LOG=$PWD/out/gpu-build.log UNCHARTED_RUNTIME_LOADER=1 \
+    cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-runtime=(src/runtime*.c)
-# crates/runtime (ADR 0002): the runtime modules already in Rust (trophy), a static library that
-# everything linking the C runtime links too. BB_BENCHMARK=<seconds> (#173/#242) is Rust as well,
-# but only bb-probe turns it on (-DBB_RUST_BENCHMARK); the C unit tests keep the no-op glue.
-command -v cargo >/dev/null || { echo 'Need cargo (rustup): crates/runtime is part of the loader.' >&2; exit 1; }
-cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
-rust=(out/rust/release/libuncharted_runtime.a -ldl -lpthread -lm)
+# Linux and Android build the memory module from crates/runtime (piece 3.12), so
+# src/runtime_memory.c is Windows only.
+runtime=()
+for source in src/runtime*.c; do
+    if [[ $source != src/runtime_memory.c ]]; then runtime+=("$source"); fi
+done
+# Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
+# with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only
+# libbbgpu.so asks for (memory's): --undefined makes the linker take them from the archive.
+rust=(out/rust/release/libuncharted_runtime.a)
+for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2; do
+    rust+=(-Wl,--undefined="$symbol")
+done
+rust+=(-lgcc_s -lutil -lrt -lpthread -lm -ldl)
 # Third-party decoders: compiled once, without this project's -Werror policy.
 atrac9=(third_party/LibAtrac9/C/src/*.c)
 if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
@@ -187,12 +199,14 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" src/vulkan_smoke.c out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -DBB_RUST_BENCHMARK "${rust[@]}" -o out/bb-probe
+# BB_BENCHMARK=<seconds> (#173/#242): BB_RUST_BENCHMARK sends the glue to the Rust benchmark in
+# bb-probe only; the C unit tests below keep the no-op glue.
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    tests=(motion-history-test motion-shader-test wbinvl1-test ui-composition-test upscaler-support-test expand-image-test scene-resolution-test taa-shader-test camera-motion-test)
+    tests=(motion-history-test motion-shader-test wbinvl1-test ui-composition-test upscaler-support-test expand-image-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)
     ninja_jobs=()
     if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
     if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
@@ -204,22 +218,22 @@ if [[ ${1:-} == --test ]]; then
         if [[ -f $candidate ]]; then export VK_ICD_FILENAMES=$candidate; break; fi
     done
     if [[ -n ${VK_ICD_FILENAMES:-} ]]; then echo "GPU tests: VK_ICD_FILENAMES=$VK_ICD_FILENAMES"; fi
-    for test in scene-resolution-test taa-shader-test camera-motion-test; do "out/gpu/$test"; done
+    for test in scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test; do "out/gpu/$test"; done
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
     out/pad-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" "${rust[@]}" -o out/runtime-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_file_mods.c -o out/file-mods-test
     out/file-mods-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" "${rust[@]}" -o out/sema-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" "${rust[@]}" -o out/ajm-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
     out/ajm-test
     "$CC" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc tests/test_content.c src/runtime_content.c -o out/content-test
     out/content-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test
     out/speakers-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" src/vulkan_smoke.c out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" "${rust[@]}" -o out/eop-matcher-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test
     out/settings-default-test
