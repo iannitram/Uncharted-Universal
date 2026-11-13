@@ -1,8 +1,9 @@
 //! `uncharted-universal`: the launcher without its window. The Steam shortcut in Game Mode runs
 //! `uncharted-universal play`; the other commands do what the app's pages do (docs/code-map.md,
-//! Faces). Replaces the command line of `run.py` and, once release builds ship it (2.10), the
-//! Windows `Play Uncharted.exe` (`packaging/windows/play.c`): `play` waits for the game and
-//! returns its exit code, and passes on the arguments after `--`. No argument-parsing crate:
+//! Faces). Replaces the command line of `run.py` and, since the release builds ship it (2.10),
+//! the Windows `Play Uncharted.exe` (the deleted `packaging/windows/play.c`): `play` waits for
+//! the game and returns its exit code, and passes on the arguments after `--`. In the AppImage
+//! it runs as `<AppImage> play u1` (AppRun hands the commands to it). No argument-parsing crate:
 //! the commands take few arguments and are parsed by hand (`args`).
 //!
 //! ```text
@@ -282,6 +283,10 @@ fn run(args: &[String], ctx: &Ctx) -> Outcome {
 }
 
 fn main() -> ExitCode {
+    // First, before any thread: the host's library injection (Steam's LD_PRELOAD overlay) out
+    // of this process, so the runtime and anything else it starts never load it (Linux; this
+    // replaces packaging/bbport-entry.c).
+    uncharted_core::host_env::clean_process();
     // A stub's "not built yet" panic is reported as a plain line by `run`; keep its backtrace
     // note off the screen. Any other panic is a bug and prints as usual.
     let default_hook = std::panic::take_hook();

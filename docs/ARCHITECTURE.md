@@ -173,7 +173,7 @@ calls that MinGW lacks. The differences are documented in a table in
 - The launcher is GTK4 on Linux and Tkinter on Windows.
 
 The Linux tree retains the Bloodborne originals (`launcher/bbport_*.py`,
-`packaging/appimage.sh`); the Windows tree is Uncharted-specific. The
+`packaging/appimage.sh`, deleted in roadmap 2.10); the Windows tree is Uncharted-specific. The
 `bb-probe` binary name is inherited from `bloodborne_pc` and is used on both.
 
 ## Tests

@@ -186,9 +186,19 @@ fn play_plan_on_a_phone_is_refused() {
 
 #[test]
 fn the_runner_clears_ld_preload_and_passes_extra_arguments() {
+    let mut steam = ctx();
+    steam.os = Os::Linux;
+    steam.env.insert(
+        "LD_PRELOAD".into(),
+        "/home/deck/.local/share/Steam/ubuntu12_64/gameoverlayrenderer.so".into(),
+    );
+    steam
+        .env
+        .insert("LD_LIBRARY_PATH".into(), "/steam/runtime/lib".into());
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
         extra_args: vec!["--timeout".into(), "5".into()],
+        host: host_env::changes(steam.os, |name| steam.var(name)),
     };
     let command = runner.command(
         &[
@@ -198,10 +208,40 @@ fn the_runner_clears_ld_preload_and_passes_extra_arguments() {
         None,
     );
     let envs: Vec<_> = command.get_envs().collect();
+    // Even a preload in the runtime's own environment list is taken out.
     assert!(envs.contains(&(OsStr::new("LD_PRELOAD"), None)));
+    assert!(envs.contains(&(OsStr::new("LD_LIBRARY_PATH"), None)));
+    assert!(envs.contains(&(
+        OsStr::new("BB_HOST_LD_PRELOAD"),
+        Some(OsStr::new(
+            "/home/deck/.local/share/Steam/ubuntu12_64/gameoverlayrenderer.so"
+        ))
+    )));
+    assert!(envs.contains(&(
+        OsStr::new("DISABLE_VK_LAYER_VALVE_steam_overlay_1"),
+        Some(OsStr::new("1"))
+    )));
     assert!(envs.contains(&(OsStr::new("BB_EXE"), Some(OsStr::new("u3")))));
     let args: Vec<_> = command.get_args().collect();
     assert_eq!(args, [OsStr::new("--timeout"), OsStr::new("5")]);
+}
+
+#[test]
+fn off_linux_the_runner_leaves_the_environment_alone() {
+    let mut windows = ctx();
+    windows.os = Os::Windows;
+    windows
+        .env
+        .insert("LD_PRELOAD".into(), "/steam/overlay.so".into());
+    let runner = RuntimeRunner {
+        program: PathBuf::from("uncharted-run"),
+        extra_args: Vec::new(),
+        host: host_env::changes(windows.os, |name| windows.var(name)),
+    };
+    assert!(runner.host.is_empty());
+    let command = runner.command(&[("BB_EXE".into(), "u1".into())], None);
+    let envs: Vec<_> = command.get_envs().collect();
+    assert_eq!(envs, [(OsStr::new("BB_EXE"), Some(OsStr::new("u1")))]);
 }
 
 #[test]
@@ -209,6 +249,7 @@ fn the_runner_passes_the_guest_argv_file_before_the_extra_arguments() {
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
         extra_args: vec!["--timeout".into(), "5".into()],
+        host: Vec::new(),
     };
     let file = Path::new("out").join("guest-argv.txt");
     let command = runner.command(&[], Some(&file));
@@ -230,6 +271,7 @@ fn a_missing_runtime_is_a_launch_error() {
     let runner = RuntimeRunner {
         program: dir.path().join("missing-runtime"),
         extra_args: Vec::new(),
+        host: Vec::new(),
     };
     assert!(matches!(
         runner.run(Game::U1, &[], None),
@@ -281,6 +323,35 @@ fn the_shortcut_plays_the_collection_or_the_named_game() {
     let u3 = shortcut_for(Some(Game::U3), exe);
     assert_eq!(u3.name, "Uncharted 3");
     assert_eq!(u3.launch_options, "play u3");
+}
+
+#[test]
+fn inside_the_appimage_the_shortcut_starts_the_appimage() {
+    let mut linux = ctx();
+    linux.os = Os::Linux;
+    linux.exe = PathBuf::from("/tmp/.mount_UnchaXYZ/uncharted-universal");
+    assert_eq!(shortcut_target(&linux), linux.exe);
+    linux.env.insert(
+        "APPIMAGE".into(),
+        "/home/deck/Applications/Uncharted-x86_64.AppImage".into(),
+    );
+    assert_eq!(
+        shortcut_target(&linux),
+        PathBuf::from("/home/deck/Applications/Uncharted-x86_64.AppImage")
+    );
+    let shortcut = shortcut_for(Some(Game::U2), &shortcut_target(&linux));
+    assert_eq!(
+        shortcut.exe,
+        Path::new("/home/deck/Applications/Uncharted-x86_64.AppImage")
+            .display()
+            .to_string()
+    );
+    assert_eq!(shortcut.launch_options, "play u2");
+    // APPIMAGE means nothing off Linux.
+    let mut windows = linux;
+    windows.os = Os::Windows;
+    windows.exe = PathBuf::from(r"C:\Games\uncharted-windows\uncharted-universal.exe");
+    assert_eq!(shortcut_target(&windows), windows.exe);
 }
 
 #[test]

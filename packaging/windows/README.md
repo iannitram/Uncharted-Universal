@@ -35,9 +35,12 @@ bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.e
 The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
 python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
 scripts (`--script`) and the game without the window (`--play`): players need no Python.
-`Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
-`Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
-game directly with the saved settings.
+The package also carries the Rust launcher (roadmap 2.10): `uncharted-app.exe`, with
+`uncharted-universal.exe` (the command line; `uncharted-universal.exe play u1` starts a game and
+waits for it, which replaced `Play Uncharted.exe`, `packaging/windows/play.c`) and
+`uncharted-run.exe` beside it. `packaging/rust_faces.sh` builds them with the host's (MSVC)
+toolchain, the C runtime linked in, and `packaging/rust_licences.py` writes the licences of
+the crates they link to `licenses/rust-crates.txt`.
 `patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
 `run.py` then runs other versions at 30 FPS with live resolution changes.
 From a source tree it adds `C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.
