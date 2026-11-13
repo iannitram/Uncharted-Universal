@@ -2,3 +2,5 @@
 *.patch -text
 # Steam binary KeyValues test fixtures stay byte-exact.
 *.vdf binary
+# Fleet screen test fixture is parsed byte-for-byte; keep LF on Windows checkouts.
+app/fixtures/*.tsv text eol=lf
