@@ -37,7 +37,7 @@ pub fn dispatch(command: &str, args: &[String], ctx: &Ctx) -> Outcome {
         "play" => play(args, ctx),
         "steam-add" => steam_add(args, ctx),
         "patches" => patches(args, ctx),
-        "hub" => hub(args),
+        "hub" => hub::hub(args, ctx),
         "fleet" => fleet(args, ctx),
         "generate-art" => generate_art(args),
         other => unreachable!("dispatch is only called with a listed command, not {other}"),
@@ -714,22 +714,8 @@ fn write_patches(out: &mut Outcome, report: &DumpReport, all: &[Patch], selectio
 
 // ---- hub ----
 
-fn hub(args: &[String]) -> Done {
-    let p = parsed("hub", args, &[], 1)?;
-    let what = match p.positional.first().map(String::as_str) {
-        None => return Err(Outcome::usage("hub", "name serve, pair or pull")),
-        Some("serve") => "hub serve (roadmap 4.05)",
-        Some("pair") => "hub pair (roadmap 4.05)",
-        Some("pull") => "hub pull (roadmap 4.05)",
-        Some(other) => {
-            return Err(Outcome::usage(
-                "hub",
-                &format!("unknown hub command '{other}' (use serve, pair or pull)"),
-            ))
-        }
-    };
-    Ok(Outcome::error("hub", &Error::NotBuilt(what)))
-}
+mod hub;
+pub use hub::DETAILS as HUB_DETAILS;
 
 // ---- fleet ----
 
