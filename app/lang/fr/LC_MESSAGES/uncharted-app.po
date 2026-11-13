@@ -52,9 +52,6 @@ msgstr "Retour"
 msgid "Up and down scroll. A or B goes back."
 msgstr "Haut et bas font défiler. A ou B revient."
 
-msgid "Continue screen goes here"
-msgstr "L’écran Continuer viendra ici"
-
 msgid "Language: {}"
 msgstr "Langue : {}"
 
