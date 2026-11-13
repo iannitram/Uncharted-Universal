@@ -1,8 +1,9 @@
 //! Focus on the Continue screen (docs/continue-screen.md, "Controller path"): two rows of
-//! buttons, the action row on top and the page row below; on About, its two buttons; and on
-//! Fleet (2.08), its rows and Back. The Saves and Settings pages (2.06) use [`Grid`]: any number
-//! of rows, each with its own buttons. The first run (2.05) uses `list_step`, `list_tab` and the
-//! `Digits` code boxes below. Plain Rust, so it is tested without a window.
+//! buttons, the action row on top and the page row below; on About, its two buttons; on Fleet
+//! (2.08), its rows and Back; and on the after-crash screen (2.07), its buttons. The Saves and
+//! Settings pages (2.06) use [`Grid`]: any number of rows, each with its own buttons. The first
+//! run (2.05) uses `list_step`, `list_tab` and the `Digits` code boxes below. Plain Rust, so it is
+//! tested without a window.
 
 use crate::vm::FleetVm;
 
@@ -284,7 +285,7 @@ pub const LANGUAGE_BUTTON: usize = 0;
 pub const BACK_BUTTON: usize = 1;
 const ABOUT_BUTTONS: usize = 2;
 
-/// What the window must do after an input on About or Fleet.
+/// What the window must do after an input on About, Fleet or the after-crash screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
     None,
@@ -296,6 +297,10 @@ pub enum Effect {
     Scroll(i32),
     /// Step the interface language to the next choice.
     NextLanguage,
+    /// Draw the focus on this after-crash button.
+    CrashFocus(usize),
+    /// Press after-crash button `index` (`AfterCrash::buttons`).
+    Press(usize),
     /// Back to the Continue screen.
     Close,
 }
@@ -406,6 +411,45 @@ impl FleetFocus {
     pub fn back(&mut self) -> Effect {
         self.open = false;
         Effect::Close
+    }
+}
+
+/// The after-crash screen (2.07), over the Continue screen: the d-pad (and Tab) moves over its
+/// buttons and wraps; A presses one; B goes back to the Continue screen.
+#[derive(Debug)]
+pub struct CrashFocus {
+    ring: FocusRing,
+}
+
+impl CrashFocus {
+    /// `buttons` buttons, the first focused.
+    pub fn new(buttons: usize) -> Self {
+        CrashFocus {
+            ring: FocusRing::new(buttons.max(1)),
+        }
+    }
+
+    pub fn focused(&self) -> usize {
+        self.ring.index()
+    }
+
+    pub fn nav(&mut self, nav: Nav) -> Effect {
+        self.ring.step(nav);
+        Effect::CrashFocus(self.ring.index())
+    }
+
+    /// A or Enter on the focused button.
+    pub fn activate(&self) -> Effect {
+        Effect::Press(self.ring.index())
+    }
+
+    /// A click or tap on button `index`: focus it, then press it.
+    pub fn click(&mut self, index: usize) -> Effect {
+        if self.ring.set(index) {
+            self.activate()
+        } else {
+            Effect::None
+        }
     }
 }
 
@@ -621,5 +665,18 @@ mod tests {
         fleet.open();
         assert_eq!(fleet.fleet().focused(), fleet.fleet().back_index());
         assert_eq!(fleet.activate(), Effect::Close);
+    }
+
+    #[test]
+    fn the_after_crash_screen_with_the_controller() {
+        let mut crash = CrashFocus::new(3);
+        assert_eq!(crash.focused(), 0);
+        assert_eq!(crash.nav(Nav::Up), Effect::CrashFocus(2));
+        assert_eq!(crash.activate(), Effect::Press(2));
+        assert_eq!(crash.click(1), Effect::Press(1));
+        assert_eq!(crash.focused(), 1);
+        assert_eq!(crash.click(9), Effect::None);
+        assert_eq!(crash.nav(Nav::Down), Effect::CrashFocus(2));
+        assert_eq!(crash.nav(Nav::Right), Effect::CrashFocus(0));
     }
 }

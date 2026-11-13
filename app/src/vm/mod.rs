@@ -3,6 +3,7 @@
 //! `src/screen.rs` (2.04); these are the pages one button away from it.
 
 pub mod about;
+pub mod after_crash;
 pub mod fleet;
 pub mod saves;
 pub mod settings;

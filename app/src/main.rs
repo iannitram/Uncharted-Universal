@@ -11,7 +11,14 @@
 //! views into the Slint window and carries out their commands, the files through `pages_io.rs`
 //! and `settings_store.rs`. Continue and Play run
 //! `uncharted-universal play <game>` (the command line, roadmap 2.02) beside this program and
-//! wait for it: that command pulls the save, starts the game and pushes the save.
+//! wait for it: that command pulls the save, starts the game and pushes the save. Its output
+//! goes to `<logs>/last_run.log`; when the run crashed, the after-crash screen (2.07,
+//! `vm::after_crash`) comes up over the Continue screen, and a run the app did not see end is
+//! picked up on the next start.
+//!
+//! `uncharted-app --play <u1|u2|u3> [-- <runtime arguments>]` starts that game at once (as a
+//! Steam shortcut does). When the pickup shows the after-crash screen, `--play` waits for it:
+//! the screen's Play again button starts the game.
 //!
 //! The guided first run (roadmap 2.05) opens over the screen when nothing is installed and no
 //! hub is paired (`setup::is_first_run`), or from a card's Set up button: its view model is
@@ -34,14 +41,17 @@ mod input;
 mod lang;
 mod load;
 mod pages_io;
+mod play;
 mod screen;
+mod settings_file;
 mod settings_store;
+mod strings;
 mod vm;
 mod work;
 
 use card::Clock;
 use firstrun::{FirstRun, FirstRunView, Job, Key};
-use focus::{AboutFocus, Effect, FleetFocus, Nav};
+use focus::{AboutFocus, CrashFocus, Effect, FleetFocus, Nav};
 use input::Controller;
 use lang::Texts;
 use screen::{Command, GameData, Input, OverlayView, Page, Screen, Start, View};
@@ -49,23 +59,149 @@ use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use strings::{fill, Text};
 use uncharted_core::games::Game;
 use uncharted_core::language::{self, Language};
 use uncharted_core::launch::Keep;
+use uncharted_core::logs::{self, Redact, ReportDetails, RUN_LOG};
 use uncharted_core::patches::{Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::saves;
 use uncharted_core::setup;
+use vm::after_crash::{self, AfterCrash, Context, Host, Pressed};
 use vm::saves::{GameSaves, SavesCommand, SavesView};
 use vm::settings::{SettingsCommand, SettingsView};
 use vm::{FleetVm, SavesVm, SettingsVm};
 
 slint::include_modules!();
+
+/// `known_issues.json`, built in.
+const KNOWN_ISSUES: &str = include_str!("../../crates/core/data/known_issues.json");
+
+/// What the command line asks for.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Args {
+    play: Option<Game>,
+    run_args: Vec<String>,
+}
+
+/// `--play <game>`, then everything after `--` for the runtime. Anything else is an error.
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let mut parsed = Args::default();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--play" => {
+                let key = rest.next().ok_or("--play needs a game: u1, u2 or u3")?;
+                parsed.play =
+                    Some(Game::from_key(key).ok_or_else(|| format!("unknown game: {key}"))?);
+            }
+            "--" => {
+                parsed.run_args = rest.by_ref().cloned().collect();
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+    Ok(parsed)
+}
+
+/// The game `--play` starts at once: none when the pickup of an unfinished run put the
+/// after-crash screen up, since starting would replace that screen before it is drawn. The
+/// screen's Play again button starts the game instead.
+fn start_now(play: Option<Game>, crash_up: bool) -> Option<Game> {
+    play.filter(|_| !crash_up)
+}
+
+/// The launcher's folders, for crash help.
+struct Folders {
+    vars: Vars,
+    dirs: AppDirs,
+}
+
+impl Folders {
+    fn settings(&self) -> PathBuf {
+        self.dirs.config.join(settings_file::SETTINGS_FILE)
+    }
+
+    /// The game's saves folder, where the runtime writes `where.json`.
+    fn saves(&self, game: Game) -> PathBuf {
+        saves::save_root(
+            game,
+            Os::current(),
+            &self.vars,
+            &self.dirs.install(game.key()),
+        )
+        .unwrap_or_else(|_| self.dirs.data.join("user").join(game.name()))
+    }
+
+    fn context(&self) -> Context {
+        let settings = settings_file::read(&self.settings());
+        let preset = settings
+            .get("preset")
+            .and_then(|value| value.as_str())
+            .unwrap_or("default")
+            .to_string();
+        let launcher = std::env::current_exe()
+            .map(|exe| exe.display().to_string())
+            .unwrap_or_else(|_| "?".into());
+        Context {
+            logs: self.dirs.logs(),
+            build: env!("CARGO_PKG_VERSION").to_string(),
+            preset,
+            issues: logs::parse_known_issues(KNOWN_ISSUES).unwrap_or_default(),
+            details: ReportDetails {
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                at_unix: local_clock_now(),
+                system: vec![format!("Launcher: {launcher}")],
+                settings,
+                // Not measured here: no low-space line in the report.
+                free_bytes: u64::MAX,
+            },
+            redact: Redact::for_home(&self.vars.home, Vec::new()),
+        }
+    }
+}
+
+/// The after-crash screen while it is up: the crashed run, the focus, the note under the
+/// buttons.
+struct Crash {
+    run: AfterCrash,
+    focus: CrashFocus,
+    note: String,
+}
+
+/// The real [`Host`] of the after-crash buttons: settings in `settings.json`, the browser and
+/// the clipboard. The game starts through `Command::Start` after `Pressed::Playing`, and
+/// `Ui::begin` puts a start that fails on the screen as its "could not start" note.
+struct AppHost<'a> {
+    window: &'a AppWindow,
+    folders: &'a Folders,
+}
+
+impl Host for AppHost<'_> {
+    fn set_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
+        settings_file::set_extra(&self.folders.settings(), key, value).map_err(|e| e.to_string())
+    }
+
+    fn play(&mut self, _game: Game) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn open_url(&mut self, url: &str) {
+        if let Err(error) = play::open_url(url) {
+            eprintln!("could not open {url}: {error}");
+        }
+    }
+
+    fn copy_text(&mut self, text: &str) {
+        self.window.invoke_copy_text(text.into());
+    }
+}
 
 /// A file of fleet records (`fleet::to_line` lines, this device first) the Fleet page reads
 /// until the hub keeps real ones (roadmap 4.04); `app/fixtures/fleet.tsv` is an example.
@@ -405,10 +541,13 @@ enum Shown {
 const ABOUT_PAGE: i32 = 3;
 /// `page` of the window while Fleet is open, the same way as About.
 const FLEET_PAGE: i32 = 4;
+/// `page` of the window while the after-crash screen is up, over everything else but the first
+/// run.
+const CRASH_PAGE: i32 = 5;
 
 impl Shown {
     /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings ([`ABOUT_PAGE`] is 3,
-    /// [`FLEET_PAGE`] 4).
+    /// [`FLEET_PAGE`] 4, [`CRASH_PAGE`] 5).
     fn code(&self) -> i32 {
         match self {
             Shown::Continue => 0,
@@ -435,6 +574,10 @@ struct Ui {
     about: RefCell<Option<AboutFocus>>,
     /// Fleet's records and focus; open over the Continue screen like About.
     fleet: RefCell<FleetFocus>,
+    /// The after-crash screen while it is up over the Continue screen.
+    crash: RefCell<Option<Crash>>,
+    /// The launcher's folders; `None` turns crash help off.
+    folders: Option<Folders>,
     window: slint::Weak<AppWindow>,
     pictures: RefCell<Pictures>,
     now: Box<dyn Fn() -> u64>,
@@ -462,7 +605,10 @@ impl Ui {
         }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
-        window.set_page(if about.is_some() {
+        let crash = self.crash.borrow();
+        window.set_page(if crash.is_some() {
+            CRASH_PAGE
+        } else if about.is_some() {
             ABOUT_PAGE
         } else if fleet.is_open() {
             FLEET_PAGE
@@ -471,6 +617,17 @@ impl Ui {
         });
         window.set_about_focus(about.as_ref().map_or(0, |a| a.focused() as i32));
         window.set_fleet_focus(fleet.fleet().focused() as i32);
+        if let Some(crash) = crash.as_ref() {
+            let texts = crash.run.screen(self.crash_lang());
+            window.set_crash_heading(texts.heading.into());
+            window.set_crash_game(texts.game.into());
+            window.set_crash_chapter(texts.chapter.into());
+            window.set_crash_summary(texts.summary.into());
+            window.set_crash_detail(texts.detail.into());
+            window.set_crash_buttons(strings(&texts.buttons));
+            window.set_crash_note(crash.note.as_str().into());
+            window.set_crash_focus(crash.focus.focused() as i32);
+        }
         match self.first.borrow().as_ref() {
             Some(first) => {
                 apply_first(&window, &first.view());
@@ -511,7 +668,128 @@ impl Ui {
         self.screen.borrow_mut().focus_page(page);
     }
 
+    /// The after-crash texts' language: the interface language.
+    fn crash_lang(&self) -> strings::Lang {
+        strings::Lang::of(self.lang.borrow().language())
+    }
+
+    /// The after-run step for `game`: the after-crash screen when it crashed. `true` when the
+    /// screen is up.
+    fn run_ended(&self, game: Game) -> bool {
+        let Some(folders) = &self.folders else {
+            return false;
+        };
+        let run = after_crash::after_run(
+            &folders.context(),
+            game,
+            &folders.saves(game),
+            local_clock_now(),
+        );
+        *self.crash.borrow_mut() = run.map(|run| Crash {
+            focus: CrashFocus::new(run.buttons().len()),
+            run,
+            note: String::new(),
+        });
+        self.redraw();
+        self.crash.borrow().is_some()
+    }
+
+    /// After-crash button `index`.
+    fn press(&self, index: usize) -> Command {
+        let (Some(window), Some(folders)) = (self.window.upgrade(), &self.folders) else {
+            return Command::None;
+        };
+        let Some(run) = self.crash.borrow().as_ref().map(|c| c.run.clone()) else {
+            return Command::None;
+        };
+        let Some(&button) = run.buttons().get(index) else {
+            return Command::None;
+        };
+        let mut host = AppHost {
+            window: &window,
+            folders,
+        };
+        match run.press(button, &folders.context(), &mut host, self.crash_lang()) {
+            Pressed::Stay(note) => {
+                window.set_crash_note(note.as_str().into());
+                if let Some(crash) = self.crash.borrow_mut().as_mut() {
+                    crash.note = note;
+                }
+                Command::None
+            }
+            // The screen stays up until the game has started (`begin`).
+            Pressed::Playing => Command::Start(Start {
+                game: run.game,
+                slot: None,
+                keep: None,
+            }),
+            Pressed::Home => {
+                *self.crash.borrow_mut() = None;
+                self.redraw();
+                Command::None
+            }
+        }
+    }
+
+    /// Start the game run of `start`: `program` with `args`, its output in `<logs>/last_run.log`
+    /// and the player's `BB_*` settings in its environment. The child to wait for when it
+    /// started: the after-crash screen goes and the Running overlay comes. `None` when it did not
+    /// start: no run ended, so there is no after-run step; the after-crash screen, when the start
+    /// came from it, stays with the "could not start" note, and the status line says so.
+    fn begin(&self, start: &Start, program: &Path, args: &[String]) -> Option<Child> {
+        let started = match &self.folders {
+            Some(folders) => play::start(
+                program,
+                start.game,
+                args,
+                &settings_file::extra(&folders.settings()),
+                &folders.dirs.logs(),
+            ),
+            None => {
+                let mut command = std::process::Command::new(program);
+                command
+                    .args(args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+                no_console_window(&mut command);
+                command.spawn()
+            }
+        };
+        match started {
+            Ok(child) => {
+                *self.crash.borrow_mut() = None;
+                self.screen
+                    .borrow_mut()
+                    .running(&format!("Starting {}...", start.game.name()));
+                self.redraw();
+                Some(child)
+            }
+            Err(error) => {
+                let note = fill(Text::StartFailed.get(self.crash_lang()), &error.to_string());
+                if let Some(crash) = self.crash.borrow_mut().as_mut() {
+                    crash.note = note;
+                }
+                self.screen
+                    .borrow_mut()
+                    .finished(&run_status(start.game, Err(error)));
+                self.redraw();
+                None
+            }
+        }
+    }
+
     fn input(&self, input: Input) -> Cmd {
+        let crash = self.crash.borrow_mut().as_mut().map(|crash| match input {
+            Input::Move(nav) => crash.focus.nav(nav),
+            Input::Tab { back } => crash.focus.nav(if back { Nav::Up } else { Nav::Down }),
+            Input::Activate => crash.focus.activate(),
+            Input::Back => Effect::Close,
+            _ => Effect::None,
+        });
+        if let Some(effect) = crash {
+            return self.page_effect(effect);
+        }
         let about = self.about.borrow_mut().as_mut().map(|about| match input {
             Input::Move(nav) => about.nav(nav),
             Input::Tab { back } => about.nav(if back { Nav::Left } else { Nav::Right }),
@@ -520,8 +798,7 @@ impl Ui {
             _ => Effect::None,
         });
         if let Some(effect) = about {
-            self.page_effect(effect);
-            return Cmd::Screen(Command::None);
+            return self.page_effect(effect);
         }
         let mut fleet = self.fleet.borrow_mut();
         if fleet.is_open() {
@@ -533,8 +810,7 @@ impl Ui {
                 _ => Effect::None,
             };
             drop(fleet);
-            self.page_effect(effect);
-            return Cmd::Screen(Command::None);
+            return self.page_effect(effect);
         }
         drop(fleet);
         let command = match &mut *self.shown.borrow_mut() {
@@ -548,26 +824,32 @@ impl Ui {
     }
 
     /// `area` 7 is a button of About (`AboutFocus::click`), 8 an item of Fleet
-    /// (`FleetFocus::click`); the others are `Screen::click`'s.
+    /// (`FleetFocus::click`), 9 a button of the after-crash screen (`CrashFocus::click`); the
+    /// others are `Screen::click`'s.
     fn click(&self, area: i32, index: i32) -> Cmd {
         let Ok(index) = usize::try_from(index) else {
             return Cmd::Screen(Command::None);
         };
+        let crash = self.crash.borrow_mut().as_mut().map(|crash| match area {
+            9 => crash.focus.click(index),
+            _ => Effect::None,
+        });
+        if let Some(effect) = crash {
+            return self.page_effect(effect);
+        }
         let about = self.about.borrow_mut().as_mut().map(|about| match area {
             7 => about.click(index),
             _ => Effect::None,
         });
         if let Some(effect) = about {
-            self.page_effect(effect);
-            return Cmd::Screen(Command::None);
+            return self.page_effect(effect);
         }
         if self.fleet.borrow().is_open() {
             let effect = match area {
                 8 => self.fleet.borrow_mut().click(index),
                 _ => Effect::None,
             };
-            self.page_effect(effect);
-            return Cmd::Screen(Command::None);
+            return self.page_effect(effect);
         }
         let command = Cmd::Screen(self.screen.borrow_mut().click(area, index));
         self.opened(command)
@@ -620,15 +902,18 @@ impl Ui {
         self.redraw();
     }
 
-    /// Carry out what an input on About or Fleet means.
-    fn page_effect(&self, effect: Effect) {
+    /// Carry out what an input on About, Fleet or the after-crash screen means; an after-crash
+    /// button may start a game.
+    fn page_effect(&self, effect: Effect) -> Cmd {
         let Some(window) = self.window.upgrade() else {
-            return;
+            return Cmd::Screen(Command::None);
         };
         match effect {
             Effect::None => {}
             Effect::Focus(index) => window.set_about_focus(index as i32),
             Effect::FleetFocus(index) => window.set_fleet_focus(index as i32),
+            Effect::CrashFocus(index) => window.set_crash_focus(index as i32),
+            Effect::Press(index) => return Cmd::Screen(self.press(index)),
             Effect::Scroll(steps) => window.invoke_scroll_about(steps),
             Effect::NextLanguage => {
                 let mut lang = self.lang.borrow_mut();
@@ -636,10 +921,14 @@ impl Ui {
                 lang.show(&window);
             }
             Effect::Close => {
-                *self.about.borrow_mut() = None;
+                // B on the after-crash screen closes it alone.
+                if self.crash.borrow_mut().take().is_none() {
+                    *self.about.borrow_mut() = None;
+                }
                 self.redraw();
             }
         }
+        Cmd::Screen(Command::None)
     }
 }
 
@@ -831,6 +1120,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // First, before any thread (Slint's and gilrs's included): the host's library injection
     // out of this process, so `uncharted-universal play` and the game never inherit it.
     uncharted_core::host_env::clean_process();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = match parse_args(&args) {
+        Ok(args) => args,
+        Err(problem) => {
+            eprintln!(
+                "{problem}\nusage: uncharted-app [--play <u1|u2|u3> [-- <runtime arguments>]]"
+            );
+            std::process::exit(2);
+        }
+    };
     let window = AppWindow::new()?;
     let os = Os::current();
     let vars = Vars::from_lookup(os, |k| std::env::var(k).ok());
@@ -840,8 +1139,15 @@ fn main() -> Result<(), slint::PlatformError> {
             NO_RELAY.to_owned(),
             Some(AppDirs::new(vars)),
         ),
-        Err(err) => (Vec::new(), format!("Cannot find the saves: {err}"), None),
+        Err(err) => {
+            eprintln!("crash help is off: {err}");
+            (Vec::new(), format!("Cannot find the saves: {err}"), None)
+        }
     };
+    let folders = vars.as_ref().ok().map(|vars| Folders {
+        dirs: AppDirs::new(vars),
+        vars: vars.clone(),
+    });
     let settings_file = dirs.as_ref().map(AppDirs::settings);
     let setting = settings_file
         .as_deref()
@@ -863,6 +1169,8 @@ fn main() -> Result<(), slint::PlatformError> {
         lang: RefCell::new(lang),
         about: RefCell::default(),
         fleet: RefCell::new(FleetFocus::new(load_fleet())),
+        crash: RefCell::default(),
+        folders,
         window: window.as_weak(),
         pictures: RefCell::default(),
         now: Box::new(local_clock_now),
@@ -872,9 +1180,10 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // A finished game run comes back from its thread through this channel, the hardware probe
     // through the second and what the first run's jobs come to through the third.
-    let (done_tx, done_rx) = mpsc::channel::<String>();
+    let (done_tx, done_rx) = mpsc::channel::<(Game, String)>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
+    let run_args = args.run_args;
 
     let run: Rc<dyn Fn(Cmd)> = Rc::new({
         let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
@@ -948,21 +1257,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(config) = &config {
                     let _ = load::remember_started(config, start.game);
                 }
-                ui.screen
-                    .borrow_mut()
-                    .running(&format!("Starting {}...", start.game.name()));
-                ui.redraw();
+                let args = play::with_run_args(play_args(&start), &run_args);
+                let Some(child) = ui.begin(&start, &cli_path(), &args) else {
+                    return;
+                };
                 let done = done_tx.clone();
+                let logs = ui.folders.as_ref().map(|f| f.dirs.logs());
                 std::thread::spawn(move || {
-                    let mut command = std::process::Command::new(cli_path());
-                    command
-                        .args(play_args(&start))
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped());
-                    no_console_window(&mut command);
-                    let result = command.output();
-                    let _ = done.send(run_status(start.game, result));
+                    let result = match &logs {
+                        Some(logs) => {
+                            let mut child = child;
+                            child.wait().map(|status| std::process::Output {
+                                status,
+                                stdout: Vec::new(),
+                                stderr: std::fs::read(logs.join(RUN_LOG)).unwrap_or_default(),
+                            })
+                        }
+                        None => child.wait_with_output(),
+                    };
+                    let _ = done.send((start.game, run_status(start.game, result)));
                 });
             }
             Cmd::Saves(command) => {
@@ -1041,9 +1354,23 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    wire(&window, &ui, run, jobs.clone());
+    wire(&window, &ui, run.clone(), jobs.clone());
     if cx.as_ref().is_some_and(|cx| setup::is_first_run(&cx.dirs)) {
         ui.open_first(None, steam);
+    }
+
+    // A run the app started but did not see end (closed, or left by Game Mode).
+    let unfinished = ui
+        .folders
+        .as_ref()
+        .and_then(|folders| after_crash::unfinished(&folders.dirs.logs()));
+    let crash_up = unfinished.is_some_and(|game| ui.run_ended(game));
+    if let Some(game) = start_now(args.play, crash_up) {
+        run(Cmd::Screen(Command::Start(Start {
+            game,
+            slot: None,
+            keep: None,
+        })));
     }
 
     // Poll the controller, the game run, the probe and the first run's jobs on the UI thread;
@@ -1054,13 +1381,14 @@ fn main() -> Result<(), slint::PlatformError> {
         slint::TimerMode::Repeated,
         Duration::from_millis(16),
         move || {
-            if let Ok(status) = done_rx.try_recv() {
+            if let Ok((game, status)) = done_rx.try_recv() {
                 let games = load_all(&places.borrow());
                 let mut screen = ui.screen.borrow_mut();
                 screen.reload(games);
                 screen.finished(&status);
                 drop(screen);
                 ui.redraw();
+                ui.run_ended(game);
             }
             if let Ok(probe) = probe_rx.try_recv() {
                 let result = probe.and_then(|text| {
@@ -1108,6 +1436,7 @@ mod tests {
     use super::*;
     use i_slint_backend_testing::ElementHandle;
     use slint::Model;
+    use strings::Text;
 
     fn shows(window: &AppWindow, label: &str) -> bool {
         !ElementHandle::find_by_accessible_label(window, label)
@@ -1142,6 +1471,8 @@ mod tests {
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
             fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1222,6 +1553,8 @@ mod tests {
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
             fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1325,6 +1658,8 @@ mod tests {
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
             fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1416,6 +1751,8 @@ mod tests {
             about: RefCell::default(),
             shown: RefCell::new(Shown::Continue),
             fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1488,6 +1825,30 @@ mod tests {
             "Motor gráfico (nuestro fork, en gpu/)"
         );
 
+        // The after-crash screen speaks the chosen language, the d-pad moves its focus, and
+        // B closes it alone.
+        *ui.crash.borrow_mut() = Some(Crash {
+            focus: CrashFocus::new(3),
+            run: AfterCrash {
+                game: Game::U2,
+                chapter: None,
+                crash: "boom".into(),
+                known: None,
+            },
+            note: String::new(),
+        });
+        ui.redraw();
+        let heading = Text::Heading.get(strings::Lang::Es);
+        assert_eq!(window.get_page(), CRASH_PAGE);
+        assert_eq!(window.get_crash_heading(), heading);
+        assert!(shows(&window, heading));
+        assert_eq!(window.get_crash_buttons().row_count(), 3);
+        window.invoke_input(1);
+        assert_eq!(window.get_crash_focus(), 1);
+        window.invoke_input(7);
+        assert_eq!(window.get_page(), ABOUT_PAGE);
+        assert!(!shows(&window, heading));
+
         // Every language switches without an error.
         for _ in 0..6 {
             window.invoke_input(6);
@@ -1508,6 +1869,117 @@ mod tests {
         window.invoke_input(7);
         assert_eq!(window.get_page(), 0);
         assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn play_and_runtime_arguments() {
+        assert_eq!(parse_args(&[]), Ok(Args::default()));
+        assert_eq!(
+            parse_args(&args(&["--play", "U2", "--", "--force-fault", "x"])),
+            Ok(Args {
+                play: Some(Game::U2),
+                run_args: args(&["--force-fault", "x"]),
+            })
+        );
+        assert!(parse_args(&args(&["--play"])).is_err());
+        assert!(parse_args(&args(&["--play", "u9"])).is_err());
+        assert!(parse_args(&args(&["--fast"])).is_err());
+    }
+
+    #[test]
+    fn play_waits_for_the_after_crash_screen() {
+        // No pickup screen: --play starts its game at once.
+        assert_eq!(start_now(Some(Game::U2), false), Some(Game::U2));
+        // The pickup of an unfinished run showed the after-crash screen: keep it up.
+        assert_eq!(start_now(Some(Game::U2), true), None);
+        // Without --play nothing starts.
+        assert_eq!(start_now(None, false), None);
+        assert_eq!(start_now(None, true), None);
+    }
+
+    /// A game that does not start is no run (#343 Done-when 3): Play again on the after-crash
+    /// screen with a missing command line writes no playthrough record, leaves no run for the
+    /// next launch to pick up, and keeps the screen up with the "could not start" note.
+    #[test]
+    fn a_game_that_does_not_start_is_not_a_run() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("uncharted-app-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vars = Vars {
+            home: dir.join("home"),
+            data: dir.join("data"),
+            config: dir.join("config"),
+        };
+        let dirs = AppDirs::new(&vars);
+        let logs = dirs.logs();
+        let games = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            crash: RefCell::new(Some(Crash {
+                focus: CrashFocus::new(3),
+                run: AfterCrash {
+                    game: Game::U2,
+                    chapter: None,
+                    crash: "boom".into(),
+                    known: None,
+                },
+                note: String::new(),
+            })),
+            folders: Some(Folders { vars, dirs }),
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
+            let commands = commands.clone();
+            move |c| commands.borrow_mut().push(c)
+        });
+        wire(&window, &ui, run, Rc::new(|_| {}));
+        ui.redraw();
+        // An unknown crash: Report, Play again, Back. Play again asks for a start and the
+        // screen waits for it.
+        window.invoke_clicked(9, 1);
+        let start = match commands.borrow().last() {
+            Some(Cmd::Screen(Command::Start(start))) => *start,
+            other => panic!("Play again gave {other:?}"),
+        };
+        assert_eq!(start.game, Game::U2);
+        assert_eq!(window.get_page(), CRASH_PAGE);
+        // The command line is missing: the start fails.
+        let missing = dir.join("no-such-uncharted-universal");
+        let args = play_args(&start);
+        assert!(ui.begin(&start, &missing, &args).is_none());
+        assert_eq!(
+            window.get_page(),
+            CRASH_PAGE,
+            "the after-crash screen stays"
+        );
+        let note = window.get_crash_note().to_string();
+        assert!(note.starts_with("Could not start the game: "), "{note:?}");
+        assert!(
+            !logs.join(logs::PLAYTHROUGH_FILE).exists(),
+            "no playthrough record for a run that never ran"
+        );
+        assert_eq!(after_crash::unfinished(&logs), None);
+        let clock = Clock {
+            now: 0,
+            offset: &|_| 0,
+        };
+        let view = ui.screen.borrow().view(&clock);
+        assert_eq!(view.overlay, OverlayView::None, "no Running overlay");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

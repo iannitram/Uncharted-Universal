@@ -5,9 +5,10 @@
 // through `clicked(area, index)` (`Screen::click`; area 7 is About's buttons), on a page through
 // `page-clicked(row, col)`. The guided first run (roadmap 2.05, src/firstrun.rs) is a page over
 // everything while `mode` is 1. About (2.09) is drawn over the Continue screen while `page` is 3,
-// and Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; their texts are
-// `@tr(...)`, translated by the catalogues in lang/ (src/lang.rs). The Continue screen's texts
-// are English until they are in the catalogues.
+// and Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; the after-crash
+// screen (2.07, area 9) while it is 5. Their texts are `@tr(...)`, translated by the catalogues
+// in lang/ (src/lang.rs), except the after-crash screen's, which come from src/strings.rs. The
+// Continue screen's texts are English until they are in the catalogues.
 
 import { AboutSlint, LineEdit, ScrollView } from "std-widgets.slint";
 
@@ -306,6 +307,100 @@ component Licences inherits VerticalLayout {
     }
 }
 
+// A button whose label may wrap (the after-crash screen's are sentences).
+component MenuButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> focused;
+    callback activated();
+
+    min-height: 56px;
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #5a6270;
+    background: focused ? #2d3544 : #1f2430;
+    accessible-role: button;
+    accessible-label: root.label;
+    Text {
+        text: root.label;
+        color: white;
+        font-size: 18px;
+        wrap: word-wrap;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: 12px;
+        width: parent.width - 24px;
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+// The after-crash screen (roadmap 2.07): the game, the chapter, a plain sentence, what the
+// game said, and the buttons src/vm/after_crash.rs chose. Its texts come from Rust
+// (src/strings.rs) in the interface language.
+component AfterCrashPage inherits Rectangle {
+    in property <string> heading;
+    in property <string> game;
+    in property <string> chapter;
+    in property <string> summary;
+    in property <string> detail;
+    in property <string> note;
+    in property <[string]> buttons;
+    in property <int> focused-index;
+    callback activate(int);
+
+    border-radius: 12px;
+    background: #1a1f2a;
+    VerticalLayout {
+        padding: 24px;
+        spacing: 12px;
+        alignment: start;
+        Text {
+            text: root.heading;
+            color: #f2b134;
+            font-size: 28px;
+            font-weight: 700;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.game;
+            color: white;
+            font-size: 22px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.chapter;
+            color: #c8cfda;
+            font-size: 18px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.summary;
+            color: white;
+            font-size: 18px;
+            wrap: word-wrap;
+        }
+        Text {
+            text: root.detail;
+            color: #8a93a3;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+        for label[index] in root.buttons: MenuButton {
+            label: label;
+            focused: root.focused-index == index;
+            activated => { root.activate(index); }
+        }
+        Text {
+            text: root.note;
+            visible: root.note != "";
+            color: #c8cfda;
+            font-size: 16px;
+            wrap: word-wrap;
+        }
+    }
+}
+
 component AboutPage inherits Rectangle {
     // A name, never translated.
     in property <string> product: "Uncharted Universal";
@@ -462,8 +557,10 @@ export component AppWindow inherits Window {
     in property <[SideData]> sides;
     in property <int> side-index;
 
-    // About's focused button while About is open (`page` 3, `Ui::about` in src/main.rs).
+    // About's focused button while About is open (`page` 3, `Ui::about` in src/main.rs), and
+    // the after-crash screen's (`page` 5, `Ui::crash`).
     in property <int> about-focus;
+    in property <int> crash-focus;
     // The language button's value: a language's own name, or "Automatic (<name>)".
     in property <string> language-name;
     in property <string> version;
@@ -482,8 +579,35 @@ export component AppWindow inherits Window {
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
 
+    // The after-crash screen's texts (src/strings.rs), in the interface language; its buttons
+    // click as area 9.
+    in property <string> crash-heading;
+    in property <string> crash-game;
+    in property <string> crash-chapter;
+    in property <string> crash-summary;
+    in property <string> crash-detail;
+    in property <string> crash-note;
+    in property <[string]> crash-buttons;
+
+    // The clipboard: Slint has no clipboard call in Rust, so a hidden text field copies.
+    public function copy-text(text: string) {
+        clip.text = text;
+        clip.select-all();
+        clip.copy();
+        clip.clear-selection();
+    }
+
+    clip := TextInput {
+        x: 0px;
+        y: 0px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        read-only: true;
+    }
+
     // The page over the Continue screen: 0 none, 1 Saves, 2 Settings (`Shown::code`), 3 About
-    // (`ABOUT_PAGE`), 4 Fleet (`FLEET_PAGE`). The Saves and Settings focus is a row and a column (`focus::Grid`); their
+    // (`ABOUT_PAGE`), 4 Fleet (`FLEET_PAGE`), 5 the after-crash screen (`CRASH_PAGE`). The Saves and Settings focus is a row and a column (`focus::Grid`); their
     // clicks are `page-clicked(row, col)`, with row -1 the game strip, -2 the prompt (col 0
     // confirm, 1 cancel) and -3 the Back button.
     in property <int> page: 0;
@@ -1506,6 +1630,25 @@ export component AppWindow inherits Window {
                     activated => { root.clicked(8, root.fleet-back-index); }
                 }
             }
+        }
+
+        // The after-crash screen (2.07), after a run that crashed; the first run, while open,
+        // takes all input, so the screen waits under it.
+        AfterCrashPage {
+            x: 24px;
+            y: 24px;
+            width: root.width - 48px;
+            height: root.height - 48px;
+            visible: root.page == 5 && root.mode == 0;
+            heading: root.crash-heading;
+            game: root.crash-game;
+            chapter: root.crash-chapter;
+            summary: root.crash-summary;
+            detail: root.crash-detail;
+            note: root.crash-note;
+            buttons: root.crash-buttons;
+            focused-index: root.crash-focus;
+            activate(index) => { root.clicked(9, index); }
         }
     }
 }
