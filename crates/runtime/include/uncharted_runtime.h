@@ -11,8 +11,9 @@
 // Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
 // [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 // (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
-// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02).
-#define UNCHARTED_RUNTIME_ABI_VERSION 3
+// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
+// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
+#define UNCHARTED_RUNTIME_ABI_VERSION 4
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -95,6 +96,39 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 // # Safety
 // `name` is null or a NUL-terminated string.
 const char *runtime_import_name(const char *name);
+
+#if defined(__x86_64__)
+// Sets the content profile (`--content-profile`: five integer app parameters, the first 1
+// or 3) before the game loads AppContent. Null, another first value, or a call after the
+// load ends the process (exit code 1).
+//
+// # Safety
+// `values` is null or points to five `uint32_t`.
+void runtime_content_configure(const uint32_t *values);
+#endif
+
+#if defined(__x86_64__)
+// The host function for a guest import of the module or AppContent libraries, or 0.
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_content_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// AppContent's references, initialization and query counters, on stdout.
+void runtime_content_report(void);
+#endif
+
+#if defined(__x86_64__)
+// `BB_GAME_RES`: rewrites the display configuration the game initializes, the memory
+// budget and the movie frame buffers in the loaded executable (`image_size` bytes at
+// `image`), from the process environment; prints a `Display:` line per change.
+//
+// # Safety
+// `image` is null or points to `image_size` writable bytes.
+void runtime_display_patch(uint8_t *image, uint64_t image_size);
+#endif
 
 #if defined(__x86_64__)
 // The address of the guest `sceRtc*` function behind the scoped import `name`, or 0 (the C

@@ -405,8 +405,8 @@ POOL_HEADROOM_MIB = 1000
 
 
 def game_res(env):
-    """BB_GAME_RES=WxH: the game renders and displays at that size (runtime_display.c patches its
-    display configuration). Its render target heaps grow with the pixel count: BB_GAME_RT_MB and
+    """BB_GAME_RES=WxH: the game renders and displays at that size (crates/runtime/src/display.rs
+    patches its display configuration). Its render target heaps grow with the pixel count: BB_GAME_RT_MB and
     BB_GAME_RT2_MB are the extra MiB of the two heaps, BB_GAME_FREE_MB the unreserved GPU memory
     given up to keep the pool below the 4 GiB the game's arena can address, BB_DMEM_MB the system
     direct memory (retail PS4: 5056 MiB) that holds the bigger pool. All can be set by hand."""

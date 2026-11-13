@@ -25,7 +25,7 @@ use std::ffi::{c_char, c_void, CStr};
 // The C functions the runtime calls, not ones it exports.
 /// cbindgen:ignore
 #[cfg(target_arch = "x86_64")]
-mod host;
+pub(crate) mod host;
 #[cfg(target_arch = "x86_64")]
 pub mod libc;
 
@@ -34,8 +34,9 @@ pub mod libc;
 /// Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
 /// [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 /// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
-/// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 3;
+/// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
+/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 4;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -173,7 +174,7 @@ mod tests {
 
     #[test]
     fn version_is_raised_with_each_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 3);
+        assert_eq!(ffi::uncharted_runtime_version(), 4);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION
