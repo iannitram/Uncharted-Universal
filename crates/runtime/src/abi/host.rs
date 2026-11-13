@@ -1,8 +1,8 @@
 //! What [`super::libc`] calls on the C side: C stdio (the loader's stdout is unbuffered C stdio,
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
-//! the C modules' resolvers and reports and `runtime_quit`. Without the loader the chain is
-//! empty, the reports print nothing and quitting flushes stdio and ends the process at once, as
+//! the C modules' resolvers and reports and `runtime_quit`. Without the loader the chain holds
+//! only the modules already in Rust, the reports print nothing and quitting flushes stdio and ends the process at once, as
 //! `tests/test_runtime.c`'s `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -78,7 +78,6 @@ mod loader {
         pub fn runtime_mutex_resolve(name: *const c_char) -> usize;
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         pub fn runtime_content_resolve(name: *const c_char) -> usize;
-        pub fn runtime_time_resolve(name: *const c_char) -> usize;
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -88,7 +87,6 @@ mod loader {
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
-        pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_file_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
@@ -112,10 +110,12 @@ mod loader {
     }
 }
 
-/// The C modules' resolvers in `runtime.c`'s order, then the GPU library: the first that knows
-/// `name` answers.
+/// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
+/// `time` and `rtc`, piece 3.02), then the GPU library: the first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
+    use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
         runtime_mutex_resolve,
@@ -145,10 +145,10 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .find(|&address| address != 0)
 }
 
+/// Without the loader only the Rust modules answer, in the same order.
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    let _ = name;
-    None
+    crate::time::resolve(name).or_else(|| crate::rtc::resolve(name))
 }
 
 /// The C modules' report lines, in `runtime.c`'s order.
