@@ -102,8 +102,9 @@ that a running game can be A/B tested without a rebuild:
 - `BB_BENCHMARK=<seconds>` — benchmark mode (#173/#242): the game starts from the newest save
   (else the first chapter), a scripted pad path runs the camera, and after the time `benchmark.json`
   (frame times, video memory, the game and settings) is written to the `--user` folder
-  (`BB_USER_DIR`, default `user/`) and the process exits. `BB_EXE` names the game. Needs a build
-  with cargo (the logic is `crates/runtime/src/benchmark_run.rs`); off when unset.
+  (`BB_USER_DIR`, default `user/`) and the process exits. `BB_EXE` names the game. The logic is
+  `crates/runtime/src/benchmark_run.rs`, in every build since the loader links `crates/runtime`
+  (3.05); off when unset.
 - `BB_CAPTURE_TRIGGER=<file>` — dump one frame's passes, targets, shaders and
   constants. This is the main tool for understanding what the game is doing.
 - `BB_WATCH`, `BB_POKE` — loader debugging.

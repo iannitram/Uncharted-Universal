@@ -5,7 +5,9 @@
  * reserved as one placeholder that views of the section replace (VirtualAlloc2/MapViewOfFile3,
  * as shadPS4 does); see the "host mappings" section below.
  * Guest addresses are placed below 1 TiB (PS4 user range): GPU descriptors
- * encode 40-bit addresses, so host-default 0x7f... addresses would not fit. */
+ * encode 40-bit addresses, so host-default 0x7f... addresses would not fit.
+ * Windows only until piece 3.15: Linux builds crates/runtime/src/memory.rs (piece 3.12, same
+ * symbols) instead, so a change here must be made there too until this file is deleted. */
 #define _GNU_SOURCE
 #include "runtime.h"
 #include <stdio.h>
@@ -854,9 +856,7 @@ void *runtime_image_map(size_t size, int prot) {
 uint64_t runtime_disabled_optimizations;
 /* A second number in the file: more toggles (gpu/shim/bbport_toggles.h, BbToggle::Disabled2). */
 uint64_t runtime_disabled_optimizations2;
-/* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
- * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
-__thread sigjmp_buf *runtime_fault_recover;
+/* runtime_fault_recover, the speculative readers' recovery point, is in runtime_fault.c. */
 static void *toggle_watcher(void *path) {
     for (unsigned long long last=ULLONG_MAX,last2=ULLONG_MAX;;) {
         FILE *f=fopen(path,"r");

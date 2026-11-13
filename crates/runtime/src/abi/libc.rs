@@ -85,7 +85,7 @@ fn handlers() -> MutexGuard<'static, Vec<ExitHandler>> {
 }
 
 /// `STOP:` and the loader's exit code 21 (an unsupported guest request).
-fn stop(message: &str) -> ! {
+pub(crate) fn stop(message: &str) -> ! {
     host::err(message);
     host::quit(21)
 }
@@ -484,6 +484,22 @@ mod tests {
         assert_eq!(resolve(c"188x57JYp0g#I#J", false), None);
         assert_eq!(resolve(c"188x57JYp0g#p#J", true), None);
         assert_eq!(resolve(c"dQHWEsJtoE4#q#q", false), None);
+    }
+
+    #[test]
+    fn rust_modules_answer_after_the_libc_contracts() {
+        let _guard = enabled();
+        // `gettimeofday` (libScePosix) is `time`'s; `sceRtcGetTick` is `rtc`'s.
+        assert_eq!(
+            resolve(c"n88vx3C5nW8#I#J", false),
+            crate::time::resolve(c"n88vx3C5nW8#I#J")
+        );
+        assert_eq!(
+            resolve(c"8w-H19ip48I#H#I", false),
+            crate::rtc::resolve(c"8w-H19ip48I#H#I")
+        );
+        assert!(resolve(c"8w-H19ip48I#H#I", false).is_some());
+        assert_eq!(resolve(c"8w-H19ip48I#H#I", true), None);
     }
 
     #[test]

@@ -287,7 +287,15 @@ mod tests {
             seconds: i64::MAX,
             nanoseconds: 999_999_999,
         };
-        assert_eq!(far.deadline(), Ok(None));
+        // Past `Instant`'s range on Windows and macOS (no deadline); Linux's monotonic clock
+        // reaches that far, so there it is a deadline centuries away. Either never times out.
+        match far.deadline() {
+            Ok(None) => {}
+            Ok(Some(at)) => {
+                assert!(at > Instant::now() + Duration::from_secs(100 * 365 * 24 * 60 * 60))
+            }
+            Err(error) => panic!("far deadline refused: {error}"),
+        }
     }
 
     #[test]

@@ -1,17 +1,215 @@
-// The launcher window. The .slint file only draws; focus order and button handling live in
-// Rust (src/focus.rs, ADR 0003). Keys become `Nav` through the `nav` callback; the controller
-// reaches the same callbacks from src/input.rs.
+// The launcher window: the Continue screen (docs/continue-screen.md, roadmap 2.04) and the
+// Saves and Settings pages over it (roadmap 2.06). The .slint file only draws; the view models,
+// focus and button handling live in Rust (src/screen.rs, src/vm/, src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
+// `Input::from_code`); the controller reaches the same handler from src/input.rs; clicks go
+// through `clicked(area, index)` (`Screen::click`; area 7 is About's buttons), on a page through
+// `page-clicked(row, col)`. About (2.09) is drawn over the Continue screen while `page` is 3, and
+// Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; their texts are
+// `@tr(...)`, translated by the catalogues in lang/ (src/lang.rs). The Continue screen's texts
+// are English until they are in the catalogues.
 
-component PlaceholderButton inherits Rectangle {
+import { AboutSlint, ScrollView } from "std-widgets.slint";
+
+export struct PatchRow {
+    name: string,
+    author: string,
+    status: string,
+    available: bool,
+}
+
+export struct LicenceRow {
+    name: string,
+    licence: string,
+    role: string,
+}
+
+export struct CardData {
+    title: string,
+    lines: [string],
+    picture: image,
+    has-picture: bool,
+    // The game's name over the fallback picture or the plain panel; empty over a save's own.
+    picture-label: string,
+}
+
+export struct ButtonData {
+    label: string,
+    // The controller button shown before the label ("A", "Y"), or empty.
+    hint: string,
+}
+
+export struct RowData {
+    picture: image,
+    has-picture: bool,
+    title: string,
+    detail: string,
+    when: string,
+    device: string,
+    slot: string,
+    note: string,
+}
+
+export struct SideData {
+    heading: string,
+    newer: bool,
+    picture: image,
+    has-picture: bool,
+    title: string,
+    lines: [string],
+}
+
+// One row of the Saves page: a slot or a backup, with its buttons.
+export struct SlotRowData {
+    title: string,
+    detail: string,
+    mark: string,
+    buttons: [string],
+}
+
+// One display card of the Settings page.
+export struct TuneCardData {
+    title: string,
+    lines: [string],
+    in-use: bool,
+}
+
+// One choice row of the Settings page.
+export struct ChoiceData {
+    label: string,
+    value: string,
+    can-prev: bool,
+    can-next: bool,
+}
+
+global Theme {
+    out property <color> page: #12151c;
+    out property <color> panel: #1a1f2a;
+    out property <color> button: #1f2430;
+    out property <color> button-focused: #2d3544;
+    out property <color> edge: #5a6270;
+    out property <color> accent: #f2b134;
+    out property <color> text: #ffffff;
+    out property <color> dim: #8a93a3;
+}
+
+// A picture panel: the image scaled to fit, never stretched, with the game's name over it
+// when it is the fallback; a plain panel with the name when there is no picture.
+component Picture inherits Rectangle {
+    in property <image> source;
+    in property <bool> has-source;
+    in property <string> label;
+    in property <length> unit;
+
+    border-radius: self.unit * 0.5;
+    background: Theme.panel;
+    clip: true;
+    if root.has-source: Image {
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        image-fit: contain;
+    }
+    if root.label != "": Text {
+        width: parent.width;
+        height: parent.height;
+        text: root.label;
+        color: Theme.text;
+        font-size: root.has-source ? root.unit * 1.4 : root.unit * 2.2;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
+component FocusButton inherits Rectangle {
+    in property <string> label;
+    in property <string> hint;
+    in property <bool> focused;
+    in property <length> unit;
+    callback clicked();
+
+    min-height: self.unit * 2.6;
+    min-width: label-text.preferred-width + self.unit * 2;
+    border-radius: self.unit * 0.4;
+    border-width: self.focused ? 3px : 1px;
+    border-color: self.focused ? Theme.accent : Theme.edge;
+    background: self.focused ? Theme.button-focused : Theme.button;
+    label-text := Text {
+        text: root.hint == "" ? root.label : root.hint + "  " + root.label;
+        color: Theme.text;
+        font-size: root.unit;
+    }
+    TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// The card's text: title, then one line per known field.
+component CardText inherits VerticalLayout {
+    in property <CardData> card;
+    in property <length> unit;
+
+    spacing: self.unit * 0.3;
+    alignment: center;
+    Text {
+        text: root.card.title;
+        color: Theme.text;
+        font-size: root.unit * 1.6;
+        font-weight: 700;
+        overflow: elide;
+    }
+    for line in root.card.lines: Text {
+        text: line;
+        color: Theme.dim;
+        font-size: root.unit;
+        overflow: elide;
+    }
+}
+
+// A prompt over the screen: a dimmed page that takes every click, and a centred box.
+component Prompt inherits Rectangle {
+    in property <length> unit;
+    background: #000000b0;
+    TouchArea { }
+    VerticalLayout {
+        alignment: center;
+        padding: root.unit * 2;
+        Rectangle {
+            background: Theme.panel;
+            border-radius: root.unit * 0.6;
+            border-width: 1px;
+            border-color: Theme.edge;
+            VerticalLayout {
+                padding: root.unit * 1.2;
+                spacing: root.unit * 0.8;
+                @children
+            }
+        }
+    }
+}
+
+component Hint inherits Text {
+    in property <length> unit;
+    color: Theme.dim;
+    font-size: self.unit * 0.9;
+}
+
+component LauncherButton inherits Rectangle {
     in property <string> label;
     in property <bool> focused;
     callback activated();
 
     height: 56px;
+    min-width: 160px;
     border-radius: 8px;
     border-width: focused ? 3px : 1px;
     border-color: focused ? #f2b134 : #5a6270;
     background: focused ? #2d3544 : #1f2430;
+    accessible-role: button;
+    accessible-label: root.label;
     Text {
         text: root.label;
         color: white;
@@ -22,68 +220,1156 @@ component PlaceholderButton inherits Rectangle {
     }
 }
 
+// One paired device, as src/vm/fleet.rs formats it.
+export struct FleetRow {
+    name: string,
+    detail: string,
+    sync: string,
+    free: string,
+}
+
+component FleetRowView inherits Rectangle {
+    in property <FleetRow> device;
+    in property <bool> focused;
+    callback activated();
+
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #2d3544;
+    background: focused ? #2d3544 : #1a1f2a;
+    HorizontalLayout {
+        padding: 12px;
+        spacing: 16px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 4px;
+            Text {
+                text: root.device.name;
+                color: white;
+                font-size: 18px;
+            }
+            Text {
+                text: root.device.detail;
+                color: #c3cad6;
+                font-size: 14px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            Text {
+                text: root.device.sync;
+                color: #c3cad6;
+                font-size: 14px;
+                horizontal-alignment: right;
+            }
+            Text {
+                text: root.device.free;
+                color: #8a93a3;
+                font-size: 14px;
+                horizontal-alignment: right;
+            }
+        }
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+component Heading inherits Text {
+    color: #f2b134;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+component Body inherits Text {
+    color: #c8cdd6;
+    font-size: 14px;
+    wrap: word-wrap;
+}
+
+component Licences inherits VerticalLayout {
+    in property <[LicenceRow]> rows;
+    spacing: 6px;
+    for row in root.rows: VerticalLayout {
+        Text {
+            text: row.name + "  ·  " + row.licence;
+            color: white;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+        Body {
+            text: row.role;
+            color: #8a93a3;
+        }
+    }
+}
+
+component AboutPage inherits Rectangle {
+    // A name, never translated.
+    in property <string> product: "Uncharted Universal";
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped;
+    in property <[LicenceRow]> learned;
+    // The language button's value, and which of the two buttons has focus (`AboutFocus`).
+    in property <string> language-name;
+    in property <int> focused-index;
+    // A click on button <int>: 0 the language button, 1 Back.
+    callback clicked(int);
+
+    // Up and down on the controller: one step is a few lines.
+    public function scroll(steps: int) {
+        view.content-y = clamp(view.content-y + steps * 64px, min(0px, view.visible-height - view.content-height), 0px);
+    }
+
+    VerticalLayout {
+        spacing: 16px;
+
+        view := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 12px;
+
+                Text {
+                    text: @tr("About");
+                    color: white;
+                    font-size: 28px;
+                    font-weight: 700;
+                }
+                Body {
+                    text: root.product + "  ·  " + @tr("Version {}", root.version);
+                }
+                Body {
+                    text: @tr("Uncharted Universal is free software under the GNU General Public License, version 2 only.");
+                }
+
+                Heading { text: @tr("Patches"); }
+                if root.patches.length == 0: Body {
+                    text: @tr("No patches yet: the patches of a prepared game are listed here.");
+                }
+                for patch in root.patches: VerticalLayout {
+                    Text {
+                        text: patch.name + (patch.author == "" ? "" : "  ·  " + patch.author);
+                        color: patch.available ? white : #8a93a3;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                    }
+                    Body {
+                        text: patch.status;
+                        color: patch.available ? #9fd49f : #8a93a3;
+                    }
+                }
+
+                Heading { text: @tr("Licences"); }
+                Licences { rows: root.shipped; }
+                Body {
+                    text: @tr("Each bundled library's licence text is in the licenses folder next to the app.");
+                }
+
+                Heading { text: @tr("Learned from"); }
+                Body {
+                    text: @tr("Studied for how they work; no code was copied from them.");
+                }
+                Licences { rows: root.learned; }
+
+                Heading { text: @tr("Built with Slint"); }
+                // Slint's royalty-free licence asks for this notice on the About screen.
+                Body {
+                    text: @tr("This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).");
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    AboutSlint {
+                        max-width: 320px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: space-between;
+            // The language button is here until Settings (2.06) exists (owner ruling 2026-11-12).
+            LauncherButton {
+                label: @tr("Language: {}", root.language-name);
+                focused: root.focused-index == 0;
+                activated => { root.clicked(0); }
+            }
+            LauncherButton {
+                label: @tr("Back");
+                focused: root.focused-index == 1;
+                activated => { root.clicked(1); }
+            }
+            Body {
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                text: @tr("Up and down scroll. A or B goes back.");
+                color: #8a93a3;
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "Uncharted Universal";
     min-width: 640px;
     min-height: 400px;
     preferred-width: 960px;
     preferred-height: 600px;
-    background: #12151c;
+    background: Theme.page;
 
-    in-out property <int> focused-index: 0;
-    // 0 = Up, 1 = Down, 2 = Left, 3 = Right (see `Nav` in src/focus.rs).
-    callback nav(int);
-    callback activate(int);
+    // Text sizes come from the window height, so 1280 x 800 and 4K read the same. Set from
+    // `changed` handlers, not bindings: a binding on the window size would loop through the
+    // layout (the text size feeds the window's own size hints).
+    property <length> unit: 600px / 38;
+    // Narrower than 4:3: the picture goes above the text.
+    property <bool> narrow: false;
+
+    function fit() {
+        root.unit = max(11px, root.height / 38);
+        root.narrow = root.width * 3 < root.height * 4;
+    }
+    init => {
+        root.fit();
+    }
+    changed width => {
+        root.fit();
+    }
+    changed height => {
+        root.fit();
+    }
+
+    in property <[string]> games;
+    in property <int> current-game;
+    in property <CardData> card;
+    in property <[ButtonData]> actions;
+    in property <[string]> pages;
+    // 0 = the action row, 1 = the page row (`Row::code`).
+    in property <int> focus-row;
+    in property <int> focus-index;
+    in property <string> status;
+
+    // 0 none, 1 quit, 2 other saves, 3 conflict, 4 build warning, 5 running
+    // (`OverlayView::code`).
+    in property <int> overlay;
+    in property <string> overlay-title;
+    in property <string> overlay-text;
+    in property <[RowData]> rows;
+    in property <int> row-index;
+    in property <[SideData]> sides;
+    in property <int> side-index;
+
+    // About's focused button while About is open (`page` 3, `Ui::about` in src/main.rs).
+    in property <int> about-focus;
+    // The language button's value: a language's own name, or "Automatic (<name>)".
+    in property <string> language-name;
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped-licences;
+    in property <[LicenceRow]> learned-licences;
+    in property <[FleetRow]> fleet-rows;
+    in property <int> fleet-focus: 0;
+    in property <int> fleet-back-index: 0;
+    in property <string> fleet-warning;
+    in property <string> fleet-empty;
+
+    // 0 Up, 1 Down, 2 Left, 3 Right, 4 Tab, 5 Shift+Tab, 6 A, 7 B, 8 LB, 9 RB, 10 Y
+    // (`Input::from_code`).
+    callback input(int);
+    // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
+    callback clicked(int, int);
+
+    // The page over the Continue screen: 0 none, 1 Saves, 2 Settings (`Shown::code`), 3 About
+    // (`ABOUT_PAGE`), 4 Fleet (`FLEET_PAGE`). The Saves and Settings focus is a row and a column (`focus::Grid`); their
+    // clicks are `page-clicked(row, col)`, with row -1 the game strip, -2 the prompt (col 0
+    // confirm, 1 cancel) and -3 the Back button.
+    in property <int> page: 0;
+    in property <int> page-row;
+    in property <int> page-col;
+    in property <string> page-status;
+    callback page-clicked(int, int);
+
+    // Saves: the games, the slot rows, then the backup rows (their focus rows follow the
+    // slots'), what save-relay syncs, and the delete prompt's question ("" when closed).
+    in property <[string]> page-games;
+    in property <int> page-game;
+    in property <[SlotRowData]> save-slots;
+    in property <[SlotRowData]> save-backups;
+    in property <string> saves-relay;
+    in property <string> saves-confirm;
+
+    // Settings: row 0 the cards, row 1 Tune this device, rows 2.. the choices.
+    in property <[TuneCardData]> tune-cards;
+    in property <[ChoiceData]> choices;
+    in property <[string]> setting-notes;
+    in property <bool> tuning;
+
+    // Keep the focused row of a page in sight: `y` and `h` in the page's list.
+    function follow(y: length, h: length) {
+        if (y < -list.content-y) {
+            list.content-y = -y;
+        } else if (y + h > -list.content-y + list.height) {
+            list.content-y = list.height - y - h;
+        }
+    }
+    function follow-focus() {
+        if (root.page == 1) {
+            root.follow(root.page-row * (root.unit * 3.4), root.unit * 3);
+        } else if (root.page == 2) {
+            root.follow(
+                root.page-row == 0 ? 0 : root.page-row == 1 ? root.unit * 9 : root.unit * (12.6 + (root.page-row - 2) * 2.9),
+                root.page-row == 0 ? root.unit * 8.6 : root.unit * 2.8);
+        }
+    }
+    changed page-row => {
+        root.follow-focus();
+    }
+    changed page => {
+        list.content-y = 0;
+    }
+
+    public function scroll-about(steps: int) {
+        if (root.page == 3) {
+            about.scroll(steps);
+        }
+    }
 
     FocusScope {
-        init => { self.focus(); }
+        init => {
+            self.focus();
+        }
         key-pressed(event) => {
-            if (event.text == Key.UpArrow) { root.nav(0); return accept; }
-            if (event.text == Key.DownArrow) { root.nav(1); return accept; }
-            if (event.text == Key.LeftArrow) { root.nav(2); return accept; }
-            if (event.text == Key.RightArrow) { root.nav(3); return accept; }
-            if (event.text == Key.Tab) { root.nav(1); return accept; }
-            if (event.text == Key.Backtab) { root.nav(0); return accept; }
-            if (event.text == Key.Return || event.text == " ") { root.activate(root.focused-index); return accept; }
+            if (event.text == Key.UpArrow) {
+                root.input(0);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.input(1);
+                return accept;
+            }
+            if (event.text == Key.LeftArrow) {
+                root.input(2);
+                return accept;
+            }
+            if (event.text == Key.RightArrow) {
+                root.input(3);
+                return accept;
+            }
+            if (event.text == Key.Tab) {
+                root.input(4);
+                return accept;
+            }
+            if (event.text == Key.Backtab) {
+                root.input(5);
+                return accept;
+            }
+            if (event.text == Key.Return || event.text == " ") {
+                root.input(6);
+                return accept;
+            }
+            if (event.text == Key.Escape) {
+                root.input(7);
+                return accept;
+            }
+            if (event.text == Key.PageUp) {
+                root.input(8);
+                return accept;
+            }
+            if (event.text == Key.PageDown) {
+                root.input(9);
+                return accept;
+            }
+            if (event.text == "o" || event.text == "O") {
+                root.input(10);
+                return accept;
+            }
             reject
         }
 
         VerticalLayout {
-            padding: 24px;
-            spacing: 16px;
+            padding: root.unit;
+            spacing: root.unit * 0.8;
+            visible: root.page == 0;
 
-            // Placeholder for the Continue screen (piece 2.04).
-            Rectangle {
+            // The game strip: LB / RB change game.
+            HorizontalLayout {
+                spacing: root.unit * 0.6;
+                Hint {
+                    unit: root.unit;
+                    text: "LB";
+                    vertical-alignment: center;
+                }
+                for name[i] in root.games: Rectangle {
+                    horizontal-stretch: 1;
+                    min-height: root.unit * 2;
+                    border-radius: root.unit * 0.3;
+                    background: i == root.current-game ? Theme.button-focused : transparent;
+                    border-width: i == root.current-game ? 2px : 0px;
+                    border-color: Theme.accent;
+                    Text {
+                        text: name;
+                        color: i == root.current-game ? Theme.text : Theme.dim;
+                        font-size: root.unit * 1.1;
+                        font-weight: i == root.current-game ? 700 : 400;
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.clicked(2, i);
+                        }
+                    }
+                }
+                Hint {
+                    unit: root.unit;
+                    text: "RB";
+                    vertical-alignment: center;
+                }
+            }
+
+            // The save card: picture left of the text, or above it in a narrow window.
+            if !root.narrow: HorizontalLayout {
                 vertical-stretch: 1;
-                border-radius: 12px;
-                background: #1a1f2a;
+                spacing: root.unit * 1.2;
+                // About two fifths picture, three fifths text.
+                Picture {
+                    horizontal-stretch: 2;
+                    source: root.card.picture;
+                    has-source: root.card.has-picture;
+                    label: root.card.picture-label;
+                    unit: root.unit;
+                }
+                CardText {
+                    horizontal-stretch: 3;
+                    card: root.card;
+                    unit: root.unit;
+                }
+            }
+            if root.narrow: VerticalLayout {
+                vertical-stretch: 1;
+                spacing: root.unit * 0.6;
+                Picture {
+                    vertical-stretch: 1;
+                    source: root.card.picture;
+                    has-source: root.card.has-picture;
+                    label: root.card.picture-label;
+                    unit: root.unit;
+                }
+                CardText {
+                    card: root.card;
+                    unit: root.unit;
+                }
+            }
+
+            // The action row.
+            HorizontalLayout {
+                alignment: center;
+                spacing: root.unit;
+                for action[i] in root.actions: FocusButton {
+                    label: action.label;
+                    hint: action.hint;
+                    unit: root.unit;
+                    focused: root.overlay == 0 && root.focus-row == 0 && root.focus-index == i;
+                    clicked => {
+                        root.clicked(0, i);
+                    }
+                }
+            }
+
+            // The page row.
+            HorizontalLayout {
+                alignment: start;
+                spacing: root.unit * 0.8;
+                for page[i] in root.pages: FocusButton {
+                    label: page;
+                    unit: root.unit * 0.9;
+                    focused: root.overlay == 0 && root.focus-row == 1 && root.focus-index == i;
+                    clicked => {
+                        root.clicked(1, i);
+                    }
+                }
+            }
+
+            // The status line.
+            HorizontalLayout {
+                Hint {
+                    unit: root.unit;
+                    text: root.status;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Hint {
+                    unit: root.unit;
+                    text: "B  Quit";
+                }
+            }
+        }
+
+        // A page over the Continue screen: Saves or Settings. Opaque, and it takes every click
+        // the page itself does not.
+        Rectangle {
+            visible: root.page == 1 || root.page == 2;
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            background: Theme.page;
+            TouchArea { }
+            VerticalLayout {
+                padding: root.unit;
+                spacing: root.unit * 0.8;
+
+                HorizontalLayout {
+                    spacing: root.unit * 0.8;
+                    FocusButton {
+                        label: "Back";
+                        hint: "B";
+                        unit: root.unit * 0.9;
+                        clicked => {
+                            root.page-clicked(-3, 0);
+                        }
+                    }
+                    Text {
+                        text: root.page == 1 ? "Saves" : "Settings";
+                        color: Theme.text;
+                        font-size: root.unit * 1.6;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Saves: the game strip, as on the Continue screen.
+                if root.page == 1: HorizontalLayout {
+                    spacing: root.unit * 0.6;
+                    Hint {
+                        unit: root.unit;
+                        text: "LB";
+                        vertical-alignment: center;
+                    }
+                    for name[i] in root.page-games: Rectangle {
+                        horizontal-stretch: 1;
+                        min-height: root.unit * 2;
+                        border-radius: root.unit * 0.3;
+                        background: i == root.page-game ? Theme.button-focused : transparent;
+                        border-width: i == root.page-game ? 2px : 0px;
+                        border-color: Theme.accent;
+                        Text {
+                            text: name;
+                            color: i == root.page-game ? Theme.text : Theme.dim;
+                            font-size: root.unit * 1.1;
+                            font-weight: i == root.page-game ? 700 : 400;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.page-clicked(-1, i);
+                            }
+                        }
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: "RB";
+                        vertical-alignment: center;
+                    }
+                }
+
+                list := Flickable {
+                    vertical-stretch: 1;
+                    content-height: root.page == 1 ? saves-list.preferred-height : settings-list.preferred-height;
+
+                    // Saves: one row per slot, then one per backup, newest first.
+                    saves-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 1;
+                        spacing: root.unit * 0.4;
+                        for row[r] in root.save-slots: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: r == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    HorizontalLayout {
+                                        spacing: root.unit * 0.6;
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.text;
+                                            font-size: root.unit;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                        if row.mark != "": Text {
+                                            text: row.mark;
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && r == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(r, c);
+                                    }
+                                }
+                            }
+                        }
+                        if root.save-backups.length > 0: Text {
+                            text: "Backups";
+                            color: Theme.text;
+                            font-size: root.unit * 1.1;
+                            font-weight: 700;
+                        }
+                        for row[b] in root.save-backups: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: root.save-slots.length + b == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text {
+                                        text: row.title;
+                                        color: Theme.text;
+                                        font-size: root.unit;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && root.save-slots.length + b == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(root.save-slots.length + b, c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Settings: the three cards, Tune this device, the choices, the notes.
+                    settings-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 2;
+                        spacing: root.unit * 0.4;
+                        HorizontalLayout {
+                            spacing: root.unit * 0.6;
+                            for card[i] in root.tune-cards: Rectangle {
+                                horizontal-stretch: 1;
+                                min-height: root.unit * 8.6;
+                                border-radius: root.unit * 0.4;
+                                border-width: root.page-row == 0 && root.page-col == i ? 3px : 1px;
+                                border-color: root.page-row == 0 && root.page-col == i ? Theme.accent : Theme.edge;
+                                background: root.page-row == 0 && root.page-col == i ? Theme.button-focused : Theme.button;
+                                VerticalLayout {
+                                    padding: root.unit * 0.5;
+                                    spacing: root.unit * 0.2;
+                                    HorizontalLayout {
+                                        Text {
+                                            text: card.title;
+                                            color: Theme.text;
+                                            font-size: root.unit * 1.1;
+                                            font-weight: 700;
+                                            horizontal-stretch: 1;
+                                        }
+                                        if card.in-use: Text {
+                                            text: "In use";
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    for line in card.lines: Text {
+                                        text: line;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.8;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.page-clicked(0, i);
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            FocusButton {
+                                label: root.tuning ? "Tuning..." : "Tune this device";
+                                hint: "A";
+                                unit: root.unit * 0.9;
+                                focused: root.page-row == 1;
+                                clicked => {
+                                    root.page-clicked(1, 0);
+                                }
+                            }
+                        }
+                        for choice[r] in root.choices: Rectangle {
+                            height: root.unit * 2.5;
+                            border-radius: root.unit * 0.3;
+                            border-width: root.page-row == r + 2 ? 3px : 1px;
+                            border-color: root.page-row == r + 2 ? Theme.accent : Theme.edge;
+                            background: root.page-row == r + 2 ? Theme.button-focused : Theme.button;
+                            HorizontalLayout {
+                                padding-left: root.unit * 0.6;
+                                padding-right: root.unit * 0.6;
+                                spacing: root.unit * 0.6;
+                                Text {
+                                    text: choice.label;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: "<";
+                                    color: choice.can-prev ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 0);
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: choice.value;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    min-width: root.unit * 12;
+                                }
+                                Text {
+                                    text: ">";
+                                    color: choice.can-next ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        for note in root.setting-notes: Text {
+                            text: note;
+                            color: Theme.dim;
+                            font-size: root.unit * 0.85;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if root.page == 1: Hint {
+                    unit: root.unit;
+                    text: root.saves-relay;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    Hint {
+                        unit: root.unit;
+                        text: root.page-status;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: root.page == 1 ? "A  Choose   LB/RB  Game   B  Back" : "A  Choose   Left/Right  Change   B  Back";
+                    }
+                }
+            }
+
+            // Delete a slot? It is backed up first.
+            if root.page == 1 && root.saves-confirm != "": Prompt {
+                x: 0;
+                y: 0;
+                width: root.width;
+                height: root.height;
+                unit: root.unit;
                 Text {
-                    text: "Continue screen goes here";
-                    color: #8a93a3;
-                    font-size: 22px;
+                    text: root.saves-confirm;
+                    color: Theme.text;
+                    font-size: root.unit * 1.2;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    FocusButton {
+                        label: "Delete";
+                        hint: "A";
+                        unit: root.unit;
+                        focused: true;
+                        clicked => {
+                            root.page-clicked(-2, 0);
+                        }
+                    }
+                    FocusButton {
+                        label: "Keep";
+                        hint: "B";
+                        unit: root.unit;
+                        clicked => {
+                            root.page-clicked(-2, 1);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Quit the launcher?
+        if root.overlay == 1: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: "Quit the launcher?";
+                color: Theme.text;
+                font-size: root.unit * 1.4;
+            }
+            HorizontalLayout {
+                spacing: root.unit;
+                FocusButton {
+                    label: "Quit";
+                    hint: "A";
+                    unit: root.unit;
+                    focused: true;
+                    clicked => {
+                        root.clicked(5, 0);
+                    }
+                }
+                FocusButton {
+                    label: "Stay";
+                    hint: "B";
+                    unit: root.unit;
+                    clicked => {
+                        root.clicked(6, 0);
+                    }
+                }
+            }
+        }
+
+        // Other saves: one row per save, newest first.
+        if root.overlay == 2: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: root.overlay-title;
+                color: Theme.text;
+                font-size: root.unit * 1.3;
+                font-weight: 700;
+            }
+            for row[i] in root.rows: Rectangle {
+                min-height: root.unit * 2.6;
+                border-radius: root.unit * 0.3;
+                border-width: i == root.row-index ? 3px : 1px;
+                border-color: i == root.row-index ? Theme.accent : Theme.edge;
+                background: i == root.row-index ? Theme.button-focused : Theme.button;
+                HorizontalLayout {
+                    padding: root.unit * 0.3;
+                    spacing: root.unit * 0.8;
+                    Picture {
+                        width: root.unit * 2.6;
+                        source: row.picture;
+                        has-source: row.has-picture;
+                        label: "";
+                        unit: root.unit * 0.5;
+                    }
+                    Text {
+                        text: row.title;
+                        color: Theme.text;
+                        font-size: root.unit;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 2;
+                    }
+                    Text {
+                        text: row.detail;
+                        color: Theme.dim;
+                        font-size: root.unit * 0.9;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 2;
+                    }
+                    Text {
+                        text: row.when;
+                        color: Theme.dim;
+                        font-size: root.unit * 0.9;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: row.device;
+                        color: Theme.dim;
+                        font-size: root.unit * 0.9;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    Text {
+                        text: row.note == "" ? row.slot : row.slot + "  (" + row.note + ")";
+                        color: Theme.dim;
+                        font-size: root.unit * 0.9;
+                        vertical-alignment: center;
+                    }
+                }
+                TouchArea {
+                    clicked => {
+                        root.clicked(3, i);
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: root.unit;
+                Hint {
+                    unit: root.unit;
+                    text: "A  Continue this save";
+                }
+                Hint {
+                    unit: root.unit;
+                    text: "B  Back";
+                }
+            }
+        }
+
+        // The sync conflict: this device's save on the left, the synced one on the right.
+        if root.overlay == 3: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: root.overlay-title;
+                color: Theme.text;
+                font-size: root.unit * 1.3;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: root.unit;
+                for side[i] in root.sides: Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: root.unit * 0.4;
+                    border-width: i == root.side-index ? 3px : 1px;
+                    border-color: i == root.side-index ? Theme.accent : Theme.edge;
+                    background: i == root.side-index ? Theme.button-focused : Theme.button;
+                    VerticalLayout {
+                        padding: root.unit * 0.6;
+                        spacing: root.unit * 0.3;
+                        HorizontalLayout {
+                            Text {
+                                text: side.heading;
+                                color: Theme.text;
+                                font-size: root.unit;
+                                font-weight: 700;
+                                horizontal-stretch: 1;
+                            }
+                            if side.newer: Text {
+                                text: "Newer";
+                                color: Theme.accent;
+                                font-size: root.unit;
+                                font-weight: 700;
+                            }
+                        }
+                        Picture {
+                            height: root.unit * 5;
+                            source: side.picture;
+                            has-source: side.has-picture;
+                            label: "";
+                            unit: root.unit;
+                        }
+                        Text {
+                            text: side.title;
+                            color: Theme.text;
+                            font-size: root.unit;
+                            overflow: elide;
+                        }
+                        for line in side.lines: Text {
+                            text: line;
+                            color: Theme.dim;
+                            font-size: root.unit * 0.85;
+                            wrap: word-wrap;
+                        }
+                    }
+                    TouchArea {
+                        clicked => {
+                            root.clicked(4, i);
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                spacing: root.unit;
+                Hint {
+                    unit: root.unit;
+                    text: "A  Keep this save";
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+                Hint {
+                    unit: root.unit;
+                    text: "B  Decide later";
+                }
+            }
+        }
+
+        // The build warning before Continue.
+        if root.overlay == 4: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: root.overlay-text;
+                color: Theme.text;
+                font-size: root.unit * 1.1;
+                wrap: word-wrap;
+            }
+            HorizontalLayout {
+                spacing: root.unit;
+                FocusButton {
+                    label: "Play anyway";
+                    hint: "A";
+                    unit: root.unit;
+                    focused: true;
+                    clicked => {
+                        root.clicked(5, 0);
+                    }
+                }
+                FocusButton {
+                    label: "Back";
+                    hint: "B";
+                    unit: root.unit;
+                    clicked => {
+                        root.clicked(6, 0);
+                    }
+                }
+            }
+        }
+
+        // The game is starting or running.
+        if root.overlay == 5: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: root.overlay-text;
+                color: Theme.text;
+                font-size: root.unit * 1.3;
+                horizontal-alignment: center;
+            }
+        }
+
+        // About, from the page row; Slint's royalty-free licence notice is on it.
+        about := AboutPage {
+            x: 24px;
+            y: 24px;
+            width: root.width - 48px;
+            height: root.height - 48px;
+            visible: root.page == 3;
+            version: root.version;
+            patches: root.patches;
+            shipped: root.shipped-licences;
+            learned: root.learned-licences;
+            language-name: root.language-name;
+            focused-index: root.about-focus;
+            clicked(index) => {
+                root.clicked(7, index);
+            }
+        }
+
+        // Fleet, from the page row.
+        if root.page == 4: VerticalLayout {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            padding: 24px;
+            spacing: 12px;
+
+            Text {
+                text: @tr("Fleet");
+                color: white;
+                font-size: 26px;
+            }
+
+            if root.fleet-warning != "": Rectangle {
+                border-radius: 8px;
+                background: #4a3410;
+                border-width: 1px;
+                border-color: #f2b134;
+                HorizontalLayout {
+                    padding: 12px;
+                    Text {
+                        text: root.fleet-warning;
+                        color: #ffe2a8;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    for row[i] in root.fleet-rows: FleetRowView {
+                        device: row;
+                        focused: root.fleet-focus == i;
+                        activated => { root.clicked(8, i); }
+                    }
+                    if root.fleet-empty != "": Text {
+                        text: root.fleet-empty;
+                        color: #8a93a3;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                    }
                 }
             }
 
             HorizontalLayout {
-                spacing: 16px;
-                PlaceholderButton {
-                    label: "Placeholder A";
-                    focused: root.focused-index == 0;
-                    activated => { root.activate(0); }
+                alignment: start;
+                LauncherButton {
+                    width: 160px;
+                    label: @tr("Back");
+                    focused: root.fleet-focus == root.fleet-back-index;
+                    activated => { root.clicked(8, root.fleet-back-index); }
                 }
-                PlaceholderButton {
-                    label: "Placeholder B";
-                    focused: root.focused-index == 1;
-                    activated => { root.activate(1); }
-                }
-            }
-
-            // Slint's royalty-free licence asks for this notice.
-            Text {
-                text: "About: this application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).";
-                color: #8a93a3;
-                font-size: 12px;
-                wrap: word-wrap;
             }
         }
     }

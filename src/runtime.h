@@ -13,16 +13,16 @@ typedef bb_jmp_buf sigjmp_buf;
 #endif
 /* The runtime's own exports (runtime_start, runtime_resolve, runtime_report, runtime_finalize,
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
- * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header. So are
- * the mutex, semaphore and rwlock resolvers and reports (runtime_mutex_resolve, runtime_sema_report,
- * runtime_sema_waiters, ...): crates/runtime/src/sync.rs. */
+ * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header, as are
+ * runtime_time_resolve and runtime_rtc_resolve (crates/runtime/src/time.rs and rtc.rs), the
+ * content and display modules (runtime_content_*, runtime_display_patch: 3.04) and the mutex,
+ * semaphore and rwlock resolvers and reports (runtime_mutex_resolve, runtime_sema_report,
+ * runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
 /* Restarts the game (in-game settings menu, render resolution change). */
 void runtime_restart(void);
-/* BB_GAME_RES: rewrites the display configuration the game initializes (runtime_display.c). */
-void runtime_display_patch(unsigned char *image, uint64_t image_size);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
 uintptr_t runtime_memory_resolve(const char *name);
@@ -37,10 +37,6 @@ void runtime_thread_report(void);
 void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
-uintptr_t runtime_time_resolve(const char *name);
-void runtime_content_configure(const uint32_t values[5]);
-uintptr_t runtime_content_resolve(const char *name);
-void runtime_content_report(void);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 uintptr_t runtime_kernel_resolve(const char *name);
 uintptr_t runtime_file_resolve(const char *name);
@@ -78,11 +74,14 @@ uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 int runtime_pad_tool(int test, int strength);
 int runtime_pad_watch(int seconds);
-uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);
-/* Trophies (runtime_trophy.c): the folder run.py prepared for the running game (scripts/trophies.py). */
+/* Trophies (Rust: crates/runtime/src/trophy.rs, roadmap 3.05). The loader binds the user folder and
+ * the in-game notice (bbgpu_trophy_notify) first, then gives the folder run.py prepared for the
+ * running game (scripts/trophies.py). */
+void runtime_trophy_bind(const char *(*user_dir)(void),
+                         void (*notify)(int grade, const char *game, const char *name, const void *png, uint64_t png_size));
 void runtime_trophy_configure(const char *dir);
 uintptr_t runtime_trophy_resolve(const char *name);
 void runtime_savedata_report(void);
