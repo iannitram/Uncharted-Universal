@@ -178,6 +178,8 @@ static void wall_time(void) {
     assert(get(NULL,NULL)==0 && get(NULL,z.value)==0);
     assert(!runtime_resolve("n88vx3C5nW8#q#q",0));
 }
+/* The memory module is Rust on Linux (crates/runtime, piece 3.12; its Rust tests port this one):
+ * kept as the check that runtime_resolve reaches it across the C-to-Rust link. */
 static void direct_memory(void) {
     Allocate alloc=GET(Allocate,"rTXw65xmLIA#p#J");
     Map map=GET(Map,"L-Q3LEjIbgA#p#J");
