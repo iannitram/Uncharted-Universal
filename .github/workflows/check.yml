@@ -64,9 +64,31 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Lint crates/runtime as the loader links it (cfg(uncharted_loader), crates/runtime/build.rs)
+        run: UNCHARTED_RUNTIME_LOADER=1 cargo clippy -p uncharted_runtime --lib -- -D warnings
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+      - name: Smoke-run the uncharted-universal commands
+        # Every command once on a synthetic dump with its exit status (crates/cli/tests/cli.rs,
+        # also part of the workspace tests above; named here so a CLI break shows on its own).
+        run: |
+          cargo run -q -p uncharted_cli -- --help
+          cargo test -p uncharted_cli --test cli
+      - name: Run the fake hub on loopback
+        # `hub serve` on 127.0.0.1 with a synthetic build; a second copy of the binary pairs and
+        # pulls (crates/cli/tests/hub_loopback.rs), and the core service test runs the same flow
+        # in-process (crates/core/tests/hub_service.rs). Windows checks that paired-device
+        # storage fails closed before any connection, until its ACL work lands.
+        run: |
+          cargo test -p uncharted_cli --features hub --test hub_loopback
+          cargo test -p uncharted_core --features hub --test hub_service
+      - name: Build the launcher and run its Fleet page tests (2.08)
+        # Named so a broken Fleet page shows up by name; the workspace steps above already
+        # build and test app/ with everything else.
+        run: |
+          cargo build -p uncharted-app
+          cargo test -p uncharted-app -- vm::fleet focus::
       - name: Run the DLSS settings fallback regression test
         if: matrix.os == 'linux'
         run: |
@@ -95,7 +117,7 @@ jobs:
             mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
             mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
             mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
-      - name: Add the Rust target that matches CLANG64 (the BB_BENCHMARK mode links crates/runtime)
+      - name: Add the Rust target that matches CLANG64 (bb-probe links crates/runtime)
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
@@ -103,7 +125,9 @@ jobs:
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
     # target linker, so no NDK is installed yet; host build scripts (serde_json's) use the
-    # runner's `cc`. When the runtime links C (piece 3.01) this job gets the NDK. `--lib`:
+    # runner's `cc`. Since piece 3.01 the loader's static library calls C, but only on x86-64 hosts
+    # in the loader build (cfg(uncharted_loader)); the Android library still links no C, so no NDK
+    # yet: it comes with the Android app. `--lib`:
     # Android embeds the runtime, so the desktop `uncharted-run` binary is not linked here.
     runs-on: ubuntu-latest
     steps:

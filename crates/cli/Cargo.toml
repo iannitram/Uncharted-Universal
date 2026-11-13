@@ -11,5 +11,11 @@ publish = false
 name = "uncharted-universal"
 path = "src/main.rs"
 
+[features]
+# `hub serve|pair|pull` over the network (uncharted_core's `hub`: mDNS, pairing, sealed pulls).
+# Without it the hub commands check their arguments and end with "not built yet" (status 3).
+hub = ["uncharted_core/hub"]
+
 [dependencies]
 uncharted_core = { path = "../core" }
+serde_json = "1"
