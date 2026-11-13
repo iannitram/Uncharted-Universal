@@ -2,8 +2,9 @@
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
 //! the C modules' resolvers and reports and `runtime_quit`. The modules already in Rust
-//! ([`crate::content`]) keep their place in the chain and the reports. Without the loader the
-//! chain holds only those, and quitting flushes stdio and ends the process at once, as
+//! ([`crate::content`], [`crate::time`] and [`crate::rtc`]) keep their place in the chain and
+//! the reports. Without the loader the chain holds only those, and quitting flushes stdio and
+//! ends the process at once, as
 //! `tests/test_runtime.c`'s `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -71,19 +72,22 @@ pub(crate) fn err(text: &str) {
 mod loader {
     use std::ffi::{c_char, c_int};
 
+    // Rust on Linux and Android since 3.12 (`crate::memory`); Windows keeps the C file.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub use crate::memory::linux::{runtime_memory_report, runtime_memory_resolve};
+
     extern "C" {
         pub fn runtime_mutex_resolve(name: *const c_char) -> usize;
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
-        pub fn runtime_time_resolve(name: *const c_char) -> usize;
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
-        pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_file_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
@@ -93,6 +97,7 @@ mod loader {
         pub fn runtime_mutex_report();
         pub fn runtime_rwlock_report();
         pub fn runtime_sema_report();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
         pub fn runtime_audio_report();
@@ -105,11 +110,14 @@ mod loader {
     }
 }
 
-/// The modules' resolvers in `runtime.c`'s order, then the GPU library: the first that knows
-/// `name` answers.
+/// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
+/// `content`, piece 3.04, and `time` and `rtc`, piece 3.02), then the GPU library: the first
+/// that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     use crate::content::ffi::runtime_content_resolve;
+    use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
         runtime_mutex_resolve,
@@ -139,10 +147,12 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .find(|&address| address != 0)
 }
 
-/// Without the loader only the modules already in Rust answer.
+/// Without the loader only the Rust modules answer, in the same order.
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     crate::content::resolve(name)
+        .or_else(|| crate::time::resolve(name))
+        .or_else(|| crate::rtc::resolve(name))
 }
 
 /// The modules' report lines, in `runtime.c`'s order.

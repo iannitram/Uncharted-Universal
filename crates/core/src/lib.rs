@@ -35,6 +35,7 @@ pub mod fleet;
 pub mod games;
 #[cfg(feature = "hub")]
 pub mod hub;
+pub mod language;
 pub mod launch;
 pub mod link;
 pub mod logs;

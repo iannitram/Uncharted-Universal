@@ -13,9 +13,10 @@
 //! (`tests/test_boot_smoke.py`) stay green at every step. No behaviour changes in a port PR; a
 //! bug found while porting is its own issue.
 //!
-//! `runtime_resolve` asks this module's own contracts first, then the C modules in the order
-//! `runtime.c` did, then the GPU library. Those calls exist only in the loader build
-//! (`cfg(uncharted_loader)`, set by `build.rs`); elsewhere the chain ends here.
+//! `runtime_resolve` asks this module's own contracts first, then the other modules in the order
+//! `runtime.c` did (the Rust ones, `time` and `rtc` so far, in their C places), then the GPU
+//! library. The calls into C exist only in the loader build (`cfg(uncharted_loader)`, set by
+//! `build.rs`); elsewhere the chain holds only the Rust modules.
 //!
 //! Only this crate has `unsafe` and FFI; every `unsafe` block carries a `// SAFETY:` line.
 
@@ -31,9 +32,11 @@ pub mod libc;
 /// The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 /// its copy of the header has and refuses to start on a mismatch (a stale static library).
 /// Raised when a symbol moves, changes or goes away. 1: `src/runtime_trophy.c` moved to
-/// [`crate::trophy`] (3.05); 2: `src/runtime.c` moved here (3.01); 3: `src/runtime_content.c`
-/// and `src/runtime_display.c` moved here (3.04).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 3;
+/// [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
+/// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
+/// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
+/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 4;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -170,8 +173,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn version_is_raised_with_each_moved_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 3);
+    fn version_is_raised_with_each_module() {
+        assert_eq!(ffi::uncharted_runtime_version(), 4);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION
