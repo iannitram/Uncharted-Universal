@@ -9,10 +9,21 @@
 //! it (`format_pairing_code`); the player types it on the client (`parse_pairing_code`). The hub
 //! runs a `PairingServer`, whose accept loop keeps one `PairingLimiter` per remote address and
 //! stores the new `Peer` in `peers.json`; the client runs `pair_with_hub`, which stores the hub.
-//! `remove_peer` forgets a device. mDNS discovery and bundle serving remain unimplemented.
+//! `remove_peer` forgets a device. mDNS discovery and the announce side live in `hub/discovery.rs`
+//! (roadmap 4.01; `mdns-sd`).
+//!
+//! Bundles (ROADMAP 4.03): a hub publishes each build as `builds/<build name>/bundle.txt` beside
+//! its files; `serve` sends the newest bundle for a target and the files it lists, shader
+//! translations included, over the same sealed channel and per-file exchange as the game-data
+//! copy (`serve_game`/`pull_game`, #189). `pull` stages them with resume and runs
+//! `bundle::verify` before returning.
+//!
+//! Service (ROADMAP 4.05): `HubService` in `hub/service.rs` takes pairing and bundle pulls on
+//! one TCP port behind a plain opening packet; `pair_with_service` and `pull_from_service` are
+//! the device's side. `uncharted-universal hub serve|pair|pull` runs them.
 
-use crate::bundle::Bundle;
-use crate::error::{not_built, Error, Result};
+use crate::bundle::{self, Bundle};
+use crate::error::{Error, Result};
 use crate::platform::Os;
 use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
@@ -25,6 +36,16 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use std::{fs, io};
 
+mod discovery;
+pub use discovery::{
+    announce, discover, discover_on, found, parse_txt, txt, withdraw, Announcement, Mdns,
+    MdnsDaemon, MemoryMdns, Record, TXT_HUB, TXT_TARGETS,
+};
+mod service;
+pub use service::{
+    pair_with_service, pull_from_service, HubService, Served, PORT, SERVICE_IO_TIMEOUT,
+};
+
 /// The mDNS service a hub announces.
 pub const SERVICE: &str = "_uncharted-universal._tcp.local.";
 const MAX_CONTROL_FRAME: usize = 1024 * 1024;
@@ -33,6 +54,8 @@ const MAX_GAME_FILES: usize = 10_000;
 const MAX_GAME_MANIFEST: usize = 1024 * 1024;
 const MAX_GAME_FILE: u64 = 32 * 1024 * 1024 * 1024;
 const MAX_GAME_TOTAL: u64 = 100 * 1024 * 1024 * 1024;
+/// The bundle text of a published build: `builds/<build name>/bundle.txt`.
+pub const BUNDLE_TEXT: &str = "bundle.txt";
 const STAGING_MARKER: &str = ".uu-transfer-incomplete";
 const STAGING_LOCK: &str = ".uu-transfer.lock";
 const TRANSFER_WORK_DIR: &str = ".uu-transfer-work";
@@ -213,11 +236,6 @@ pub fn is_home_network(addr: IpAddr) -> bool {
                 || (s[0] & 0xffc0) == 0xfe80 // fe80::/10
         }
     }
-}
-
-/// Hubs announcing `SERVICE`, waited for up to `wait_ms`.
-pub fn discover(wait_ms: u64) -> Result<Vec<Found>> {
-    not_built("hub::discover")
 }
 
 /// A random six-digit pairing code from the operating system's random source, uniform over
@@ -725,14 +743,176 @@ fn write_peers_impl(path: &Path, peers: &[Peer]) -> Result<()> {
 }
 
 /// Sends the newest bundle for `target` and its files from `builds` to a paired peer, sealed.
+///
+/// Publish each build as `builds/<build name>/bundle.txt` (`bundle::to_text`) with its files
+/// beside it; the newest `bundle.txt` for `target` by modification time wins, then the folder
+/// name. Only the files the bundle lists are read, so shader translations travel and a driver
+/// pipeline cache (refused by `bundle::is_forbidden`) never does. `peer` is the record stored
+/// at pairing: the request must be sealed with its key, which is checked before `builds` is
+/// read. Every file is checked against the bundle before the manifest goes out and again,
+/// by hash, just before it is sent.
 pub fn serve(t: &mut dyn Transport, peer: &Peer, builds: &Path, target: Os) -> Result<Bundle> {
-    not_built("hub::serve")
+    let key = peer_key(peer)?;
+    let (session, request) = read_sealed(t, &key, None, CLIENT_TO_SERVER, 0)?;
+    let mut channel = SealedChannel::server(t, key, session);
+    if request != bundle_request(target).as_bytes() {
+        return Err(Error::Hub("the bundle request was not authorized".into()));
+    }
+
+    let (bundle, root) = newest_bundle(builds, target)?;
+    let files = bundle_transfer_files(&bundle)?;
+    for file in &files {
+        regular_file_in_tree(&root, &file.path)?;
+        if fs::metadata(root.join(&file.path))?.len() != file.size {
+            return Err(Error::Hub(format!(
+                "{} does not match the bundle",
+                file.path
+            )));
+        }
+    }
+    channel.send(bundle::to_text(&bundle).as_bytes())?;
+    send_files(&mut channel, &root, &files)?;
+    channel.send(b"DONE")?;
+    Ok(bundle)
 }
 
 /// Pulls the newest bundle for `target` from a paired hub into `staged`, resuming files already
 /// there, and checks it (`bundle::verify`) before returning.
+///
+/// The manifest must parse as a bundle for `target` with only allowed paths. A file already
+/// staged with the listed size and hash is skipped; any other is received into the reserved work
+/// directory, hash-checked and only then moved into place. `.uu-transfer-incomplete` stays in
+/// `staged` until every file has arrived and `bundle::verify` has passed, so `bundle::install`
+/// refuses a partial pull. Files in `staged` that the bundle does not list are left alone: use
+/// one staging folder per pull.
 pub fn pull(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) -> Result<Bundle> {
-    not_built("hub::pull")
+    let key = peer_key(peer)?;
+    prepare_staging_root(staged)?;
+    let _lock = acquire_staging_lock(staged)?;
+    let marker = mark_staging_incomplete(staged)?;
+    let mut session = [0u8; 16];
+    getrandom::getrandom(&mut session)
+        .map_err(|_| Error::Hub("the operating system could not provide random bytes".into()))?;
+    let mut channel = SealedChannel::client(t, key, session);
+    channel.send(bundle_request(target).as_bytes())?;
+    let manifest = channel.receive()?;
+    if manifest.len() > MAX_GAME_MANIFEST {
+        return Err(Error::Hub("hub bundle manifest exceeds its limit".into()));
+    }
+    let text = std::str::from_utf8(&manifest)
+        .map_err(|_| Error::Hub("hub bundle manifest is not valid text".into()))?;
+    let bundle = bundle::from_text(text)?;
+    if bundle.target != target {
+        return Err(Error::Hub(
+            "hub bundle manifest did not match the request".into(),
+        ));
+    }
+    let files = bundle_transfer_files(&bundle)?;
+    let work_dir = prepare_transfer_work_dir(staged)?;
+    cleanup_transfer_temps(&work_dir)?;
+    receive_files(&mut channel, staged, &work_dir, &files)?;
+    if channel.receive()? != b"DONE" {
+        return Err(Error::Hub("the bundle transfer ended unexpectedly".into()));
+    }
+    finish_transfer_work_dir(&work_dir)?;
+    bundle::verify(&bundle, staged)?;
+    fs::remove_file(marker)?;
+    Ok(bundle)
+}
+
+fn bundle_request(target: Os) -> String {
+    format!("PULLBUNDLE1 {}", target.key())
+}
+
+/// The newest `builds/<build name>/bundle.txt` for `target`, parsed, and its build folder.
+/// A symlinked bundle text is refused; so is a bundle that does not parse, since serving an
+/// older build in its place would hide the broken one.
+fn newest_bundle(builds: &Path, target: Os) -> Result<(Bundle, PathBuf)> {
+    let meta = fs::symlink_metadata(builds)?;
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        return Err(Error::Hub(
+            "the builds folder is not a real directory".into(),
+        ));
+    }
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(builds)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let text = entry.path().join(BUNDLE_TEXT);
+        match fs::symlink_metadata(&text) {
+            Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => {
+                candidates.push((meta.modified()?, entry.file_name(), entry.path()));
+            }
+            Ok(_) => {
+                return Err(Error::Hub(format!(
+                    "{} is not a regular file",
+                    text.display()
+                )))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    candidates.sort();
+    for (_, _, root) in candidates.into_iter().rev() {
+        let path = root.join(BUNDLE_TEXT);
+        let mut text = String::new();
+        io::Read::read_to_string(
+            &mut io::Read::take(fs::File::open(&path)?, MAX_GAME_MANIFEST as u64 + 1),
+            &mut text,
+        )?;
+        if text.len() > MAX_GAME_MANIFEST {
+            return Err(Error::Hub(format!(
+                "{} exceeds the bundle size limit",
+                path.display()
+            )));
+        }
+        let bundle = bundle::from_text(&text)?;
+        if bundle.target == target {
+            return Ok((bundle, root));
+        }
+    }
+    Err(Error::Hub(format!(
+        "no build is ready for {}",
+        target.key()
+    )))
+}
+
+/// A bundle's files as transfer entries, held to the same path, size and count rules as the
+/// game-data copy (portable ASCII paths, no case-fold collisions, nothing sensitive).
+fn bundle_transfer_files(b: &Bundle) -> Result<Vec<GameFile>> {
+    if b.files.len() > MAX_GAME_FILES {
+        return Err(Error::Hub("the bundle has too many files".into()));
+    }
+    let mut total = 0u64;
+    let mut files = Vec::with_capacity(b.files.len());
+    for file in &b.files {
+        if bundle::is_forbidden(&file.path)
+            || sensitive_game_path(&file.path)
+            || !safe_transfer_path(&file.path)
+            || !is_sha256(&file.sha256)
+        {
+            return Err(Error::Hub(format!(
+                "refusing to transfer {}: game files, keys, saves and driver caches never leave a hub",
+                file.path
+            )));
+        }
+        total = total
+            .checked_add(file.size)
+            .ok_or_else(|| Error::Hub("bundle size overflowed".into()))?;
+        if file.size > MAX_GAME_FILE || total > MAX_GAME_TOTAL {
+            return Err(Error::Hub("the bundle exceeds the transfer limit".into()));
+        }
+        files.push(GameFile {
+            path: file.path.clone(),
+            size: file.size,
+            sha256: file.sha256.clone(),
+        });
+    }
+    validate_game_paths(&files)?;
+    Ok(files)
 }
 
 /// Sends the prepared game-data tree to a client that proves possession of this paired peer key.
@@ -758,42 +938,7 @@ pub fn serve_game(
     let files = enumerate_game_files(prepared_data)?;
     let manifest = format_game_manifest(target, &files)?;
     channel.send(&manifest)?;
-
-    let mut transferred = 0u64;
-    for (index, file) in files.iter().enumerate() {
-        let command = channel.receive()?;
-        let expected_prefix = format!("NEED {index}");
-        if command == format!("SKIP {index}").as_bytes() {
-            continue;
-        }
-        if command != expected_prefix.as_bytes() {
-            return Err(Error::Hub(
-                "the game-data transfer request was invalid".into(),
-            ));
-        }
-        let path = prepared_data.join(&file.path);
-        regular_file_in_tree(prepared_data, &file.path)?;
-        if hash_file(&path)? != file.sha256 || fs::metadata(&path)?.len() != file.size {
-            return Err(Error::Hub(
-                "prepared game data changed during transfer".into(),
-            ));
-        }
-        let mut input = fs::File::open(path)?;
-        let mut buf = vec![0u8; DATA_CHUNK];
-        loop {
-            let read = io::Read::read(&mut input, &mut buf)?;
-            if read == 0 {
-                break;
-            }
-            let mut packet = format!("DATA {index} {read}\n").into_bytes();
-            packet.extend_from_slice(&buf[..read]);
-            channel.send(&packet)?;
-            transferred = transferred
-                .checked_add(read as u64)
-                .ok_or_else(|| Error::Hub("game-data byte count overflowed".into()))?;
-        }
-        channel.send(format!("END {index}").as_bytes())?;
-    }
+    let transferred = send_files(&mut channel, prepared_data, &files)?;
     channel.send(b"DONE")?;
     Ok(transferred)
 }
@@ -819,26 +964,7 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
     let files = parse_game_manifest(&manifest, target)?;
     let work_dir = prepare_transfer_work_dir(staged)?;
     cleanup_transfer_temps(&work_dir)?;
-    let mut received = 0u64;
-
-    for (index, file) in files.iter().enumerate() {
-        let destination = safe_destination(staged, &file.path, true)?;
-        if file_matches(&destination, file)? {
-            channel.send(format!("SKIP {index}").as_bytes())?;
-            continue;
-        }
-        channel.send(format!("NEED {index}").as_bytes())?;
-        let temp = temporary_work_file(&work_dir)?;
-        let result = receive_game_file(&mut channel, index, file, &temp);
-        if let Err(error) = result {
-            let _ = fs::remove_file(&temp);
-            return Err(error);
-        }
-        replace_verified(&temp, &destination)?;
-        received = received
-            .checked_add(file.size)
-            .ok_or_else(|| Error::Hub("game-data byte count overflowed".into()))?;
-    }
+    let received = receive_files(&mut channel, staged, &work_dir, &files)?;
     let done = channel.receive()?;
     if done != b"DONE" {
         return Err(Error::Hub(
@@ -847,6 +973,76 @@ pub fn pull_game(t: &mut dyn Transport, peer: &Peer, target: Os, staged: &Path) 
     }
     finish_transfer_work_dir(&work_dir)?;
     fs::remove_file(marker)?;
+    Ok(received)
+}
+
+/// The server half of the per-file exchange shared by the game-data copy and the bundle stream:
+/// for each listed file the client answers `SKIP <i>` (already staged) or `NEED <i>`, and a
+/// needed file is re-hashed, then sent as `DATA` chunks and `END <i>`. Returns the bytes sent.
+fn send_files(channel: &mut SealedChannel<'_>, root: &Path, files: &[GameFile]) -> Result<u64> {
+    let mut transferred = 0u64;
+    for (index, file) in files.iter().enumerate() {
+        let command = channel.receive()?;
+        if command == format!("SKIP {index}").as_bytes() {
+            continue;
+        }
+        if command != format!("NEED {index}").as_bytes() {
+            return Err(Error::Hub("the transfer request was invalid".into()));
+        }
+        let path = root.join(&file.path);
+        regular_file_in_tree(root, &file.path)?;
+        if hash_file(&path)? != file.sha256 || fs::metadata(&path)?.len() != file.size {
+            return Err(Error::Hub(format!(
+                "{} changed since it was listed for transfer",
+                file.path
+            )));
+        }
+        let mut input = fs::File::open(path)?;
+        let mut buf = vec![0u8; DATA_CHUNK];
+        loop {
+            let read = io::Read::read(&mut input, &mut buf)?;
+            if read == 0 {
+                break;
+            }
+            let mut packet = format!("DATA {index} {read}\n").into_bytes();
+            packet.extend_from_slice(&buf[..read]);
+            channel.send(&packet)?;
+            transferred = transferred
+                .checked_add(read as u64)
+                .ok_or_else(|| Error::Hub("transfer byte count overflowed".into()))?;
+        }
+        channel.send(format!("END {index}").as_bytes())?;
+    }
+    Ok(transferred)
+}
+
+/// The client half of `send_files`: skips files already in `staged` with the listed size and
+/// hash, receives the rest into `work_dir` and moves each into place only once it verifies.
+/// Returns the bytes received.
+fn receive_files(
+    channel: &mut SealedChannel<'_>,
+    staged: &Path,
+    work_dir: &Path,
+    files: &[GameFile],
+) -> Result<u64> {
+    let mut received = 0u64;
+    for (index, file) in files.iter().enumerate() {
+        let destination = safe_destination(staged, &file.path, true)?;
+        if file_matches(&destination, file)? {
+            channel.send(format!("SKIP {index}").as_bytes())?;
+            continue;
+        }
+        channel.send(format!("NEED {index}").as_bytes())?;
+        let temp = temporary_work_file(work_dir)?;
+        if let Err(error) = receive_file(channel, index, file, &temp) {
+            let _ = fs::remove_file(&temp);
+            return Err(error);
+        }
+        replace_verified(&temp, &destination)?;
+        received = received
+            .checked_add(file.size)
+            .ok_or_else(|| Error::Hub("transfer byte count overflowed".into()))?;
+    }
     Ok(received)
 }
 
@@ -1608,7 +1804,7 @@ fn finish_transfer_work_dir(work_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn receive_game_file(
+fn receive_file(
     channel: &mut SealedChannel<'_>,
     index: usize,
     file: &GameFile,
@@ -1628,28 +1824,28 @@ fn receive_game_file(
         let newline = packet
             .iter()
             .position(|&b| b == b'\n')
-            .ok_or_else(|| Error::Hub("hub game-data chunk is malformed".into()))?;
+            .ok_or_else(|| Error::Hub("hub transfer chunk is malformed".into()))?;
         let header = std::str::from_utf8(&packet[..newline])
-            .map_err(|_| Error::Hub("hub game-data chunk is malformed".into()))?;
+            .map_err(|_| Error::Hub("hub transfer chunk is malformed".into()))?;
         let mut fields = header.split(' ');
         if fields.next() != Some("DATA")
             || fields.next().and_then(|s| s.parse::<usize>().ok()) != Some(index)
         {
-            return Err(Error::Hub("hub game-data chunk was out of order".into()));
+            return Err(Error::Hub("hub transfer chunk was out of order".into()));
         }
         let chunk_size = fields
             .next()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|n| *n > 0 && *n <= DATA_CHUNK)
-            .ok_or_else(|| Error::Hub("hub game-data chunk was out of bounds".into()))?;
+            .ok_or_else(|| Error::Hub("hub transfer chunk was out of bounds".into()))?;
         if fields.next().is_some() || packet.len() - newline - 1 != chunk_size {
-            return Err(Error::Hub("hub game-data chunk was malformed".into()));
+            return Err(Error::Hub("hub transfer chunk was malformed".into()));
         }
         written = written
             .checked_add(chunk_size as u64)
-            .ok_or_else(|| Error::Hub("game-data file size overflowed".into()))?;
+            .ok_or_else(|| Error::Hub("transfer file size overflowed".into()))?;
         if written > file.size {
-            return Err(Error::Hub("hub sent too much game data".into()));
+            return Err(Error::Hub("hub sent more data than the file holds".into()));
         }
         let bytes = &packet[newline + 1..];
         io::Write::write_all(&mut output, bytes)?;
@@ -1659,7 +1855,7 @@ fn receive_game_file(
     output.sync_all()?;
     if written != file.size || hex(&hash.finalize()) != file.sha256 {
         return Err(Error::Hub(
-            "received game data failed its integrity check".into(),
+            "a received file failed its integrity check".into(),
         ));
     }
     Ok(())
@@ -2180,7 +2376,7 @@ mod tests {
             sha256: hex(&Sha256::digest(b"abc")),
         };
         let mut receiver = receiver;
-        assert!(receive_game_file(&mut receiver, 0, &file, &path).is_err());
+        assert!(receive_file(&mut receiver, 0, &file, &path).is_err());
         assert_eq!(fs::read(&path).unwrap(), b"xyz");
         fs::remove_file(path).unwrap();
         sender_thread.join().unwrap();

@@ -429,18 +429,262 @@ fn a_selection_file_must_be_lists_of_keys() {
 
 // ---- hub ----
 
+/// A Linux machine whose folders are under `dir`.
+fn linux_home(dir: &Path) -> Ctx {
+    let mut ctx = home(dir);
+    ctx.os = Os::Linux;
+    ctx
+}
+
 #[test]
-fn hub_checks_its_subcommand_and_waits_for_4_05() {
-    assert_eq!(exec(&["hub"], &ctx()).code, USAGE);
-    assert!(exec(&["hub", "join"], &ctx())
+fn hub_refuses_bad_arguments_with_status_two() {
+    let dir = TempDir::new("hub-usage");
+    let ctx = linux_home(dir.path());
+    for (list, problem) in [
+        (&["hub"][..], "name serve, pair or pull"),
+        (&["hub", "join"], "unknown hub command 'join'"),
+        (&["hub", "pair"], "give the pairing code the hub shows"),
+        (
+            &["hub", "pair", "12345"],
+            "the pairing code is six digits, not '12345'",
+        ),
+        (&["hub", "pair", "12345a"], "six digits"),
+        (
+            &["hub", "pair", "123456", "--hub", "nowhere"],
+            "--hub takes an address",
+        ),
+        (&["hub", "pair", "1", "2"], "unexpected argument '2'"),
+        (
+            &["hub", "serve", "--port", "http"],
+            "--port takes a whole number, not 'http'",
+        ),
+        (
+            &["hub", "serve", "--port", "70000"],
+            "--port takes a whole number",
+        ),
+        (
+            &["hub", "serve", "--role", "phone"],
+            "unknown hub role 'phone'",
+        ),
+        (
+            &["hub", "serve", "--bind", "home"],
+            "--bind takes an address, not 'home'",
+        ),
+        (&["hub", "serve", "--stop-after", "-1"], "--stop-after"),
+        (&["hub", "serve", "extra"], "unexpected argument 'extra'"),
+        (&["hub", "pull", "--target", "psp"], "unknown target 'psp'"),
+        (&["hub", "pull", "--code", "1"], "unknown option '--code'"),
+    ] {
+        let out = exec(list, &ctx);
+        assert_eq!(out.code, USAGE, "{list:?}: {}", out.stderr);
+        assert!(out.stderr.contains(problem), "{list:?}: {}", out.stderr);
+        assert!(out.stderr.contains("usage: uncharted-universal hub"));
+    }
+    // Android and iOS are never hubs: there the role must be named.
+    let mut phone = linux_home(dir.path());
+    phone.os = Os::Android;
+    assert!(exec(&["hub", "serve"], &phone)
         .stderr
-        .contains("unknown hub command 'join'"));
-    for sub in ["serve", "pair", "pull"] {
-        let out = exec(&["hub", sub], &ctx());
-        assert_eq!(out.code, NOT_BUILT);
-        assert!(out
-            .stderr
-            .contains(&format!("not built yet: hub {sub} (roadmap 4.05)")));
+        .contains("name the hub's role with --role"));
+}
+
+#[test]
+fn hub_help_shows_every_subcommand() {
+    let out = exec(&["hub", "--help"], &ctx());
+    assert_eq!(out.code, OK);
+    for line in ["hub serve [--builds", "hub pair <code>", "hub pull [--hub"] {
+        assert!(out.stdout.contains(line), "{line} missing: {}", out.stdout);
+    }
+}
+
+#[test]
+fn serve_plans_its_folders_role_and_port() {
+    let dir = TempDir::new("hub-serve-plan");
+    let ctx = set(linux_home(dir.path()), "BB_DEVICE_NAME", "tablet");
+    let plan = hub::serve_plan(&[], &ctx).unwrap();
+    assert_eq!(
+        plan,
+        hub::ServePlan {
+            name: "tablet".into(),
+            role: uncharted_core::recipe::Hub::StrixHalo,
+            targets: vec![Os::Linux, Os::Android],
+            builds: dir.path().join("data/uncharted-universal/builds"),
+            peers: dir.path().join("config/uncharted-universal/peers.json"),
+            bind: std::net::IpAddr::from([0, 0, 0, 0]),
+            port: 47_210,
+            stop_after: None,
+        }
+    );
+    let plan = hub::serve_plan(
+        &args(&[
+            "--role",
+            "desktop",
+            "--builds",
+            "/b",
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--stop-after",
+            "2",
+            "--name",
+            "desk",
+        ]),
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(plan.role, uncharted_core::recipe::Hub::Desktop);
+    assert_eq!(plan.targets, [Os::Windows]);
+    assert_eq!(plan.builds, PathBuf::from("/b"));
+    assert!(plan.bind.is_loopback());
+    assert_eq!((plan.port, plan.stop_after), (0, Some(2)));
+    assert_eq!(plan.name, "desk");
+    for (os, role) in [
+        (Os::Windows, "desktop"),
+        (Os::Mac, "mac"),
+        (Os::Linux, "strix-halo"),
+    ] {
+        assert_eq!(hub::default_role(os).unwrap().key(), role);
+    }
+}
+
+#[test]
+fn pair_and_pull_plan_their_hub_and_folders() {
+    let dir = TempDir::new("hub-pair-plan");
+    let ctx = linux_home(dir.path());
+    for typed in ["483921", "483 921", "483-921"] {
+        let plan = hub::pair_plan(&args(&[typed, "--name", "handheld"]), &ctx).unwrap();
+        assert_eq!(plan.code, "483921");
+        assert_eq!(plan.hub, None);
+        assert_eq!(plan.name, "handheld");
+        assert_eq!(
+            plan.peers,
+            dir.path().join("config/uncharted-universal/peers.json")
+        );
+    }
+    let plan = hub::pair_plan(&args(&["483921", "--hub", "192.168.1.20"]), &ctx).unwrap();
+    assert_eq!(plan.hub, Some("192.168.1.20:47210".parse().unwrap()));
+    let plan = hub::pair_plan(&args(&["483921", "--hub", "[fd00::2]:9"]), &ctx).unwrap();
+    assert_eq!(plan.hub, Some("[fd00::2]:9".parse().unwrap()));
+
+    let plan = hub::pull_plan(&[], &ctx).unwrap();
+    assert_eq!(plan.target, Os::Linux);
+    assert_eq!(
+        plan.into,
+        dir.path().join("data/uncharted-universal/staged/linux")
+    );
+    assert_eq!((plan.hub, plan.from.as_deref()), (None, None));
+    let plan = hub::pull_plan(
+        &args(&["--target", "windows", "--from", "desk", "--into", "/s"]),
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(plan.target, Os::Windows);
+    assert_eq!(plan.from.as_deref(), Some("desk"));
+    assert_eq!(plan.into, PathBuf::from("/s"));
+}
+
+#[test]
+fn a_device_name_comes_from_the_flag_the_variable_or_the_host() {
+    let mut windows = ctx();
+    windows.os = Os::Windows;
+    let name = |list: &[&str], ctx: &Ctx| {
+        hub::device_name(&crate::args::parse(&args(list), &["name"], 0).unwrap(), ctx)
+    };
+    assert_eq!(name(&[], &windows), "uncharted-universal");
+    let windows = set(windows, "HOSTNAME", "host");
+    assert_eq!(name(&[], &windows), "host");
+    let windows = set(windows, "COMPUTERNAME", "DESK");
+    assert_eq!(name(&[], &windows), "DESK");
+    let windows = set(windows, "BB_DEVICE_NAME", "the desktop");
+    assert_eq!(name(&[], &windows), "the desktop");
+    assert_eq!(name(&["--name", "desk 2"], &windows), "desk 2");
+}
+
+#[test]
+fn pull_picks_the_named_or_the_only_hub() {
+    assert_eq!(hub::choose_hub(&["tablet"], None), Ok("tablet"));
+    assert_eq!(
+        hub::choose_hub(&["tablet", "desk"], Some("desk")),
+        Ok("desk")
+    );
+    assert!(hub::choose_hub(&[], None)
+        .unwrap_err()
+        .contains("not paired with a hub yet"));
+    assert_eq!(
+        hub::choose_hub(&["tablet", "desk"], None).unwrap_err(),
+        "this device is paired with several hubs (tablet, desk); name one with --from"
+    );
+    assert_eq!(
+        hub::choose_hub(&["tablet"], Some("mac")).unwrap_err(),
+        "this device is not paired with mac"
+    );
+}
+
+#[test]
+fn hub_addresses_take_an_optional_port() {
+    assert_eq!(
+        hub::hub_address("10.0.0.5", 47_210),
+        Some("10.0.0.5:47210".parse().unwrap())
+    );
+    assert_eq!(
+        hub::hub_address("10.0.0.5:9", 47_210),
+        Some("10.0.0.5:9".parse().unwrap())
+    );
+    assert_eq!(
+        hub::hub_address("fe80::1", 1),
+        Some("[fe80::1]:1".parse().unwrap())
+    );
+    assert_eq!(hub::hub_address("tablet.local", 1), None);
+}
+
+#[cfg(not(feature = "hub"))]
+#[test]
+fn without_the_hub_feature_the_commands_say_not_built() {
+    let dir = TempDir::new("hub-not-built");
+    let ctx = linux_home(dir.path());
+    for list in [
+        &["hub", "serve"][..],
+        &["hub", "pair", "483921"],
+        &["hub", "pull"],
+    ] {
+        let out = exec(list, &ctx);
+        assert_eq!(out.code, NOT_BUILT, "{list:?}");
+        assert!(out.stderr.contains("(this build has no hub feature)"));
+    }
+}
+
+#[cfg(feature = "hub")]
+#[test]
+fn hub_commands_check_the_paired_device_file_first() {
+    let dir = TempDir::new("hub-peers");
+    let ctx = linux_home(dir.path());
+    let pull = exec(&["hub", "pull", "--hub", "127.0.0.1:9"], &ctx);
+    assert_eq!(pull.code, FAILED, "{pull:?}");
+    // Paired-device storage fails closed on Windows until its ACL work lands (#189).
+    let expected = if cfg!(windows) {
+        "not implemented on Windows"
+    } else {
+        "not paired with a hub yet"
+    };
+    assert!(pull.stderr.contains(expected), "{}", pull.stderr);
+    let none = dir.path().join("none").display().to_string();
+    let serve = exec(&["hub", "serve", "--builds", &none], &ctx);
+    assert_eq!(serve.code, FAILED);
+    let expected = if cfg!(windows) {
+        "not implemented on Windows"
+    } else {
+        "no builds folder at"
+    };
+    assert!(serve.stderr.contains(expected), "{}", serve.stderr);
+    // A hub that is not there is a failure, not a hang.
+    #[cfg(not(windows))]
+    {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = closed.local_addr().unwrap().to_string();
+        drop(closed);
+        let pair = exec(&["hub", "pair", "483921", "--hub", &addr], &ctx);
+        assert_eq!(pair.code, FAILED, "{pair:?}");
     }
 }
 

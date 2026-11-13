@@ -1,12 +1,8 @@
-"""BB_GAME_RES: the guest patch (tests/test_display.c), run.py's memory budget and the launcher's size choice."""
+"""BB_GAME_RES: run.py's memory budget and the launcher's size choice (the guest patch is tested in
+crates/runtime/src/display.rs)."""
 from paths import ROOT
 import importlib.util
-import os
-from pathlib import Path
-import shutil
-import subprocess
 import sys
-import tempfile
 import unittest
 
 
@@ -15,21 +11,6 @@ def load(name, path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-class GamePatchTests(unittest.TestCase):
-    @unittest.skipUnless(shutil.which('cc') or shutil.which('clang') or shutil.which('gcc'), 'needs a C compiler')
-    def test_display_patch_on_a_synthetic_image(self):
-        cc = shutil.which('cc') or shutil.which('clang') or shutil.which('gcc')
-        with tempfile.TemporaryDirectory() as directory:
-            exe = Path(directory) / 'display-test'
-            build = subprocess.run([cc, '-std=c11', '-O1', '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'src'),
-                                    str(ROOT / 'tests/test_display.c'), str(ROOT / 'src/runtime_display.c'), '-o', str(exe)],
-                                   capture_output=True, text=True)
-            if build.returncode:
-                self.skipTest(build.stderr[-300:])   # e.g. runtime.h needs the Windows compat layer in this toolchain
-            result = subprocess.run([str(exe)], capture_output=True, text=True, timeout=20)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class RunBudgetTests(unittest.TestCase):
