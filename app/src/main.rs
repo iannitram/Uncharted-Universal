@@ -19,6 +19,11 @@
 //! The guided first run (roadmap 2.05) opens over the screen when nothing is installed and no
 //! hub is paired (`setup::is_first_run`), or from a card's Set up button: its view model is
 //! `firstrun.rs`, its jobs run on threads in `work.rs`.
+//!
+//! When a game run ends, the after-run step (roadmap 2.07, `vm::after_crash`) reads its log and
+//! shows the after-crash screen for a crash; a run the app did not see end is picked up on the
+//! next start. `uncharted-app --play <u1|u2|u3> [-- <runtime arguments>]` starts that game at
+//! once (unless that pickup put the after-crash screen up; its Play again starts the game).
 
 // A release build on Windows opens no console window; debug builds and tests keep theirs.
 #![cfg_attr(all(not(debug_assertions), not(test)), windows_subsystem = "windows")]
@@ -29,29 +34,35 @@ mod focus;
 mod input;
 mod load;
 mod pages_io;
+mod play;
 mod screen;
+mod settings_file;
 mod settings_store;
+mod strings;
 mod vm;
 mod work;
 
 use card::Clock;
 use firstrun::{FirstRun, FirstRunView, Job, Key};
+use focus::Nav;
 use input::Controller;
 use screen::{Command, GameData, Input, OverlayView, Page, Screen, Start, View};
 use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use strings::Lang;
 use uncharted_core::games::Game;
 use uncharted_core::launch::Keep;
+use uncharted_core::logs::{self, Redact, ReportDetails};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::saves;
 use uncharted_core::setup;
+use vm::after_crash::{self, AfterCrash, Host, Pressed};
 use vm::saves::{GameSaves, SavesCommand, SavesView};
 use vm::settings::{SettingsCommand, SettingsView};
 use vm::{SavesVm, SettingsVm};
@@ -60,6 +71,8 @@ slint::include_modules!();
 
 /// The status line until save-relay is linked (roadmap 9.01).
 const NO_RELAY: &str = "Saves stay on this device: save-relay is not in this build yet";
+/// `known_issues.json`, built in.
+const KNOWN_ISSUES: &str = include_str!("../../crates/core/data/known_issues.json");
 
 /// Decoded pictures, by the hash of their PNG bytes, so a key press does not decode again.
 #[derive(Default)]
@@ -251,20 +264,72 @@ fn apply_settings(window: &AppWindow, view: &SettingsView) {
     window.set_page_status(view.status.as_str().into());
 }
 
+/// Draw the after-crash screen.
+fn apply_crash(window: &AppWindow, page: &CrashPage, lang: Lang) {
+    let texts = page.screen.screen(lang);
+    window.set_crash_heading(texts.heading.into());
+    window.set_crash_game(texts.game.into());
+    window.set_crash_chapter(texts.chapter.into());
+    window.set_crash_summary(texts.summary.into());
+    window.set_crash_detail(texts.detail.into());
+    window.set_crash_buttons(strings(&texts.buttons));
+    window.set_crash_note(page.note.as_str().into());
+    window.set_page_row(0);
+    window.set_page_col(page.focus as i32);
+}
+
+/// The after-crash screen over the Continue screen: its buttons in one row.
+struct CrashPage {
+    screen: AfterCrash,
+    focus: usize,
+    /// What the last button said (the log was copied, a setting could not be saved).
+    note: String,
+}
+
+impl CrashPage {
+    fn new(screen: AfterCrash) -> CrashPage {
+        CrashPage {
+            screen,
+            focus: 0,
+            note: String::new(),
+        }
+    }
+
+    /// Up / Left and Down / Right (and Tab) move along the buttons and stop at the ends; A
+    /// presses the focused one, B goes back to the Continue screen.
+    fn handle(&mut self, input: Input) -> Cmd {
+        let last = self.screen.buttons().len().saturating_sub(1);
+        match input {
+            Input::Move(Nav::Up | Nav::Left) | Input::Tab { back: true } => {
+                self.focus = self.focus.saturating_sub(1);
+            }
+            Input::Move(Nav::Down | Nav::Right) | Input::Tab { back: false } => {
+                self.focus = (self.focus + 1).min(last);
+            }
+            Input::Activate => return Cmd::Crash(Some(self.focus)),
+            Input::Back => return Cmd::Crash(None),
+            Input::PrevGame | Input::NextGame | Input::OtherSaves => {}
+        }
+        Cmd::Screen(Command::None)
+    }
+}
+
 /// What the window shows over the Continue screen.
 enum Shown {
     Continue,
     Saves(SavesVm),
     Settings(SettingsVm),
+    AfterCrash(CrashPage),
 }
 
 impl Shown {
-    /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings.
+    /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings, 3 after a crash.
     fn code(&self) -> i32 {
         match self {
             Shown::Continue => 0,
             Shown::Saves(_) => 1,
             Shown::Settings(_) => 2,
+            Shown::AfterCrash(_) => 3,
         }
     }
 }
@@ -275,6 +340,8 @@ enum Cmd {
     Screen(Command),
     Saves(SavesCommand),
     Settings(SettingsCommand),
+    /// A button of the after-crash screen; `None` is B (back to the Continue screen).
+    Crash(Option<usize>),
 }
 
 /// The screen, the page over it and the window, redrawn after every change.
@@ -287,6 +354,8 @@ struct Ui {
     offset: Box<dyn Fn(u64) -> i64>,
     /// The first-run page while it is open.
     first: RefCell<Option<FirstRun>>,
+    /// The language of the after-crash screen.
+    lang: Lang,
 }
 
 impl Ui {
@@ -312,6 +381,7 @@ impl Ui {
             Shown::Continue => {}
             Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
             Shown::Settings(vm) => apply_settings(&window, &vm.view()),
+            Shown::AfterCrash(page) => apply_crash(&window, page, self.lang),
         }
         window.set_page(shown.code());
     }
@@ -352,6 +422,7 @@ impl Ui {
             Shown::Continue => Cmd::Screen(self.screen.borrow_mut().handle(input)),
             Shown::Saves(vm) => Cmd::Saves(vm.handle(input)),
             Shown::Settings(vm) => Cmd::Settings(vm.handle(input)),
+            Shown::AfterCrash(page) => page.handle(input),
         };
         self.after(&command);
         command
@@ -382,6 +453,7 @@ impl Ui {
                 Ok(row) => Cmd::Settings(vm.click(row, col)),
                 Err(_) => Cmd::Settings(SettingsCommand::None),
             },
+            Shown::AfterCrash(_) => Cmd::Crash(Some(col)),
         };
         self.after(&command);
         command
@@ -392,6 +464,7 @@ impl Ui {
         match command {
             Cmd::Saves(SavesCommand::Back) => self.close(Page::Saves),
             Cmd::Settings(SettingsCommand::Back) => self.close(Page::Settings),
+            Cmd::Crash(None) => *self.shown.borrow_mut() = Shown::Continue,
             _ => {}
         }
         self.redraw();
@@ -508,8 +581,9 @@ fn no_console_window(command: &mut std::process::Command) {
     let _ = command;
 }
 
-/// The arguments of `uncharted-universal play` for `start`.
-fn play_args(start: &Start) -> Vec<String> {
+/// The arguments of `uncharted-universal play` for `start`, then `--` and the runtime's own
+/// arguments (`--play ... -- <args>`) when there are any.
+fn play_args(start: &Start, run_args: &[String]) -> Vec<String> {
     let mut args = vec!["play".to_owned(), start.game.key().to_owned()];
     if let Some(keep) = start.keep {
         args.push("--keep".into());
@@ -518,15 +592,19 @@ fn play_args(start: &Start) -> Vec<String> {
             Keep::Local => "local".into(),
         });
     }
+    if !run_args.is_empty() {
+        args.push("--".into());
+        args.extend(run_args.iter().cloned());
+    }
     args
 }
 
-/// The status line after a run of the play command.
-fn run_status(game: Game, result: std::io::Result<std::process::Output>) -> String {
+/// The status line after a run of the play command; `log` is what it printed.
+fn run_status(game: Game, result: std::io::Result<std::process::ExitStatus>, log: &str) -> String {
     match result {
         Err(err) => format!("Could not start {}: {err}", cli_path().display()),
-        Ok(out) if out.status.success() => format!("{} closed.", game.name()),
-        Ok(out) => String::from_utf8_lossy(&out.stderr)
+        Ok(status) if status.success() => format!("{} closed.", game.name()),
+        Ok(status) => log
             .lines()
             .rev()
             .map(str::trim)
@@ -536,9 +614,117 @@ fn run_status(game: Game, result: std::io::Result<std::process::Output>) -> Stri
                 format!(
                     "{} stopped with exit status {}.",
                     game.name(),
-                    out.status.code().unwrap_or(-1)
+                    status.code().unwrap_or(-1)
                 )
             }),
+    }
+}
+
+/// What the command line asks for.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Args {
+    play: Option<Game>,
+    run_args: Vec<String>,
+}
+
+/// `--play <game>`, then everything after `--` for the runtime. Anything else is an error.
+fn parse_args(args: &[String]) -> Result<Args, String> {
+    let mut parsed = Args::default();
+    let mut rest = args.iter();
+    while let Some(arg) = rest.next() {
+        match arg.as_str() {
+            "--play" => {
+                let key = rest.next().ok_or("--play needs a game: u1, u2 or u3")?;
+                parsed.play =
+                    Some(Game::from_key(key).ok_or_else(|| format!("unknown game: {key}"))?);
+            }
+            "--" => {
+                parsed.run_args = rest.by_ref().cloned().collect();
+            }
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+    Ok(parsed)
+}
+
+/// The game `--play` starts at once: none when the pickup of an unfinished run put the
+/// after-crash screen up, since starting would replace that screen before it is seen. The
+/// screen's Play again button starts the game instead.
+fn start_now(play: Option<Game>, crash_shown: bool) -> Option<Game> {
+    play.filter(|_| !crash_shown)
+}
+
+/// What the after-run step reads on this device: the logs, the settings, the known issues.
+fn crash_context(cx: &work::Context) -> after_crash::Context {
+    let settings = settings_file::read(&cx.dirs.config.join(settings_file::SETTINGS_FILE));
+    let preset = settings
+        .get("preset")
+        .and_then(|value| value.as_str())
+        .unwrap_or("default")
+        .to_string();
+    let launcher = std::env::current_exe()
+        .map(|exe| exe.display().to_string())
+        .unwrap_or_else(|_| "?".into());
+    after_crash::Context {
+        logs: cx.dirs.logs(),
+        build: env!("CARGO_PKG_VERSION").to_string(),
+        preset,
+        issues: logs::parse_known_issues(KNOWN_ISSUES).unwrap_or_default(),
+        details: ReportDetails {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            at_unix: local_clock_now(),
+            system: vec![format!("Launcher: {launcher}")],
+            settings,
+            // Not measured here: no low-space line in the report.
+            free_bytes: u64::MAX,
+        },
+        redact: Redact::for_home(&cx.vars.home, Vec::new()),
+    }
+}
+
+/// The game's saves folder, where the runtime writes `where.json`.
+fn save_root(cx: &work::Context, game: Game) -> PathBuf {
+    saves::save_root(game, cx.os, &cx.vars, &cx.dirs.install(game.key()))
+        .unwrap_or_else(|_| cx.dirs.data.join("user").join(game.name()))
+}
+
+/// The after-run step for `game`: the after-crash screen when the run crashed.
+fn after_run(cx: &work::Context, game: Game) -> Option<CrashPage> {
+    after_crash::after_run(
+        &crash_context(cx),
+        game,
+        &save_root(cx, game),
+        local_clock_now(),
+    )
+    .map(CrashPage::new)
+}
+
+/// The after-crash screen's buttons on this device. Play again is noted here and started by
+/// `main` once the press returns `Pressed::Playing`, through the same path as Continue.
+struct AppHost {
+    window: slint::Weak<AppWindow>,
+    settings: PathBuf,
+}
+
+impl Host for AppHost {
+    fn set_setting(&mut self, key: &str, value: &str) -> Result<(), String> {
+        settings_file::set_extra(&self.settings, key, value).map_err(|e| e.to_string())
+    }
+
+    fn play(&mut self, _game: Game) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn open_url(&mut self, url: &str) {
+        if let Err(error) = play::open_url(url) {
+            eprintln!("could not open {url}: {error}");
+        }
+    }
+
+    fn copy_text(&mut self, text: &str) {
+        if let Some(window) = self.window.upgrade() {
+            window.invoke_copy_text(text.into());
+        }
     }
 }
 
@@ -584,6 +770,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // First, before any thread (Slint's and gilrs's included): the host's library injection
     // out of this process, so `uncharted-universal play` and the game never inherit it.
     uncharted_core::host_env::clean_process();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args = match parse_args(&args) {
+        Ok(args) => args,
+        Err(problem) => {
+            eprintln!(
+                "{problem}\nusage: uncharted-app [--play <u1|u2|u3> [-- <runtime arguments>]]"
+            );
+            std::process::exit(2);
+        }
+    };
     let window = AppWindow::new()?;
     let os = Os::current();
     let vars = Vars::from_lookup(os, |k| std::env::var(k).ok());
@@ -612,17 +808,78 @@ fn main() -> Result<(), slint::PlatformError> {
         now: Box::new(local_clock_now),
         offset: Box::new(local_offset),
         first: RefCell::new(None),
+        lang: Lang::detect(|name| std::env::var(name).ok()),
     });
 
     // A finished game run comes back from its thread through this channel; the hardware probe
     // through the other.
-    let (done_tx, done_rx) = mpsc::channel::<String>();
+    let (done_tx, done_rx) = mpsc::channel::<(Game, String)>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     // What the first run's jobs come to.
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
 
+    // Start a game through `uncharted-universal play` on a thread: Continue, Play, the
+    // after-crash screen's Play again and `--play`. Its output goes to the run log, which the
+    // after-run step reads.
+    let start_game: Rc<dyn Fn(Start)> = Rc::new({
+        let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
+        let run_args = args.run_args.clone();
+        move |start: Start| {
+            let places = places.borrow();
+            let place = places.iter().find(|p| p.game == start.game);
+            if let (Some(slot), Some(place)) = (start.slot, place) {
+                if let Err(err) = saves::select(&place.user_dir, start.game, slot) {
+                    ui.screen
+                        .borrow_mut()
+                        .set_status(&format!("Could not choose slot {slot}: {err}"));
+                    ui.redraw();
+                    return;
+                }
+            }
+            if let Some(config) = &config {
+                let _ = load::remember_started(config, start.game);
+            }
+            let env = config
+                .as_deref()
+                .map(|c| settings_file::extra(&c.join(settings_file::SETTINGS_FILE)))
+                .unwrap_or_default();
+            let logs = cx.as_ref().map(|cx| cx.dirs.logs());
+            let game = start.game;
+            let child = play::start(
+                &cli_path(),
+                &play_args(&start, &run_args),
+                game,
+                &env,
+                logs.as_deref(),
+            );
+            let mut child = match child {
+                Ok(child) => child,
+                Err(err) => {
+                    ui.screen
+                        .borrow_mut()
+                        .set_status(&run_status(game, Err(err), ""));
+                    ui.redraw();
+                    return;
+                }
+            };
+            ui.screen
+                .borrow_mut()
+                .running(&format!("Starting {}...", game.name()));
+            ui.redraw();
+            let done = done_tx.clone();
+            std::thread::spawn(move || {
+                let result = child.wait();
+                let log = logs
+                    .map(|logs| std::fs::read_to_string(logs.join(logs::RUN_LOG)).unwrap_or_default())
+                    .unwrap_or_default();
+                let _ = done.send((game, run_status(game, result, &log)));
+            });
+        }
+    });
+
     let run: Rc<dyn Fn(Cmd)> = Rc::new({
         let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
+        let start_game = start_game.clone();
         move |command| match command {
             Cmd::Screen(Command::None)
             | Cmd::Saves(SavesCommand::None | SavesCommand::Back)
@@ -675,37 +932,39 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.screen.borrow_mut().set_status(&keep_status(game, keep));
                 ui.redraw();
             }
-            Cmd::Screen(Command::Start(start)) => {
-                let places = places.borrow();
-                let place = places.iter().find(|p| p.game == start.game);
-                if let (Some(slot), Some(place)) = (start.slot, place) {
-                    if let Err(err) = saves::select(&place.user_dir, start.game, slot) {
-                        ui.screen
-                            .borrow_mut()
-                            .set_status(&format!("Could not choose slot {slot}: {err}"));
+            Cmd::Screen(Command::Start(start)) => start_game(start),
+            Cmd::Crash(None) => {}
+            Cmd::Crash(Some(index)) => {
+                let (Some(cx), Some(screen)) = (&cx, crash_screen(&ui)) else {
+                    return;
+                };
+                let Some(&button) = screen.buttons().get(index) else {
+                    return;
+                };
+                let mut host = AppHost {
+                    window: ui.window.clone(),
+                    settings: cx.dirs.config.join(settings_file::SETTINGS_FILE),
+                };
+                match screen.press(button, &crash_context(cx), &mut host, ui.lang) {
+                    Pressed::Stay(note) => {
+                        if let Shown::AfterCrash(page) = &mut *ui.shown.borrow_mut() {
+                            page.note = note;
+                        }
                         ui.redraw();
-                        return;
+                    }
+                    Pressed::Playing => {
+                        *ui.shown.borrow_mut() = Shown::Continue;
+                        start_game(Start {
+                            game: screen.game,
+                            slot: None,
+                            keep: None,
+                        });
+                    }
+                    Pressed::Home => {
+                        *ui.shown.borrow_mut() = Shown::Continue;
+                        ui.redraw();
                     }
                 }
-                if let Some(config) = &config {
-                    let _ = load::remember_started(config, start.game);
-                }
-                ui.screen
-                    .borrow_mut()
-                    .running(&format!("Starting {}...", start.game.name()));
-                ui.redraw();
-                let done = done_tx.clone();
-                std::thread::spawn(move || {
-                    let mut command = std::process::Command::new(cli_path());
-                    command
-                        .args(play_args(&start))
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped());
-                    no_console_window(&mut command);
-                    let result = command.output();
-                    let _ = done.send(run_status(start.game, result));
-                });
             }
             Cmd::Saves(command) => {
                 let Some(backups) = &backups else {
@@ -787,6 +1046,22 @@ fn main() -> Result<(), slint::PlatformError> {
     if cx.as_ref().is_some_and(|cx| setup::is_first_run(&cx.dirs)) {
         ui.open_first(None, steam);
     }
+    // A run the app started but did not see end (closed, or left by Game Mode).
+    let picked_up = cx.as_ref().and_then(|cx| {
+        let game = after_crash::unfinished(&cx.dirs.logs())?;
+        after_run(cx, game)
+    });
+    let crash_shown = picked_up.is_some();
+    if let Some(page) = picked_up {
+        ui.show(Shown::AfterCrash(page));
+    }
+    if let Some(game) = start_now(args.play, crash_shown) {
+        start_game(Start {
+            game,
+            slot: None,
+            keep: None,
+        });
+    }
 
     // Poll the controller, the game run, the probe and the first run's jobs on the UI thread;
     // all are cheap to drain.
@@ -796,12 +1071,16 @@ fn main() -> Result<(), slint::PlatformError> {
         slint::TimerMode::Repeated,
         Duration::from_millis(16),
         move || {
-            if let Ok(status) = done_rx.try_recv() {
+            if let Ok((game, status)) = done_rx.try_recv() {
                 let games = load_all(&places.borrow());
                 let mut screen = ui.screen.borrow_mut();
                 screen.reload(games);
                 screen.finished(&status);
                 drop(screen);
+                // The after-run step: the run's log and where.json; a crash shows its screen.
+                if let Some(page) = cx.as_ref().and_then(|cx| after_run(cx, game)) {
+                    *ui.shown.borrow_mut() = Shown::AfterCrash(page);
+                }
                 ui.redraw();
             }
             while let Ok(event) = event_rx.try_recv() {

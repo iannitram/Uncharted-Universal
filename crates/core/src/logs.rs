@@ -6,11 +6,11 @@
 //!
 //! Path strings are `/`-separated or native as the OS gave them; a log never holds a dump path.
 
-use crate::error::{not_built, Result};
+use crate::error::{Error, Result};
 use crate::games::Game;
-use serde_json::Value;
-use std::fs::{self, create_dir_all, OpenOptions};
-use std::io::Write;
+use serde_json::{Map, Value};
+use std::fs::{self, create_dir_all, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 /// How many launcher logs are kept (`KEEP` in `uncharted_logs.py`): `launcher.log` and
@@ -22,6 +22,29 @@ pub const HANG_SECONDS: u64 = 10;
 pub const REPORT_LOG_BYTES: u64 = 8 << 20;
 /// The line a clean launcher exit writes (`CLOSED`).
 pub const CLOSED: &str = "== Launcher closed";
+/// The line the launcher writes when its window stops responding for `HANG_SECONDS`
+/// (`NOT_RESPONDING`).
+pub const NOT_RESPONDING: &str = "== Not responding";
+/// The launcher log's name in the logs folder: `rotate(logs, LAUNCHER_LOG, KEEP)` before each
+/// start, then write `launcher.log`.
+pub const LAUNCHER_LOG: &str = "launcher";
+/// The game's run log in the logs folder: the runtime's output, with its `Crash:` line
+/// (`last_run.log` in the saves folder of `uncharted_logs.py`).
+pub const RUN_LOG: &str = "last_run.log";
+/// `health` warns below this much free space where the launcher keeps its data (5 GiB).
+pub const LOW_FREE_BYTES: u64 = 5 << 30;
+/// A run of this many hex digits or more is a key to `redact`.
+pub const KEY_HEX_DIGITS: usize = 32;
+/// How much of the run log's end `health` reads (`read_tail` in `uncharted_linux.py`): a run
+/// log can grow to gigabytes, and the `Crash:` line is at its end.
+const RUN_LOG_TAIL: u64 = 1 << 20;
+/// What a launcher log holds when the launcher's own code failed: the Python launcher's errors
+/// (`health` in `uncharted_logs.py`) and a Rust panic.
+const LAUNCHER_ERRORS: [&str; 3] = [
+    "Fatal Python error",
+    "Traceback (most recent call last)",
+    "panicked at",
+];
 
 /// What to take out of a text.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -34,10 +57,238 @@ pub struct Redact {
     pub dump_dirs: Vec<String>,
 }
 
+impl Redact {
+    /// The home folder, its last part as the user name (`/home/<user>`, `C:\Users\<user>`,
+    /// `/Users/<user>`), and `dump_dirs`. (`private` in `uncharted_logs.py` took the name from
+    /// the login instead.)
+    pub fn for_home(home: &Path, dump_dirs: Vec<String>) -> Redact {
+        Redact {
+            home: home.to_string_lossy().into_owned(),
+            user: home
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            dump_dirs,
+        }
+    }
+}
+
 /// `text` with the home folder, the user name in paths, the dump folders, and any run of 32 or
 /// more hex digits (a key) replaced. Never fails; an empty `Redact` still removes hex keys.
+///
+/// - Each dump folder becomes `<dump>` and the home folder `~` (dump folders first, longest
+///   first, so a dump inside the home folder is still `<dump>`). A folder matches with either
+///   separator, JSON-escaped (`\\`), with a trailing separator or not, and ignoring ASCII case;
+///   the character after it must not continue a name (a letter, digit or `_`). A folder with no
+///   separator once trailing ones are cut (`/`, `C:\`, empty) is left alone.
+/// - The user name, when it has two characters or more, becomes `<user>` only right after a
+///   `/` or `\` and before a non-name character: `/run/media/<user>/disk`, but a user `deck`
+///   stays in "Steam Deck".
+/// - A run of `KEY_HEX_DIGITS` or more ASCII hex digits becomes `<key>`.
 pub fn redact(text: &str, what: &Redact) -> String {
-    not_built!("logs::redact")
+    let mut folders: Vec<(&str, &str)> = what
+        .dump_dirs
+        .iter()
+        .map(|dir| (dir.as_str(), "<dump>"))
+        .collect();
+    folders.sort_by_key(|(dir, _)| std::cmp::Reverse(trim_folder(dir).len()));
+    folders.push((what.home.as_str(), "~"));
+
+    let mut out = text.to_string();
+    for (folder, mark) in folders {
+        let folder = trim_folder(folder);
+        if !folder.contains(['/', '\\']) {
+            continue;
+        }
+        let backslashed = folder.replace('/', "\\");
+        let mut forms = vec![
+            backslashed.replace('\\', "\\\\"),
+            folder.to_string(),
+            folder.replace('\\', "/"),
+            backslashed,
+        ];
+        forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+        forms.dedup();
+        for form in forms {
+            out = replace_bounded(&out, &form, mark, false);
+        }
+    }
+    if what.user.chars().count() >= 2 {
+        out = replace_bounded(&out, &what.user, "<user>", true);
+    }
+    remove_hex_keys(&out)
+}
+
+fn trim_folder(folder: &str) -> &str {
+    folder.trim_end_matches(['/', '\\'])
+}
+
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// `text` with each ASCII-case-insensitive `needle` that no name character follows (and, with
+/// `after_separator`, that a `/` or `\` precedes) replaced by `mark`.
+fn replace_bounded(text: &str, needle: &str, mark: &str, after_separator: bool) -> String {
+    if needle.is_empty() {
+        return text.to_string();
+    }
+    // ASCII lower-casing keeps every byte offset, so offsets found in `lower` index `text`.
+    let lower = text.to_ascii_lowercase();
+    let needle = needle.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let (mut copied, mut from) = (0, 0);
+    while let Some(found) = lower[from..].find(&needle) {
+        let (start, end) = (from + found, from + found + needle.len());
+        let before = !after_separator || text[..start].ends_with(['/', '\\']);
+        let after = !text[end..].starts_with(is_name_char);
+        if before && after {
+            out.push_str(&text[copied..start]);
+            out.push_str(mark);
+            copied = end;
+            from = end;
+        } else {
+            from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+/// `text` with each run of `KEY_HEX_DIGITS` or more ASCII hex digits replaced by `<key>`.
+fn remove_hex_keys(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let (mut copied, mut at) = (0, 0);
+    while at < bytes.len() {
+        if !bytes[at].is_ascii_hexdigit() {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && bytes[at].is_ascii_hexdigit() {
+            at += 1;
+        }
+        if at - start >= KEY_HEX_DIGITS {
+            out.push_str(&text[copied..start]);
+            out.push_str("<key>");
+            copied = at;
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+#[cfg(test)]
+mod redact_tests {
+    use super::*;
+
+    fn what(home: &str, user: &str, dumps: &[&str]) -> Redact {
+        Redact {
+            home: home.into(),
+            user: user.into(),
+            dump_dirs: dumps.iter().map(|d| d.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn removes_home_and_user_only_in_paths() {
+        // test_private_removes_home_and_user in tests/test_logs.py.
+        let home = "/home/kamadha";
+        let text = redact(
+            &format!("{home}/Games/x and /run/media/kamadha/disk and Steam Deck kamadha"),
+            &what(home, "kamadha", &[]),
+        );
+        assert!(!text.contains(home));
+        assert!(text.contains("~/Games/x"));
+        assert!(text.contains("/run/media/<user>/disk"));
+        assert!(text.ends_with("kamadha"));
+    }
+
+    #[test]
+    fn a_short_or_empty_user_is_kept() {
+        assert_eq!(
+            redact("/media/k/disk", &what("", "k", &[])),
+            "/media/k/disk"
+        );
+        assert_eq!(redact("/media/k/disk", &Redact::default()), "/media/k/disk");
+    }
+
+    #[test]
+    fn deck_stays_in_steam_deck() {
+        let got = redact(
+            "Steam Deck, /home/deck/x, /run/media/deck",
+            &what("/home/deck", "deck", &[]),
+        );
+        assert_eq!(got, "Steam Deck, ~/x, /run/media/<user>");
+    }
+
+    #[test]
+    fn a_longer_name_is_not_the_home_folder() {
+        let got = redact(
+            "/home/kam/a /home/kamadha/b /home/kam",
+            &what("/home/kam", "", &[]),
+        );
+        assert_eq!(got, "~/a /home/kamadha/b ~");
+    }
+
+    #[test]
+    fn windows_home_in_both_separators_and_json() {
+        let r = what(r"C:\Users\Kam", "Kam", &[]);
+        assert_eq!(
+            redact(r"C:\Users\Kam\AppData c:/users/kam/x", &r),
+            r"~\AppData ~/x"
+        );
+        assert_eq!(
+            redact(r#"{"dir": "C:\\Users\\Kam\\g"}"#, &r),
+            r#"{"dir": "~\\g"}"#
+        );
+        assert_eq!(redact(r"D:\Users\kam\x", &r), r"D:\Users\<user>\x");
+    }
+
+    #[test]
+    fn a_root_folder_is_left_alone() {
+        assert_eq!(
+            redact(r"/usr/bin C:\x", &what("/", "", &[r"C:\"])),
+            r"/usr/bin C:\x"
+        );
+    }
+
+    #[test]
+    fn dump_folders_beat_the_home_folder() {
+        let r = what(
+            "/home/kam",
+            "kam",
+            &["/home/kam/games/u4", "/mnt/dumps/CUSA00341/"],
+        );
+        assert_eq!(
+            redact(
+                "/home/kam/games/u4/eboot.bin /mnt/dumps/CUSA00341 /home/kam/x",
+                &r
+            ),
+            "<dump>/eboot.bin <dump> ~/x"
+        );
+    }
+
+    #[test]
+    fn hex_keys_of_32_digits_or_more() {
+        let key = "0123456789abcdefABCDEF0123456789";
+        assert_eq!(key.len(), 32);
+        assert_eq!(
+            redact(&format!("key={key}."), &Redact::default()),
+            "key=<key>."
+        );
+        assert_eq!(redact(&format!("0x{key}ff"), &Redact::default()), "0x<key>");
+        let short = &key[..31];
+        assert_eq!(redact(short, &Redact::default()), short);
+        assert_eq!(redact("0xdeadbeef é", &Redact::default()), "0xdeadbeef é");
+    }
+
+    #[test]
+    fn for_home_takes_the_user_from_the_folder() {
+        let r = Redact::for_home(Path::new("/home/deck"), vec!["/d".into()]);
+        assert_eq!(r, what("/home/deck", "deck", &["/d"]));
+    }
 }
 
 /// The reason line of a failed run: the last line of `run_log` that starts with `Crash:`
@@ -304,6 +555,23 @@ pub struct Where {
     pub subtitle: String,
 }
 
+impl Where {
+    /// The chapter a player would name: the subtitle, else the title, else `None`.
+    pub fn chapter(&self) -> Option<String> {
+        [&self.subtitle, &self.title]
+            .into_iter()
+            .find(|text| !text.is_empty())
+            .cloned()
+    }
+
+    /// The text `match_known` looks for an issue's locations in: the title and the subtitle.
+    pub fn location(&self) -> String {
+        format!("{} {}", self.title, self.subtitle)
+            .trim()
+            .to_string()
+    }
+}
+
 /// One line of `playthrough.jsonl` (#170): one game run. In the file its keys are `build`,
 /// `game` (`Game::key`), `chapter`, `preset`, `avg_fps`, `ended` (`"ok"`, `"crash"`,
 /// `"credits"`) and `at_unix`, sorted, one JSON object per line.
@@ -344,17 +612,7 @@ pub fn record(
     ended: Ended,
     at_unix: u64,
 ) -> PlaythroughRun {
-    let chapter = if let Some(where_) = where_ {
-        if !where_.subtitle.is_empty() {
-            Some(where_.subtitle.clone())
-        } else if !where_.title.is_empty() {
-            Some(where_.title.clone())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let chapter = where_.and_then(Where::chapter);
 
     let avg_fps = avg_fps.map(|fps| (fps * 10.0).round() / 10.0);
 
@@ -560,21 +818,286 @@ pub fn summary(runs: &[PlaythroughRun]) -> std::collections::BTreeMap<Game, Game
 }
 
 /// Rotate `<name>.log` to `<name>.1.log` .. `<name>.<keep-1>.log` in `folder`, dropping the
-/// oldest. A missing file is skipped. (`rotate` in `uncharted_logs.py`.)
+/// oldest. A missing file is skipped. (`rotate` in `uncharted_logs.py`.) Every rename is tried;
+/// the first that failed is the error (`Error::Io`), so a caller can still start its log.
 pub fn rotate(folder: &Path, name: &str, keep: usize) -> Result<()> {
-    not_built("logs::rotate")
+    let mut first_error = None;
+    for n in (1..keep).rev() {
+        let newer = if n == 1 {
+            folder.join(format!("{name}.log"))
+        } else {
+            folder.join(format!("{name}.{}.log", n - 1))
+        };
+        if newer.is_file() {
+            if let Err(error) = fs::rename(&newer, folder.join(format!("{name}.{n}.log"))) {
+                first_error.get_or_insert(Error::from(error));
+            }
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// What the recent logs say went wrong, newest first, as short sentences (`health`): the last
 /// `Crash:` line, a launcher session that did not close (no `CLOSED` line), low free space.
+///
+/// In order: the `Crash:` line in the last MiB of `<logs>/last_run.log` (cut to 160
+/// characters); a `NOT_RESPONDING` line in `launcher.log` (this session) or `launcher.1.log`
+/// (the previous one); for the previous session, a launcher error (a Python traceback or a Rust
+/// panic) and a missing `CLOSED` line; `free_bytes` under `LOW_FREE_BYTES`. A missing or
+/// unreadable log says nothing, so this never fails today; `Result` keeps room for that.
 pub fn health(logs: &Path, free_bytes: u64) -> Result<Vec<String>> {
-    not_built("logs::health")
+    let mut found = Vec::new();
+    if let Some(reason) = last_crash(logs) {
+        let reason: String = reason.chars().take(160).collect();
+        found.push(format!("The last game run stopped with: {reason}"));
+    }
+    let sessions = [
+        ("launcher.log", "This launcher session", false),
+        ("launcher.1.log", "The previous launcher session", true),
+    ];
+    for (name, when, finished) in sessions {
+        let Ok(bytes) = fs::read(logs.join(name)) else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        if text.contains(NOT_RESPONDING) {
+            found.push(format!(
+                "{when} stopped responding for a while (the log has what it was doing)."
+            ));
+        }
+        if finished {
+            if LAUNCHER_ERRORS.iter().any(|marker| text.contains(marker)) {
+                found.push(format!("{when} had an error in the launcher's own code."));
+            }
+            if !text.contains(CLOSED) {
+                found.push(format!(
+                    "{when} did not close normally (a crash, or it was forced to close)."
+                ));
+            }
+        }
+    }
+    if free_bytes < LOW_FREE_BYTES {
+        found.push(format!(
+            "Only {:.1} GB free where the launcher keeps its data.",
+            free_bytes as f64 / (1u64 << 30) as f64
+        ));
+    }
+    Ok(found)
+}
+
+/// The last `max` bytes of a file as text (UTF-8, damaged bytes replaced), starting at a whole
+/// line when the start was cut; `None` when it cannot be read.
+fn read_tail(path: &Path, max: u64) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    let start = size.saturating_sub(max);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    let mut from = 0;
+    if start > 0 {
+        from = bytes
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(0, |at| at + 1);
+    }
+    Some(String::from_utf8_lossy(&bytes[from..]).into_owned())
+}
+
+/// What a bug report holds besides the logs (`create_report`). What `uncharted_logs.py` read
+/// from the system itself (GPU, Vulkan devices, disk space), the caller gathers here.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ReportDetails {
+    /// The launcher's version, on the first line of `system.txt`.
+    pub version: String,
+    /// When the report was made, seconds since the Unix epoch; names the folder.
+    pub at_unix: u64,
+    /// System lines the caller found (OS release, CPU, GPU, Vulkan, disk space); `system.txt`
+    /// adds the OS, architecture and thread count itself.
+    pub system: Vec<String>,
+    /// The settings, written whole (keys sorted) as `settings.json`; `Null` writes `{}`.
+    pub settings: Value,
+    /// Free space where the launcher keeps its data, for `health.txt`.
+    pub free_bytes: u64,
 }
 
 /// The bug report: the logs, system details and settings, all through `redact`, written as a
 /// folder of text files under `out`; returns its path.
-pub fn create_report(logs: &Path, out: &Path, what: &Redact) -> Result<PathBuf> {
-    not_built("logs::create_report")
+///
+/// The folder is `<out>/uncharted-report-<at_unix>` (made, or reused) with `system.txt`,
+/// `health.txt` (`health`), `settings.json`, `launcher/<name>` for each `launcher*.log` and
+/// `game/<name>` for each `last_run*.log` in `logs`. A log over `REPORT_LOG_BYTES` keeps its
+/// first quarter and last three quarters, cut at whole lines, with a note between. A log that
+/// cannot be read is left out; a file that cannot be written is the error (`Error::Io`).
+pub fn create_report(
+    logs: &Path,
+    out: &Path,
+    details: &ReportDetails,
+    what: &Redact,
+) -> Result<PathBuf> {
+    let folder = out.join(format!("uncharted-report-{}", details.at_unix));
+    create_dir_all(folder.join("launcher"))?;
+    create_dir_all(folder.join("game"))?;
+
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "?".into());
+    let mut system = vec![
+        format!(
+            "Uncharted launcher {}, report at {} (Unix time)",
+            details.version, details.at_unix
+        ),
+        format!(
+            "OS: {} {}, {threads} threads",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    ];
+    system.extend(details.system.iter().cloned());
+    write_redacted(&folder.join("system.txt"), &system.join("\n"), what)?;
+
+    let found = health(logs, details.free_bytes)?;
+    let health_text = if found.is_empty() {
+        "No problems found in the recent logs.".to_string()
+    } else {
+        found
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    write_redacted(&folder.join("health.txt"), &health_text, what)?;
+
+    let settings = match &details.settings {
+        Value::Null => Value::Object(Map::new()),
+        other => sorted(other),
+    };
+    let settings = serde_json::to_string_pretty(&settings).map_err(|e| Error::Io(e.to_string()))?;
+    write_redacted(&folder.join("settings.json"), &settings, what)?;
+
+    let mut names: Vec<String> = fs::read_dir(logs)
+        .map(|entries| {
+            entries
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.path().is_file())
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    for name in names {
+        let part = if name.starts_with(LAUNCHER_LOG) && name.ends_with(".log") {
+            "launcher"
+        } else if name.starts_with("last_run") && name.ends_with(".log") {
+            "game"
+        } else {
+            continue;
+        };
+        let Some(text) = read_cut(&logs.join(&name), REPORT_LOG_BYTES) else {
+            continue;
+        };
+        fs::write(folder.join(part).join(&name), redact(&text, what))?;
+    }
+    Ok(folder)
+}
+
+fn write_redacted(path: &Path, text: &str, what: &Redact) -> Result<()> {
+    fs::write(path, redact(text, what) + "\n")?;
+    Ok(())
+}
+
+/// `value` with every object's keys in sorted order, whatever map order serde_json was built
+/// with (`sort_keys=True` in `uncharted_logs.py`).
+fn sorted(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), sorted(&map[key])))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(sorted).collect()),
+        other => other.clone(),
+    }
+}
+
+/// A log as text for a report: whole when it is at most `limit` bytes, else its first quarter
+/// and last three quarters of `limit`, each cut at a whole line (so no key is split and half
+/// kept), with a note between.
+fn read_cut(path: &Path, limit: u64) -> Option<String> {
+    let mut file = File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    if size <= limit {
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).ok()?;
+        return Some(String::from_utf8_lossy(&bytes).into_owned());
+    }
+    let mut head = vec![0; (limit / 4) as usize];
+    file.read_exact(&mut head).ok()?;
+    file.seek(SeekFrom::Start(size - limit * 3 / 4)).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let head = match head.iter().rposition(|&b| b == b'\n') {
+        Some(at) => &head[..at],
+        None => trim_hex_end(&head),
+    };
+    let tail = match tail.iter().position(|&b| b == b'\n') {
+        Some(at) => &tail[at + 1..],
+        None => trim_hex_start(&tail),
+    };
+    Some(format!(
+        "{}\n\n[... {:.0} MB log, middle left out ...]\n\n{}",
+        String::from_utf8_lossy(head),
+        size as f64 / (1u64 << 20) as f64,
+        String::from_utf8_lossy(tail)
+    ))
+}
+
+fn trim_hex_end(bytes: &[u8]) -> &[u8] {
+    let hex = bytes
+        .iter()
+        .rev()
+        .take_while(|b| b.is_ascii_hexdigit())
+        .count();
+    &bytes[..bytes.len() - hex]
+}
+
+fn trim_hex_start(bytes: &[u8]) -> &[u8] {
+    &bytes[bytes.iter().take_while(|b| b.is_ascii_hexdigit()).count()..]
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+
+    #[test]
+    fn a_line_cut_at_either_end_is_dropped() {
+        let dir = std::env::temp_dir().join(format!("uu-logs-cut-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("last_run.log");
+        // 42 bytes: lines of 8, 8, 9, 9 and 8 bytes, newlines included.
+        fs::write(&path, "aaaaaaa\nbbbbbbb\ncccccccc\ndddddddd\neeeeeee\n").unwrap();
+        let note = "\n\n[... 0 MB log, middle left out ...]\n\n";
+        // Limit 40: the first 10 bytes keep "aaaaaaa", the last 30 start inside "bbbbbbb".
+        assert_eq!(
+            read_cut(&path, 40).unwrap(),
+            format!("aaaaaaa{note}cccccccc\ndddddddd\neeeeeee\n")
+        );
+        assert_eq!(
+            read_cut(&path, 42).unwrap(),
+            fs::read_to_string(&path).unwrap()
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_key_at_a_cut_without_lines_is_dropped() {
+        assert_eq!(trim_hex_end(b"x=0123abcd"), b"x=");
+        assert_eq!(trim_hex_start(b"0123 rest"), b" rest");
+    }
 }
 
 #[cfg(test)]
@@ -589,5 +1112,209 @@ mod known_issue_game_tests {
         .unwrap();
         let ids: Vec<&str> = got.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids, ["ok"]);
+    }
+}
+
+/// The `Crash:` line of the last game run: `crash_line` of the last MiB of
+/// `<logs>/last_run.log`. `None` for a clean run, or when there is no readable run log.
+pub fn last_crash(logs: &Path) -> Option<String> {
+    read_tail(&logs.join(RUN_LOG), RUN_LOG_TAIL).and_then(|text| crash_line(&text))
+}
+
+/// The runtime's save-location file in a game's saves folder (`savedata::commit`, #168).
+pub const WHERE_FILE: &str = "where.json";
+
+/// The text of `where.json`: its `title` and `subtitle` (a missing one, or one that is not
+/// text, is empty). `None` when the text is not a JSON object or both are empty.
+pub fn parse_where(json: &str) -> Option<Where> {
+    let value: Value = serde_json::from_str(json).ok()?;
+    let map = value.as_object()?;
+    let text = |key: &str| {
+        map.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let found = Where {
+        title: text("title"),
+        subtitle: text("subtitle"),
+    };
+    found.chapter().is_some().then_some(found)
+}
+
+/// `parse_where` of a file; a missing, unreadable or damaged file is `None` (no save yet).
+pub fn load_where(path: &Path) -> Option<Where> {
+    parse_where(&fs::read_to_string(path).ok()?)
+}
+
+/// The bug form on GitHub (`.github/ISSUE_TEMPLATE/bug_report.yml`): `game` is a dropdown of
+/// `Game::name`, `where` a line of text (`ISSUE_URL` in `uncharted_logs.py`).
+pub const BUG_FORM: &str =
+    "https://github.com/iannitram/Uncharted-Universal/issues/new?template=bug_report.yml";
+/// The GitHub text is cut to this many characters; an issue holds at most 65536
+/// (`ISSUE_CHARS`).
+pub const ISSUE_CHARS: usize = 60_000;
+/// Lines from the start of the run log the GitHub text always keeps: build, settings, devices
+/// (`ISSUE_LOG_HEAD`).
+pub const ISSUE_LOG_HEAD: usize = 60;
+
+/// The run a bug report is about: the after-crash screen's game, chapter and `Crash:` line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunInfo {
+    pub game: Game,
+    /// From `where.json` (`Where::chapter`); `None` before the first save.
+    pub chapter: Option<String>,
+    /// The `Crash:` line without its prefix; `None` for a run that did not crash.
+    pub crash: Option<String>,
+}
+
+/// What Copy log for GitHub puts on the clipboard for the bug form's Log field (`issue_text` in
+/// `uncharted_logs.py`), through `redact`: the launcher version, the system lines, the game,
+/// chapter and `Crash:` line of `run` (when given), the settings (one line of sorted JSON), the
+/// `health` check, and the run log (`<logs>/last_run.log`): its first `ISSUE_LOG_HEAD` lines,
+/// then as many of its last lines as fit in `ISSUE_CHARS`, with a note of how many were left
+/// out. A log over `REPORT_LOG_BYTES` is cut as `create_report` cuts it first.
+pub fn issue_text(
+    logs: &Path,
+    details: &ReportDetails,
+    run: Option<&RunInfo>,
+    what: &Redact,
+) -> String {
+    let mut head = vec![format!(
+        "Uncharted launcher {}, copied at {} (Unix time)",
+        details.version, details.at_unix
+    )];
+    head.push(format!(
+        "OS: {} {}",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    ));
+    head.extend(details.system.iter().cloned());
+    if let Some(run) = run {
+        head.push(format!("Game: {}", run.game.name()));
+        head.push(format!(
+            "Chapter: {}",
+            run.chapter.as_deref().unwrap_or("not known (no save yet)")
+        ));
+        if let Some(crash) = &run.crash {
+            head.push(format!("Crash: {crash}"));
+        }
+    }
+    let settings = match &details.settings {
+        Value::Null => Value::Object(Map::new()),
+        other => sorted(other),
+    };
+    head.push(format!("Settings: {settings}"));
+    let found = health(logs, details.free_bytes).unwrap_or_default();
+    let found = if found.is_empty() {
+        "No problems found.".to_string()
+    } else {
+        found
+            .iter()
+            .map(|line| format!("- {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut parts = vec![
+        redact(&head.join("\n"), what),
+        redact(&format!("== Health check\n{found}"), what),
+    ];
+    let log = read_cut(&logs.join(RUN_LOG), REPORT_LOG_BYTES)
+        .map(|text| redact(&text, what))
+        .unwrap_or_default();
+    let lines: Vec<&str> = log.lines().collect();
+    if lines.is_empty() {
+        parts.push("== Game log\n(no game run logged yet)".to_string());
+        return parts.join("\n\n");
+    }
+    let first = lines[..lines.len().min(ISSUE_LOG_HEAD)].join("\n");
+    let used_so_far =
+        parts.iter().map(|p| p.chars().count() + 2).sum::<usize>() + first.chars().count() + 200;
+    let room = ISSUE_CHARS.saturating_sub(used_so_far);
+    let mut tail = Vec::new();
+    let mut used = 0;
+    for line in lines.iter().skip(ISSUE_LOG_HEAD).rev() {
+        let size = line.chars().count() + 1;
+        if used + size > room {
+            break;
+        }
+        tail.push(*line);
+        used += size;
+    }
+    let skipped = lines.len().saturating_sub(ISSUE_LOG_HEAD + tail.len());
+    let mut game_log = format!("== Game log ({RUN_LOG})\n{first}");
+    if skipped > 0 {
+        game_log.push_str(&format!("\n[... {skipped} lines left out ...]"));
+    }
+    for line in tail.iter().rev() {
+        game_log.push('\n');
+        game_log.push_str(line);
+    }
+    parts.push(game_log);
+    parts.join("\n\n")
+}
+
+/// The bug form with `run`'s game picked, its chapter in "Where in the game" and a title
+/// naming the crash: `BUG_FORM` plus `title`, `game` and `where` (percent-encoded UTF-8).
+/// The log itself is too long for a link; it goes on the clipboard (`issue_text`).
+pub fn bug_form_url(run: &RunInfo) -> String {
+    let crash: String = run
+        .crash
+        .as_deref()
+        .unwrap_or("crash")
+        .chars()
+        .take(80)
+        .collect();
+    let title = match &run.chapter {
+        Some(chapter) => format!("{}, {chapter}: {crash}", run.game.name()),
+        None => format!("{}: {crash}", run.game.name()),
+    };
+    let mut url = format!(
+        "{BUG_FORM}&title={}&game={}",
+        percent_encode(&title),
+        percent_encode(run.game.name())
+    );
+    if let Some(chapter) = &run.chapter {
+        url.push_str("&where=");
+        url.push_str(&percent_encode(chapter));
+    }
+    url
+}
+
+/// `text` for a URL query: ASCII letters, digits and `-_.~` stay, every other byte is `%XX`.
+fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod after_run_tests {
+    use super::*;
+
+    #[test]
+    fn where_takes_title_and_subtitle() {
+        let got = parse_where(
+            r#"{"game": "u2", "title": "Chapter 13", "subtitle": "Train-wreck", "detail": "x"}"#,
+        )
+        .unwrap();
+        assert_eq!(got.chapter().as_deref(), Some("Train-wreck"));
+        assert_eq!(got.location(), "Chapter 13 Train-wreck");
+        assert_eq!(parse_where(r#"{"title": 5}"#), None);
+        assert_eq!(parse_where("[]"), None);
+        assert_eq!(parse_where("not json"), None);
+    }
+
+    #[test]
+    fn percent_encoding_keeps_only_unreserved_bytes() {
+        assert_eq!(percent_encode("Uncharted 2"), "Uncharted%202");
+        assert_eq!(percent_encode("a&b=c/é"), "a%26b%3Dc%2F%C3%A9");
     }
 }

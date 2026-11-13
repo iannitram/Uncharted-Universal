@@ -288,6 +288,34 @@ export component AppWindow inherits Window {
     in property <[string]> setting-notes;
     in property <bool> tuning;
 
+    // The after-crash screen (page 3, roadmap 2.07, src/vm/after_crash.rs): the game, the
+    // chapter, a plain sentence, what the game said, its buttons (focus `page-col`, clicks
+    // `page-clicked(0, index)`) and the note a button left.
+    in property <string> crash-heading;
+    in property <string> crash-game;
+    in property <string> crash-chapter;
+    in property <string> crash-summary;
+    in property <string> crash-detail;
+    in property <string> crash-note;
+    in property <[string]> crash-buttons;
+
+    // The clipboard: Slint has no clipboard call in Rust, so a hidden text field copies.
+    public function copy-text(text: string) {
+        clip.text = text;
+        clip.select-all();
+        clip.copy();
+        clip.clear-selection();
+    }
+
+    clip := TextInput {
+        x: 0px;
+        y: 0px;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+        read-only: true;
+    }
+
     // Keep the focused row of a page in sight: `y` and `h` in the page's list.
     function follow(y: length, h: length) {
         if (y < -list.content-y) {
@@ -503,7 +531,7 @@ export component AppWindow inherits Window {
         // A page over the Continue screen: Saves or Settings. Opaque, and it takes every click
         // the page itself does not.
         Rectangle {
-            visible: root.page != 0;
+            visible: root.page == 1 || root.page == 2;
             x: 0;
             y: 0;
             width: root.width;
@@ -1086,6 +1114,60 @@ export component AppWindow inherits Window {
                 color: Theme.text;
                 font-size: root.unit * 1.3;
                 horizontal-alignment: center;
+            }
+        }
+
+        // The after-crash screen (roadmap 2.07) over the Continue screen.
+        if root.page == 3: Prompt {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            unit: root.unit;
+            Text {
+                text: root.crash-heading;
+                color: Theme.accent;
+                font-size: root.unit * 1.5;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.crash-game;
+                color: Theme.text;
+                font-size: root.unit * 1.2;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.crash-chapter;
+                color: Theme.dim;
+                font-size: root.unit;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.crash-summary;
+                color: Theme.text;
+                font-size: root.unit;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.crash-detail;
+                color: Theme.dim;
+                font-size: root.unit * 0.8;
+                wrap: word-wrap;
+            }
+            for label[i] in root.crash-buttons: FocusButton {
+                label: label;
+                unit: root.unit;
+                focused: root.page-col == i;
+                clicked => {
+                    root.page-clicked(0, i);
+                }
+            }
+            if root.crash-note != "": Text {
+                text: root.crash-note;
+                color: Theme.dim;
+                font-size: root.unit * 0.9;
+                wrap: word-wrap;
             }
         }
 
