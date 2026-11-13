@@ -75,6 +75,14 @@ jobs:
         run: |
           cargo run -q -p uncharted_cli -- --help
           cargo test -p uncharted_cli --test cli
+      - name: Run the fake hub on loopback
+        # `hub serve` on 127.0.0.1 with a synthetic build; a second copy of the binary pairs and
+        # pulls (crates/cli/tests/hub_loopback.rs), and the core service test runs the same flow
+        # in-process (crates/core/tests/hub_service.rs). Windows checks that paired-device
+        # storage fails closed before any connection, until its ACL work lands.
+        run: |
+          cargo test -p uncharted_cli --features hub --test hub_loopback
+          cargo test -p uncharted_core --features hub --test hub_service
       - name: Build the launcher and run its Fleet page tests (2.08)
         # Named so a broken Fleet page shows up by name; the workspace steps above already
         # build and test app/ with everything else.
