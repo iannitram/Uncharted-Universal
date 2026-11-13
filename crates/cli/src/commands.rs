@@ -145,9 +145,22 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
         Some(folder) => PathBuf::from(folder),
         None => core("prepare", prepare::locate(game, |name| ctx.var(name)))?.0,
     };
+    // Third-party patches come from BB_PATCHES_DIR, as in `run.py` and `patches` above; none
+    // set writes no patch file.
+    let patches = match ctx.var("BB_PATCHES_DIR").map(PathBuf::from) {
+        Some(dir) => {
+            let config = ctx
+                .var("BB_PATCHES_CONFIG")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| dir.join("patches.json"));
+            let selection = core("prepare", read_selection(&config))?;
+            Some(prepare::PatchSource { dir, selection })
+        }
+        None => None,
+    };
     let options = PrepareOptions {
-        apply_patches: true,
-        render_size: None,
+        patches,
+        ..PrepareOptions::default()
     };
     let manifest = core("prepare", prepare::prepare(&dump, &install, game, &options))?;
     let mut out = Outcome::default();

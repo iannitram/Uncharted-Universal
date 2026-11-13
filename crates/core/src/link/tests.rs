@@ -728,26 +728,33 @@ fn json_strings_escape_like_python() {
     assert_eq!(out, "\"a\\\"b\\\\c\\n\\u0001\\u007f\\u00e9\\ud83d\\ude00\"");
 }
 
-mod link_modules {
+pub(crate) mod link_modules {
     //! `link_modules` against a hand-built synthetic game: a plain-ELF executable, `libc.prx` and
     //! `libSceFios2.prx` with SCE dynamic tables, and the `BBPROBE2` boot image `prepare` writes.
     //! No game data. `scripts/link_modules.py` has no tests of its own, so the expected values are
     //! worked out by hand from the script (see `good_link_matches_the_hand_checked_image`); the
-    //! error cases port `tests/test_link_libc.py`.
+    //! error cases port `tests/test_link_libc.py`. The fixture builders are `pub(crate)` so
+    //! `prepare`'s tests can build a whole synthetic dump from them.
 
     use crate::link::*;
     use std::path::PathBuf;
 
-    struct Sym {
+    pub(crate) struct Sym {
+        pub(crate) name: &'static str,
+        pub(crate) kind: u8,
+        pub(crate) binding: u8,
+        pub(crate) section: u16,
+        pub(crate) value: u64,
+        pub(crate) size: u64,
+    }
+
+    pub(crate) const fn sym(
         name: &'static str,
         kind: u8,
         binding: u8,
         section: u16,
         value: u64,
-        size: u64,
-    }
-
-    const fn sym(name: &'static str, kind: u8, binding: u8, section: u16, value: u64) -> Sym {
+    ) -> Sym {
         Sym {
             name,
             kind,
@@ -766,19 +773,19 @@ mod link_modules {
     /// at 0, the load segment's bytes at 0x1000, PT_SCE_DYNLIBDATA (strings, symbols, PLT
     /// relocations, relocations) at 0x2000 with `p_memsz` 0, PT_DYNAMIC at 0x3000.
     #[derive(Default)]
-    struct Elf {
-        code: Vec<u8>,
-        memsz: u64,
-        flags: u32,
+    pub(crate) struct Elf {
+        pub(crate) code: Vec<u8>,
+        pub(crate) memsz: u64,
+        pub(crate) flags: u32,
         /// vaddr, filesz, memsz, align.
-        tls: Option<[u64; 4]>,
-        procparam: Option<u64>,
+        pub(crate) tls: Option<[u64; 4]>,
+        pub(crate) procparam: Option<u64>,
         /// Dynamic tag, ID, version, name.
-        ids: Vec<(u64, u64, u64, &'static str)>,
-        symbols: Vec<Sym>,
-        jmprel: Vec<(u64, u32, u32, i64)>,
-        rela: Vec<(u64, u32, u32, i64)>,
-        init: Option<u64>,
+        pub(crate) ids: Vec<(u64, u64, u64, &'static str)>,
+        pub(crate) symbols: Vec<Sym>,
+        pub(crate) jmprel: Vec<(u64, u32, u32, i64)>,
+        pub(crate) rela: Vec<(u64, u32, u32, i64)>,
+        pub(crate) init: Option<u64>,
     }
 
     fn put(data: &mut [u8], at: usize, bytes: &[u8]) {
@@ -786,7 +793,7 @@ mod link_modules {
     }
 
     impl Elf {
-        fn bytes(&self) -> Vec<u8> {
+        pub(crate) fn bytes(&self) -> Vec<u8> {
             let mut strings = vec![0u8];
             let mut intern = |s: &str| -> u64 {
                 if s.is_empty() {
@@ -943,7 +950,7 @@ mod link_modules {
 
     /// The executable: imports from libc, libSceFios2, a library nobody ships and
     /// libSceLibcInternal, a TLS block and process parameters.
-    fn eboot() -> Elf {
+    pub(crate) fn eboot() -> Elf {
         let mut code = FS.to_vec();
         code.push(0xc3);
         code.resize(0x40, 0);
@@ -976,7 +983,7 @@ mod link_modules {
 
     /// libc.prx: two exports, two imports from libkernel, a weak `module_start`, an absolute
     /// symbol, a TLS block and one of every relocation type the linker handles.
-    fn libc() -> Elf {
+    pub(crate) fn libc() -> Elf {
         let mut code = vec![0u8; 0x100];
         code[0x10] = 0xc3;
         code[0x20] = 0xc3;
@@ -1015,7 +1022,7 @@ mod link_modules {
         }
     }
 
-    fn fios() -> Elf {
+    pub(crate) fn fios() -> Elf {
         Elf {
             code: (1u8..=16).collect(),
             memsz: 0x800,
