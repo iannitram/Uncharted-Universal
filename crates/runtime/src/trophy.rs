@@ -1432,7 +1432,7 @@ mod tests {
         assert_eq!(unsafe { runtime_trophy_resolve(std::ptr::null()) }, 0);
         let nine: std::collections::HashSet<usize> = crate::abi::NID_TABLE
             .iter()
-            .filter_map(|(nid, _)| Some(resolve(nid)).filter(|&f| f != 0))
+            .filter_map(|(nid, _)| Some(resolve(nid.to_str().unwrap())).filter(|&f| f != 0))
             .collect();
         assert_eq!(
             nine.len(),
