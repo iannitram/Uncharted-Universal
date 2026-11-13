@@ -1,5 +1,25 @@
 #!/bin/sh
 # AppImage entry point: the launcher, with its writable data outside the read-only image.
+# No argument opens uncharted-app (the Rust launcher, roadmap 2.10). The command line's
+# commands go to uncharted-universal: the Steam shortcut `steam-add` writes is
+# `<AppImage> play u1`. `--classic`, and the classic launcher's own `--play` and `--report`
+# (shortcuts it wrote before 2.10), go to Uncharted until roadmap 2.11 retires it.
+#
+# First, for every path: Steam starts a non-Steam game with its overlay in LD_PRELOAD, its
+# runtime in LD_LIBRARY_PATH and its overlay and fossilize Vulkan layers on. The classic
+# launcher and run.py do not clear them, so this does, before anything here runs, as
+# packaging/bbport-entry.c did: the names of crates/core host_env (HOST_ONLY, then
+# DISABLED_LAYERS), in its order. A non-empty value is kept as BB_HOST_<name> for diagnostics.
+# The Rust programs clean their own environment again (the tarball has no AppRun).
+for name in LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT GTK_PATH GTK_MODULES GTK_EXE_PREFIX \
+    GIO_EXTRA_MODULES GDK_PIXBUF_MODULEDIR PYTHONHOME PYTHONPATH; do
+    eval "host_value=\${$name-}"
+    if [ -n "$host_value" ]; then export "BB_HOST_$name=$host_value"; fi
+    unset "$name"
+done
+unset name host_value
+export DISABLE_VK_LAYER_VALVE_steam_overlay_1=1 DISABLE_VK_LAYER_VALVE_steam_fossilize_1=1
+
 here=$(dirname "$(readlink -f "$0")")
 
 # The package is built on Debian 13 and needs glibc 2.38 or newer (Ubuntu 24.04, Linux Mint 22,
@@ -17,4 +37,10 @@ fi
 
 export BB_DATA_DIR="${BB_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/uncharted-linux}"
 mkdir -p "$BB_DATA_DIR"
-exec "$here/Uncharted" "$@"
+case ${1-} in
+    --classic) shift; exec "$here/Uncharted" "$@" ;;
+    --play|--report) exec "$here/Uncharted" "$@" ;;
+    check|prepare|play|steam-add|patches|hub|fleet|generate-art|help|--help|-h)
+        exec "$here/uncharted-universal" "$@" ;;
+esac
+exec "$here/uncharted-app" "$@"

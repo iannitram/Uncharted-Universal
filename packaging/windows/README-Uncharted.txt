@@ -13,10 +13,18 @@ Requirements
   Nothing else: Python and the libraries are inside this folder.
 
 Starting
-- Uncharted.exe opens the launcher. On the Game page choose your game folder, pick
-  Drake's Fortune, Among Thieves or Drake's Deception on the Play page and press PLAY.
-- Play Uncharted.exe starts the game straight away with the settings saved in the
-  launcher, without opening it (for shortcuts and Steam). Uncharted.exe --play does the same.
+- uncharted-app.exe opens the new launcher: pick a game and continue where you left off.
+- uncharted-universal.exe is the same launcher without a window, for Steam and shortcuts:
+  "uncharted-universal.exe play u1" (u2, u3) starts a game and waits for it, and
+  "uncharted-universal.exe steam-add" adds the games to your Steam library with artwork.
+  "uncharted-universal.exe help" lists the other commands.
+- Uncharted.exe opens the classic launcher, for the settings pages below while the new one
+  grows them. On the Game page choose your game folder, pick Drake's Fortune, Among Thieves
+  or Drake's Deception on the Play page and press PLAY. Uncharted.exe --play starts the game
+  straight away with the settings saved there, without opening it.
+- The new launcher is still being built: where a piece is missing, uncharted-app.exe and
+  uncharted-universal.exe say "not built yet". Uncharted.exe and Uncharted.exe --play work
+  as before.
 - Play page -> "Add to Steam" adds the collection to your Steam library, with its cover
   from your game folder. "Desktop shortcut" puts it on the desktop.
 - Your own covers: put u1.jpg, u2.jpg and u3.jpg (and a wide collection_banner.jpg for the

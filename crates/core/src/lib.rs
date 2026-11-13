@@ -33,6 +33,7 @@ pub mod dump;
 pub mod error;
 pub mod fleet;
 pub mod games;
+pub mod host_env;
 #[cfg(feature = "hub")]
 pub mod hub;
 pub mod language;

@@ -19,7 +19,7 @@ use uncharted_core::prepare::{self, PrepareOptions};
 use uncharted_core::profile::DeviceProfile;
 use uncharted_core::run_env::Settings;
 use uncharted_core::steam::{self, Shortcut};
-use uncharted_core::{profile, saves, Error, Result};
+use uncharted_core::{host_env, profile, saves, Error, Result};
 
 /// A command's result: `Err` is an early end (bad arguments, a core error) already in words.
 type Done = std::result::Result<Outcome, Outcome>;
@@ -286,13 +286,17 @@ impl Relay for LocalRelay {
     }
 }
 
-/// Starts the runtime as a child process and waits for it, the way `Play Uncharted.exe`
-/// (`packaging/windows/play.c`) waits for the game so Steam sees it running: no stdin, the
-/// player's extra arguments last, and Steam's `LD_PRELOAD` (the overlay) cleared so it does
-/// not load into the game (`packaging/bbport-entry.c` does that for the AppImage today).
+/// Starts the runtime as a child process and waits for it, so Steam sees the game running
+/// for as long as it runs (what the Windows `Play Uncharted.exe`, `packaging/windows/play.c`,
+/// did until 2.10 replaced it): no stdin, the player's extra arguments last, and on Linux the host's
+/// library injection taken out (`host_env`: Steam's `LD_PRELOAD` overlay and the rest of
+/// what `packaging/bbport-entry.c` removed). `main` has already cleaned this process; `host`
+/// repeats it for the child so a runner built elsewhere (the tests) is cleaned too.
 pub struct RuntimeRunner {
     pub program: PathBuf,
     pub extra_args: Vec<String>,
+    /// `host_env::changes` for this machine.
+    pub host: Vec<host_env::Change>,
 }
 
 impl RuntimeRunner {
@@ -306,8 +310,8 @@ impl RuntimeRunner {
         command
             .args(&self.extra_args)
             .envs(env.iter().map(|(name, value)| (name, value)))
-            .env_remove("LD_PRELOAD")
             .stdin(Stdio::null());
+        host_env::apply_to_command(&mut command, &self.host);
         command
     }
 }
@@ -387,6 +391,7 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
     let runner = RuntimeRunner {
         program: plan.program.clone(),
         extra_args: p.rest,
+        host: host_env::changes(ctx.os, |name| ctx.var(name)),
     };
     let interactive = ctx.interactive;
     let choose = move |_: &Sync| choose_keep(keep, interactive);
@@ -414,6 +419,16 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
 }
 
 // ---- steam-add ----
+
+/// The program a Steam shortcut starts: inside the Linux AppImage the AppImage file itself
+/// (`APPIMAGE`, set by its runtime; `ctx.exe` is in a mount that is gone once it quits, and
+/// the AppImage's `AppRun` hands `play` on to this program), else this program.
+pub fn shortcut_target(ctx: &Ctx) -> PathBuf {
+    match ctx.var("APPIMAGE") {
+        Some(appimage) if ctx.os == uncharted_core::platform::Os::Linux => PathBuf::from(appimage),
+        _ => ctx.exe.clone(),
+    }
+}
 
 /// The shortcut Steam gets: this program with `play <game>` (`play u1` opens the collection's
 /// menu, so no game named means the collection).
@@ -473,7 +488,7 @@ fn steam_add(args: &[String], ctx: &Ctx) -> Done {
         }
         None => None,
     };
-    let shortcut = shortcut_for(game, &ctx.exe);
+    let shortcut = shortcut_for(game, &shortcut_target(ctx));
     let userdata = match p.flag("userdata") {
         Some(folder) => PathBuf::from(folder),
         None => {
