@@ -1,13 +1,15 @@
 //! The launcher (ADR 0003): the Continue screen (docs/continue-screen.md, roadmap 2.04). One
 //! card per game from `core::savecard`, Continue and Play, Other saves, the sync-conflict
-//! prompt and the fleet warning; keyboard, mouse and controller move the same focus. The page
-//! row's About opens About (2.09): version, patches, licences, the Slint notice, and the
-//! language button, which is there until Settings (2.06) exists (owner ruling 2026-11-12). The
-//! page row's Fleet opens the Fleet page (2.08) the same way. The Continue screen's own texts
-//! are English until they are in the catalogues.
+//! prompt and the fleet warning; keyboard, mouse and controller move the same focus. Its Saves
+//! and Settings buttons open those pages (roadmap 2.06, `src/vm/`). The page row's About opens
+//! About (2.09): version, patches, licences, the Slint notice, and the language button (put
+//! there until Settings existed, owner ruling 2026-11-12; it has not moved yet). The page row's
+//! Fleet opens the Fleet page (2.08) the same way. The Continue screen's own texts are English
+//! until they are in the catalogues.
 //!
-//! The view model is `screen.rs` (tested without a window); this file draws its `View` into the
-//! Slint window and carries out its `Command`s. Continue and Play run
+//! The view models are `screen.rs` and `vm/` (tested without a window); this file draws their
+//! views into the Slint window and carries out their commands, the files through `pages_io.rs`
+//! and `settings_store.rs`. Continue and Play run
 //! `uncharted-universal play <game>` (the command line, roadmap 2.02) beside this program and
 //! wait for it: that command pulls the save, starts the game and pushes the save.
 //!
@@ -21,7 +23,9 @@ mod focus;
 mod input;
 mod lang;
 mod load;
+mod pages_io;
 mod screen;
+mod settings_store;
 mod vm;
 mod work;
 
@@ -47,7 +51,9 @@ use uncharted_core::patches::{Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::saves;
 use uncharted_core::setup;
-use vm::FleetVm;
+use vm::saves::{GameSaves, SavesCommand, SavesView};
+use vm::settings::{SettingsCommand, SettingsView};
+use vm::{FleetVm, SavesVm, SettingsVm};
 
 slint::include_modules!();
 
@@ -323,9 +329,97 @@ fn local_offset(unix: u64) -> i64 {
         .map_or(0, |at| i64::from(at.offset().fix().local_minus_utc()))
 }
 
-/// The screen and the window, redrawn after every change.
+/// Draw the Saves page.
+fn apply_saves(window: &AppWindow, view: &SavesView) {
+    window.set_page_games(model(view.games.iter().map(|g| (*g).into()).collect()));
+    window.set_page_game(view.current as i32);
+    let rows = |rows: &[vm::saves::SavesRow]| {
+        model(
+            rows.iter()
+                .map(|row| SlotRowData {
+                    title: row.title.as_str().into(),
+                    detail: row.detail.as_str().into(),
+                    mark: row.mark.as_str().into(),
+                    buttons: strings(&row.buttons),
+                })
+                .collect(),
+        )
+    };
+    window.set_save_slots(rows(&view.slots));
+    window.set_save_backups(rows(&view.backups));
+    window.set_saves_relay(view.relay.as_str().into());
+    window.set_saves_confirm(view.confirm.as_deref().unwrap_or("").into());
+    window.set_page_row(view.focus.row as i32);
+    window.set_page_col(view.focus.col as i32);
+    window.set_page_status(view.status.as_str().into());
+}
+
+/// Draw the Settings page.
+fn apply_settings(window: &AppWindow, view: &SettingsView) {
+    window.set_tune_cards(model(
+        view.cards
+            .iter()
+            .map(|card| TuneCardData {
+                title: card.title.as_str().into(),
+                lines: strings(&card.lines),
+                in_use: card.in_use,
+            })
+            .collect(),
+    ));
+    window.set_choices(model(
+        view.choices
+            .iter()
+            .map(|choice| ChoiceData {
+                label: choice.label.as_str().into(),
+                value: choice.value.as_str().into(),
+                can_prev: choice.can_prev,
+                can_next: choice.can_next,
+            })
+            .collect(),
+    ));
+    window.set_setting_notes(strings(&view.notes));
+    window.set_tuning(view.tuning);
+    window.set_page_row(view.focus.row as i32);
+    window.set_page_col(view.focus.col as i32);
+    window.set_page_status(view.status.as_str().into());
+}
+
+/// What the window shows over the Continue screen.
+enum Shown {
+    Continue,
+    Saves(SavesVm),
+    Settings(SettingsVm),
+}
+
+/// `page` of the window while About is open (over the Continue screen, whatever `Shown` is).
+const ABOUT_PAGE: i32 = 3;
+/// `page` of the window while Fleet is open, the same way as About.
+const FLEET_PAGE: i32 = 4;
+
+impl Shown {
+    /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings ([`ABOUT_PAGE`] is 3,
+    /// [`FLEET_PAGE`] 4).
+    fn code(&self) -> i32 {
+        match self {
+            Shown::Continue => 0,
+            Shown::Saves(_) => 1,
+            Shown::Settings(_) => 2,
+        }
+    }
+}
+
+/// A command of the screen or of a page, for `main` to carry out.
+#[derive(Debug, Clone, PartialEq)]
+enum Cmd {
+    Screen(Command),
+    Saves(SavesCommand),
+    Settings(SettingsCommand),
+}
+
+/// The screen, the page over it and the window, redrawn after every change.
 struct Ui {
     screen: RefCell<Screen>,
+    shown: RefCell<Shown>,
     lang: RefCell<Lang>,
     /// About's focus while About is open over the Continue screen.
     about: RefCell<Option<AboutFocus>>,
@@ -350,12 +444,20 @@ impl Ui {
         };
         let view = self.screen.borrow().view(&clock);
         apply(&window, &view, &mut self.pictures.borrow_mut());
+        let shown = self.shown.borrow();
+        match &*shown {
+            Shown::Continue => {}
+            Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
+            Shown::Settings(vm) => apply_settings(&window, &vm.view()),
+        }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
-        window.set_page(match (about.is_some(), fleet.is_open()) {
-            (true, _) => 1,
-            (false, true) => 2,
-            (false, false) => 0,
+        window.set_page(if about.is_some() {
+            ABOUT_PAGE
+        } else if fleet.is_open() {
+            FLEET_PAGE
+        } else {
+            shown.code()
         });
         window.set_about_focus(about.as_ref().map_or(0, |a| a.focused() as i32));
         window.set_fleet_focus(fleet.fleet().focused() as i32);
@@ -387,7 +489,19 @@ impl Ui {
         job
     }
 
-    fn input(&self, input: Input) -> Command {
+    /// Open a page over the Continue screen.
+    fn show(&self, shown: Shown) {
+        *self.shown.borrow_mut() = shown;
+        self.redraw();
+    }
+
+    /// Back to the Continue screen, focus on the button of the page left.
+    fn close(&self, page: Page) {
+        *self.shown.borrow_mut() = Shown::Continue;
+        self.screen.borrow_mut().focus_page(page);
+    }
+
+    fn input(&self, input: Input) -> Cmd {
         let about = self.about.borrow_mut().as_mut().map(|about| match input {
             Input::Move(nav) => about.nav(nav),
             Input::Tab { back } => about.nav(if back { Nav::Left } else { Nav::Right }),
@@ -397,7 +511,7 @@ impl Ui {
         });
         if let Some(effect) = about {
             self.page_effect(effect);
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
         let mut fleet = self.fleet.borrow_mut();
         if fleet.is_open() {
@@ -410,18 +524,24 @@ impl Ui {
             };
             drop(fleet);
             self.page_effect(effect);
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
         drop(fleet);
-        let command = self.screen.borrow_mut().handle(input);
-        self.opened(command)
+        let command = match &mut *self.shown.borrow_mut() {
+            Shown::Continue => Cmd::Screen(self.screen.borrow_mut().handle(input)),
+            Shown::Saves(vm) => Cmd::Saves(vm.handle(input)),
+            Shown::Settings(vm) => Cmd::Settings(vm.handle(input)),
+        };
+        let command = self.opened(command);
+        self.after(&command);
+        command
     }
 
     /// `area` 7 is a button of About (`AboutFocus::click`), 8 an item of Fleet
     /// (`FleetFocus::click`); the others are `Screen::click`'s.
-    fn click(&self, area: i32, index: i32) -> Command {
+    fn click(&self, area: i32, index: i32) -> Cmd {
         let Ok(index) = usize::try_from(index) else {
-            return Command::None;
+            return Cmd::Screen(Command::None);
         };
         let about = self.about.borrow_mut().as_mut().map(|about| match area {
             7 => about.click(index),
@@ -429,7 +549,7 @@ impl Ui {
         });
         if let Some(effect) = about {
             self.page_effect(effect);
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
         if self.fleet.borrow().is_open() {
             let effect = match area {
@@ -437,26 +557,57 @@ impl Ui {
                 _ => Effect::None,
             };
             self.page_effect(effect);
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
-        let command = self.screen.borrow_mut().click(area, index);
+        let command = Cmd::Screen(self.screen.borrow_mut().click(area, index));
         self.opened(command)
     }
 
     /// About and Fleet open here; every other command goes on to the app.
-    fn opened(&self, command: Command) -> Command {
-        if command == Command::Open(Page::About) {
+    fn opened(&self, command: Cmd) -> Cmd {
+        if command == Cmd::Screen(Command::Open(Page::About)) {
             *self.about.borrow_mut() = Some(AboutFocus::default());
             self.redraw();
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
-        if command == Command::Open(Page::Fleet) {
+        if command == Cmd::Screen(Command::Open(Page::Fleet)) {
             self.fleet.borrow_mut().open();
             self.redraw();
-            return Command::None;
+            return Cmd::Screen(Command::None);
         }
         self.redraw();
         command
+    }
+
+    /// A click on a page: `row` and `col` as the page's view model takes them; `row` -3 is the
+    /// page's Back button.
+    fn page_click(&self, row: i32, col: i32) -> Cmd {
+        let Ok(col) = usize::try_from(col) else {
+            return Cmd::Screen(Command::None);
+        };
+        if row == -3 {
+            return self.input(Input::Back);
+        }
+        let command = match &mut *self.shown.borrow_mut() {
+            Shown::Continue => Cmd::Screen(Command::None),
+            Shown::Saves(vm) => Cmd::Saves(vm.click(row, col)),
+            Shown::Settings(vm) => match usize::try_from(row) {
+                Ok(row) => Cmd::Settings(vm.click(row, col)),
+                Err(_) => Cmd::Settings(SettingsCommand::None),
+            },
+        };
+        self.after(&command);
+        command
+    }
+
+    /// Back closes the page; then redraw.
+    fn after(&self, command: &Cmd) {
+        match command {
+            Cmd::Saves(SavesCommand::Back) => self.close(Page::Saves),
+            Cmd::Settings(SettingsCommand::Back) => self.close(Page::Settings),
+            _ => {}
+        }
+        self.redraw();
     }
 
     /// Carry out what an input on About or Fleet means.
@@ -482,9 +633,9 @@ impl Ui {
     }
 }
 
-/// Connect the window's callbacks to the screen and the first-run page; every command goes to
-/// `run`, every first-run job to `jobs`.
-fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Command)>, jobs: Rc<dyn Fn(Job)>) {
+/// Connect the window's callbacks to the screen, the pages and the first-run page; every
+/// command goes to `run`, every first-run job to `jobs`.
+fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>, jobs: Rc<dyn Fn(Job)>) {
     window.on_input({
         let (ui, run, jobs) = (ui.clone(), run.clone(), jobs.clone());
         move |code| {
@@ -498,8 +649,12 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Command)>, jobs: Rc<dyn 
         }
     });
     window.on_clicked({
-        let ui = ui.clone();
+        let (ui, run) = (ui.clone(), run.clone());
         move |area, index| run(ui.click(area, index))
+    });
+    window.on_page_clicked({
+        let ui = ui.clone();
+        move |row, col| run(ui.page_click(row, col))
     });
     window.on_fr_clicked({
         let (ui, jobs) = (ui.clone(), jobs.clone());
@@ -611,6 +766,8 @@ fn run_status(game: Game, result: std::io::Result<std::process::Output>) -> Stri
     }
 }
 
+/// The status of a page not in this build yet: Fleet and About (Saves and Settings open their
+/// pages, roadmap 2.06).
 fn page_status(page: Page) -> String {
     let piece = match page {
         Page::Saves | Page::Settings => "2.06",
@@ -618,6 +775,25 @@ fn page_status(page: Page) -> String {
         Page::About => "2.09",
     };
     format!("{} comes in a later build (roadmap {piece}).", page.label())
+}
+
+/// What the Saves page shows of every game: from disk where the game has a place, else empty.
+fn saves_data(places: &[Place], backups: &std::path::Path) -> Vec<GameSaves> {
+    Game::ALL
+        .into_iter()
+        .map(|game| match places.iter().find(|p| p.game == game) {
+            Some(place) => pages_io::game_saves(game, &place.user_dir, backups),
+            None => GameSaves::empty(game),
+        })
+        .collect()
+}
+
+/// The save folders save-relay syncs, where the runtime's benchmark reports are.
+fn relay_dirs(places: &[Place]) -> Vec<PathBuf> {
+    places
+        .iter()
+        .map(|p| saves::relay_saves_dir(&p.user_dir, p.game))
+        .collect()
 }
 
 fn keep_status(game: Game, keep: Keep) -> String {
@@ -632,15 +808,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let window = AppWindow::new()?;
     let os = Os::current();
     let vars = Vars::from_lookup(os, |k| std::env::var(k).ok());
-    let (places, status, config) = match &vars {
+    let (places, status, dirs) = match &vars {
         Ok(vars) => (
             places(os, vars),
             NO_RELAY.to_owned(),
-            Some(AppDirs::new(vars).config),
+            Some(AppDirs::new(vars)),
         ),
         Err(err) => (Vec::new(), format!("Cannot find the saves: {err}"), None),
     };
-    let settings_file = vars.as_ref().ok().map(|vars| AppDirs::new(vars).settings());
+    let settings_file = dirs.as_ref().map(AppDirs::settings);
     let setting = settings_file
         .as_deref()
         .map(language::read_setting)
@@ -650,10 +826,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let cx = vars.ok().map(|vars| work::Context::here(os, vars));
     let steam = setup::steam_command(os, false).is_some();
     let places = Rc::new(RefCell::new(places));
+    let config = dirs.as_ref().map(|d| d.config.clone());
+    let backups = dirs.as_ref().map(AppDirs::backups);
+    let detected = pages_io::detected_profile(os);
     let last = config.as_deref().and_then(load::last_started);
     let screen = Screen::new(load_all(&places.borrow()), last, &status);
     let ui = Rc::new(Ui {
         screen: RefCell::new(screen),
+        shown: RefCell::new(Shown::Continue),
         lang: RefCell::new(lang),
         about: RefCell::default(),
         fleet: RefCell::new(FleetFocus::new(load_fleet())),
@@ -664,23 +844,56 @@ fn main() -> Result<(), slint::PlatformError> {
         first: RefCell::new(None),
     });
 
-    // A finished game run comes back from its thread through this channel.
+    // A finished game run comes back from its thread through this channel, the hardware probe
+    // through the second and what the first run's jobs come to through the third.
     let (done_tx, done_rx) = mpsc::channel::<String>();
-    // What the first run's jobs come to.
+    let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
 
-    let run: Rc<dyn Fn(Command)> = Rc::new({
-        let (ui, places, cx) = (ui.clone(), places.clone(), cx.clone());
+    let run: Rc<dyn Fn(Cmd)> = Rc::new({
+        let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
         move |command| match command {
-            Command::None => {}
-            Command::Quit => {
+            Cmd::Screen(Command::None)
+            | Cmd::Saves(SavesCommand::None | SavesCommand::Back)
+            | Cmd::Settings(SettingsCommand::None | SettingsCommand::Back) => {}
+            Cmd::Screen(Command::Quit) => {
                 let _ = slint::quit_event_loop();
             }
-            Command::Open(page) => {
+            Cmd::Screen(Command::Open(Page::Saves)) => match &backups {
+                Some(backups) if !places.borrow().is_empty() => {
+                    let game = ui.screen.borrow().current_game();
+                    let vm = SavesVm::new(saves_data(&places.borrow(), backups), game, NO_RELAY);
+                    ui.show(Shown::Saves(vm));
+                }
+                _ => {
+                    ui.screen
+                        .borrow_mut()
+                        .set_status("Cannot find the saves on this device.");
+                    ui.redraw();
+                }
+            },
+            Cmd::Screen(Command::Open(Page::Settings)) => {
+                let stored = config
+                    .as_deref()
+                    .map(settings_store::load)
+                    .unwrap_or_default();
+                let tune = config
+                    .as_deref()
+                    .and_then(pages_io::load_cache)
+                    .and_then(|probe| {
+                        pages_io::tune_from(
+                            &probe,
+                            &pages_io::read_reports(&relay_dirs(&places.borrow())),
+                        )
+                        .ok()
+                    });
+                ui.show(Shown::Settings(SettingsVm::new(stored, detected, tune)));
+            }
+            Cmd::Screen(Command::Open(page)) => {
                 ui.screen.borrow_mut().set_status(&page_status(page));
                 ui.redraw();
             }
-            Command::SetUp(game) => {
+            Cmd::Screen(Command::SetUp(game)) => {
                 if cx.is_some() {
                     ui.open_first(Some(game), steam);
                 } else {
@@ -690,11 +903,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.redraw();
                 }
             }
-            Command::Keep { game, keep } => {
+            Cmd::Screen(Command::Keep { game, keep }) => {
                 ui.screen.borrow_mut().set_status(&keep_status(game, keep));
                 ui.redraw();
             }
-            Command::Start(start) => {
+            Cmd::Screen(Command::Start(start)) => {
                 let places = places.borrow();
                 let place = places.iter().find(|p| p.game == start.game);
                 if let (Some(slot), Some(place)) = (start.slot, place) {
@@ -722,6 +935,51 @@ fn main() -> Result<(), slint::PlatformError> {
                         .stderr(Stdio::piped())
                         .output();
                     let _ = done.send(run_status(start.game, result));
+                });
+            }
+            Cmd::Saves(command) => {
+                let places = places.borrow();
+                let Some(backups) = &backups else {
+                    return;
+                };
+                {
+                    let mut shown = ui.shown.borrow_mut();
+                    let Shown::Saves(vm) = &mut *shown else {
+                        return;
+                    };
+                    let game = vm.current_game();
+                    let status = match places.iter().find(|p| p.game == game) {
+                        Some(place) => {
+                            pages_io::run(&command, &place.user_dir, backups, local_clock_now())
+                                .unwrap_or_else(|err| format!("Could not do that: {err}"))
+                        }
+                        None => "Cannot find the saves of this game on this device.".to_owned(),
+                    };
+                    vm.reload(saves_data(&places, backups));
+                    vm.set_status(&status);
+                }
+                // The Continue screen shows the active slot too.
+                ui.screen.borrow_mut().reload(load_all(&places));
+                ui.redraw();
+            }
+            Cmd::Settings(SettingsCommand::Save(stored)) => {
+                let saved = match &config {
+                    Some(config) => {
+                        settings_store::save(config, &stored).map_err(|e| e.to_string())
+                    }
+                    None => Err("no settings folder on this device".to_owned()),
+                };
+                if let Err(err) = saved {
+                    if let Shown::Settings(vm) = &mut *ui.shown.borrow_mut() {
+                        vm.set_status(&format!("Could not save the settings: {err}"));
+                    }
+                }
+                ui.redraw();
+            }
+            Cmd::Settings(SettingsCommand::Tune) => {
+                let probe = probe_tx.clone();
+                std::thread::spawn(move || {
+                    let _ = probe.send(pages_io::run_probe());
                 });
             }
         }
@@ -760,8 +1018,8 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.open_first(None, steam);
     }
 
-    // Poll the controller, the game run and the first run's jobs on the UI thread; all are
-    // cheap to drain.
+    // Poll the controller, the game run, the probe and the first run's jobs on the UI thread;
+    // all are cheap to drain.
     let mut controller = Controller::new();
     let timer = slint::Timer::default();
     timer.start(
@@ -774,6 +1032,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 screen.reload(games);
                 screen.finished(&status);
                 drop(screen);
+                ui.redraw();
+            }
+            if let Ok(probe) = probe_rx.try_recv() {
+                let result = probe.and_then(|text| {
+                    let tuned = pages_io::tune_from(
+                        &text,
+                        &pages_io::read_reports(&relay_dirs(&places.borrow())),
+                    );
+                    if let (Ok(_), Some(config)) = (&tuned, &config) {
+                        let _ = pages_io::save_cache(config, &text);
+                    }
+                    tuned
+                });
+                if let Shown::Settings(vm) = &mut *ui.shown.borrow_mut() {
+                    vm.tuned(result);
+                }
                 ui.redraw();
             }
             while let Ok(event) = event_rx.try_recv() {
@@ -836,6 +1110,7 @@ mod tests {
         });
         let ui = Rc::new(Ui {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
             fleet: RefCell::default(),
@@ -846,7 +1121,7 @@ mod tests {
             first: RefCell::new(None),
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
-        let run: Rc<dyn Fn(Command)> = Rc::new({
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
@@ -880,7 +1155,7 @@ mod tests {
         window.invoke_input(6);
         assert_eq!(
             commands.borrow().last(),
-            Some(&Command::Open(Page::Settings))
+            Some(&Cmd::Screen(Command::Open(Page::Settings)))
         );
 
         // RB to Uncharted 3: no save, Play only; A starts it.
@@ -890,11 +1165,11 @@ mod tests {
         window.invoke_input(6);
         assert_eq!(
             commands.borrow().last(),
-            Some(&Command::Start(Start {
+            Some(&Cmd::Screen(Command::Start(Start {
                 game: Game::U3,
                 slot: None,
                 keep: None,
-            }))
+            })))
         );
 
         // A click on the strip, then B opens the quit prompt.
@@ -903,7 +1178,110 @@ mod tests {
         window.invoke_input(7);
         assert_eq!(window.get_overlay(), 1);
         window.invoke_clicked(5, 0);
-        assert_eq!(commands.borrow().last(), Some(&Command::Quit));
+        assert_eq!(commands.borrow().last(), Some(&Cmd::Screen(Command::Quit)));
+    }
+
+    /// The Saves and Settings pages in the same headless window: drawn, driven by keys and
+    /// clicks, and B back to the Continue screen on the page's button.
+    #[test]
+    fn headless_run_of_the_saves_and_settings_pages() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let games: Vec<GameData> = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
+            let commands = commands.clone();
+            move |c| commands.borrow_mut().push(c)
+        });
+        wire(&window, &ui, run, Rc::new(|_| {}));
+        assert_eq!(window.get_page(), 0);
+
+        // Saves: Uncharted 2 with a save in slot 1 and one backup.
+        let mut data: Vec<GameSaves> = Game::ALL.into_iter().map(GameSaves::empty).collect();
+        data[1].slots[0].used = true;
+        data[1].slots[0].saved_unix = 1_794_518_040;
+        data[1].backups = vec![vm::saves::stamp(1_794_500_000, 1)];
+        ui.show(Shown::Saves(SavesVm::new(data, Game::U2, NO_RELAY)));
+        assert_eq!(window.get_page(), 1);
+        assert_eq!(window.get_page_game(), 1);
+        let slots: Vec<_> = window.get_save_slots().iter().collect();
+        assert_eq!(slots[0].title, "Slot 1");
+        assert_eq!(slots[0].mark, "Active");
+        assert_eq!(
+            slots[0].buttons.iter().collect::<Vec<_>>(),
+            ["Active", "Copy to slot 2", "Back up", "Delete"]
+        );
+        assert_eq!(window.get_save_backups().row_count(), 1);
+        assert!(window
+            .get_saves_relay()
+            .starts_with("save-relay syncs the active slot of Uncharted 2: Slot 1."));
+        window.invoke_input(3);
+        assert_eq!((window.get_page_row(), window.get_page_col()), (0, 1));
+        window.invoke_input(6);
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&Cmd::Saves(SavesCommand::Copy {
+                game: Game::U2,
+                from: 1,
+                to: 2
+            }))
+        );
+        // Delete asks; the prompt's Keep button closes it.
+        window.invoke_page_clicked(0, 3);
+        assert!(window
+            .get_saves_confirm()
+            .starts_with("Delete the saves in slot 1"));
+        window.invoke_page_clicked(-2, 1);
+        assert_eq!(window.get_saves_confirm(), "");
+        // B: back on the Saves button.
+        window.invoke_input(7);
+        assert_eq!(window.get_page(), 0);
+        assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 0));
+
+        // Settings, not tuned yet, on the desktop profile.
+        let desktop = uncharted_core::profile::by_id("desktop").unwrap();
+        let settings = SettingsVm::new(vm::settings::Stored::default(), desktop, None);
+        ui.show(Shown::Settings(settings));
+        assert_eq!(window.get_page(), 2);
+        let cards: Vec<_> = window.get_tune_cards().iter().collect();
+        assert_eq!(cards.len(), 3);
+        assert_eq!(cards[1].title, "Balanced 60");
+        assert!(cards[1].in_use);
+        let choices: Vec<_> = window.get_choices().iter().collect();
+        assert_eq!(choices.len(), 6);
+        assert_eq!(
+            (choices[1].label.as_str(), choices[1].value.as_str()),
+            ("Frame rate", "60 FPS")
+        );
+        // A click on the frame rate's ">" saves 120.
+        window.invoke_page_clicked(3, 1);
+        assert_eq!(window.get_choices().row_data(1).unwrap().value, "120 FPS");
+        assert!(matches!(
+            commands.borrow().last(),
+            Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "120"
+        ));
+        window.invoke_page_clicked(1, 0);
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&Cmd::Settings(SettingsCommand::Tune))
+        );
+        assert!(window.get_tuning());
+        // The page's Back button.
+        window.invoke_page_clicked(-3, 0);
+        assert_eq!(window.get_page(), 0);
+        assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 1));
     }
 
     /// One headless Slint run of the first-run page: the client path through the window's own
@@ -915,6 +1293,7 @@ mod tests {
         let games: Vec<GameData> = Game::ALL.into_iter().map(GameData::empty).collect();
         let ui = Rc::new(Ui {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
             fleet: RefCell::default(),
@@ -926,7 +1305,7 @@ mod tests {
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
         let seen = Rc::new(RefCell::new(Vec::new()));
-        let run: Rc<dyn Fn(Command)> = Rc::new({
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
@@ -937,6 +1316,7 @@ mod tests {
         wire(&window, &ui, run, jobs.clone());
         ui.open_first(None, true);
         assert_eq!(window.get_mode(), 1);
+        assert_eq!(window.get_page(), 0);
         assert_eq!(window.get_fr_step(), "Step 1 of 4");
         assert_eq!(window.get_fr_options().row_count(), 3);
         assert_eq!(window.get_fr_focus(), 0);
@@ -984,6 +1364,8 @@ mod tests {
             seen.borrow().last(),
             Some(&Job::Finish { start_steam: false })
         );
+        // No key reached the Continue screen or a page while the first run was open.
+        assert!(commands.borrow().is_empty());
     }
 
     // The testing backend, and with it Slint's translation choice, is per thread: this test's
@@ -1004,15 +1386,16 @@ mod tests {
                 Some("ko_KR".into()),
             )),
             about: RefCell::default(),
-            first: RefCell::new(None),
+            shown: RefCell::new(Shown::Continue),
             fleet: RefCell::default(),
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
             offset: Box::new(|_| 0),
+            first: RefCell::new(None),
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
-        let run: Rc<dyn Fn(Command)> = Rc::new({
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
@@ -1033,10 +1416,13 @@ mod tests {
             window.invoke_input(3);
         }
         window.invoke_input(6);
-        assert_eq!(window.get_page(), 1);
+        assert_eq!(window.get_page(), ABOUT_PAGE);
         assert_eq!(window.get_about_focus(), 0);
         assert!(
-            commands.borrow().iter().all(|c| *c == Command::None),
+            commands
+                .borrow()
+                .iter()
+                .all(|c| *c == Cmd::Screen(Command::None)),
             "About opens in the window"
         );
         // Only what is on screen is found: the top of About, not yet its end.
@@ -1088,7 +1474,7 @@ mod tests {
         // returns to the Continue screen with the focus still on Fleet.
         window.invoke_input(2);
         window.invoke_input(6);
-        assert_eq!(window.get_page(), 2);
+        assert_eq!(window.get_page(), FLEET_PAGE);
         assert!(shows(&window, vm::fleet::EMPTY));
         assert_eq!(window.get_fleet_focus(), window.get_fleet_back_index());
         window.invoke_input(7);

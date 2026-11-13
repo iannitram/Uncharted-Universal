@@ -75,12 +75,7 @@ pub fn run(job: Job, cx: &Context, tx: &Sender<Event>) {
             );
             send(Event::Prepared(done));
         }
-        Job::Discover => {
-            let found = hub::discover(DISCOVER_MS)
-                .map(|found| client::choices(&found, cx.os))
-                .map_err(|e| message(&e));
-            send(Event::Hubs(found));
-        }
+        Job::Discover => send(hubs(hub::discover(DISCOVER_MS), cx.os)),
         Job::PairPull { hub, code } => {
             let staged = client::staging(&cx.dirs);
             let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -124,6 +119,16 @@ pub fn run(job: Job, cx: &Context, tx: &Sender<Event>) {
             send(Event::Added(result));
         }
     }
+}
+
+/// What a look for hubs (`hub::discover`, mDNS on the home network) came to: the hubs that
+/// serve `os` as choices, or the error as a sentence.
+fn hubs(found: uncharted_core::Result<Vec<hub::Found>>, os: Os) -> Event {
+    Event::Hubs(
+        found
+            .map(|found| client::choices(&found, os))
+            .map_err(|e| message(&e)),
+    )
 }
 
 /// Ask Steam to quit and wait until it has.
@@ -187,6 +192,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::mpsc;
+    use uncharted_core::recipe::Hub;
 
     /// A fresh temp folder under `std::env::temp_dir()`, removed on drop.
     struct Temp(PathBuf);
@@ -276,11 +282,37 @@ mod tests {
     }
 
     #[test]
-    fn discovery_not_built_is_a_message() {
-        let root = Temp::new();
-        let got = events(Job::Discover, &context(root.path()));
+    fn discovery_lists_the_hubs_that_serve_this_device() {
+        // The in-process mDNS fake: a hub for linux and one that only serves windows.
+        let net = hub::MemoryMdns::new();
+        let announce = |hub_kind, target, last| {
+            let a = hub::Announcement {
+                hub: hub_kind,
+                targets: vec![target],
+                port: 47_210,
+                addrs: vec![std::net::IpAddr::from([192, 168, 1, last])],
+            };
+            hub::announce(&net, &a).unwrap();
+        };
+        announce(Hub::StrixHalo, Os::Linux, 20);
+        announce(Hub::Desktop, Os::Windows, 21);
+        let got = hubs(hub::discover_on(&net, 1), Os::Linux);
+        let Event::Hubs(Ok(choices)) = got else {
+            panic!("{got:?}");
+        };
+        assert_eq!(choices.len(), 1);
+        assert_eq!(choices[0].addr.to_string(), "192.168.1.20:47210");
+        assert_eq!(choices[0].name, Hub::StrixHalo.key());
+    }
+
+    #[test]
+    fn a_discovery_error_is_a_message() {
+        let got = hubs(
+            Err(uncharted_core::Error::Hub("the mDNS daemon stopped".into())),
+            Os::Linux,
+        );
         assert!(
-            matches!(&got[..], [Event::Hubs(Err(m))] if m.contains("not built")),
+            matches!(&got, Event::Hubs(Err(m)) if m.contains("mDNS daemon stopped")),
             "{got:?}"
         );
     }

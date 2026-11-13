@@ -1,7 +1,8 @@
 //! Focus on the Continue screen (docs/continue-screen.md, "Controller path"): two rows of
 //! buttons, the action row on top and the page row below; on About, its two buttons; and on
-//! Fleet (2.08), its rows and Back. Plain Rust, so it is tested without a window. The first run
-//! (2.05) uses `list_step`, `list_tab` and the `Digits` code boxes below.
+//! Fleet (2.08), its rows and Back. The Saves and Settings pages (2.06) use [`Grid`]: any number
+//! of rows, each with its own buttons. The first run (2.05) uses `list_step`, `list_tab` and the
+//! `Digits` code boxes below. Plain Rust, so it is tested without a window.
 
 use crate::vm::FleetVm;
 
@@ -166,6 +167,80 @@ impl Digits {
             .iter()
             .map(|d| d.map(|d| char::from(b'0' + d)))
             .collect()
+    }
+}
+
+/// Focus on a page of rows (Saves, Settings): `row` and `col` index `lens`, the number of
+/// buttons in each row. A row with no button is drawn but never focused.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Grid {
+    pub row: usize,
+    pub col: usize,
+}
+
+impl Grid {
+    pub fn at(row: usize, col: usize) -> Grid {
+        Grid { row, col }
+    }
+
+    /// The first button of the first row that has one; (0, 0) when no row has one.
+    pub fn first(lens: &[usize]) -> Grid {
+        Grid::at(lens.iter().position(|n| *n > 0).unwrap_or(0), 0)
+    }
+
+    /// The focus after `nav`. Left and Right move along the row and stop at its ends; Up and
+    /// Down go to the nearest row above or below that has a button, keeping the column as far
+    /// as that row reaches, and stop at the first and last such row.
+    pub fn step(self, nav: Nav, lens: &[usize]) -> Grid {
+        let here = self.clamp(lens);
+        let len = lens.get(here.row).copied().unwrap_or(0);
+        let col = |row: usize| here.col.min(lens[row].saturating_sub(1));
+        match nav {
+            Nav::Left => Grid::at(here.row, here.col.saturating_sub(1)),
+            Nav::Right => Grid::at(here.row, (here.col + 1).min(len.saturating_sub(1))),
+            Nav::Up => (0..here.row)
+                .rev()
+                .find(|r| lens[*r] > 0)
+                .map_or(here, |r| Grid::at(r, col(r))),
+            Nav::Down => (here.row + 1..lens.len())
+                .find(|r| lens[*r] > 0)
+                .map_or(here, |r| Grid::at(r, col(r))),
+        }
+    }
+
+    /// Tab order: every button, row by row, then round again. `back` is Shift+Tab.
+    pub fn tab(self, back: bool, lens: &[usize]) -> Grid {
+        let all: Vec<Grid> = lens
+            .iter()
+            .enumerate()
+            .flat_map(|(row, n)| (0..*n).map(move |col| Grid::at(row, col)))
+            .collect();
+        if all.is_empty() {
+            return self;
+        }
+        let here = self.clamp(lens);
+        let at = all.iter().position(|g| *g == here).unwrap_or(0);
+        let next = if back {
+            (at + all.len() - 1) % all.len()
+        } else {
+            (at + 1) % all.len()
+        };
+        all[next]
+    }
+
+    /// The nearest real button after the rows changed (a reload): the same row when it still
+    /// has buttons, else the nearest row above it that has one, else the first; the column is
+    /// cut to the row's length.
+    pub fn clamp(self, lens: &[usize]) -> Grid {
+        let row = if lens.get(self.row).is_some_and(|n| *n > 0) {
+            Some(self.row)
+        } else {
+            (0..self.row.min(lens.len())).rev().find(|r| lens[*r] > 0)
+        };
+        match row {
+            Some(row) => Grid::at(row, self.col.min(lens[row] - 1)),
+            None => Grid::first(lens),
+        }
     }
 }
 
@@ -416,6 +491,52 @@ mod tests {
     fn row_codes() {
         assert_eq!(Row::Actions.code(), 0);
         assert_eq!(Row::Pages.code(), 1);
+    }
+
+    #[test]
+    fn grid_moves_along_rows_and_skips_empty_ones() {
+        // Three buttons, then a row with none, then two, then one.
+        let lens = [3, 0, 2, 1];
+        let g = Grid::at(0, 2);
+        assert_eq!(g.step(Nav::Right, &lens), Grid::at(0, 2));
+        assert_eq!(g.step(Nav::Left, &lens), Grid::at(0, 1));
+        assert_eq!(g.step(Nav::Down, &lens), Grid::at(2, 1));
+        assert_eq!(Grid::at(2, 1).step(Nav::Down, &lens), Grid::at(3, 0));
+        assert_eq!(Grid::at(3, 0).step(Nav::Down, &lens), Grid::at(3, 0));
+        assert_eq!(Grid::at(2, 0).step(Nav::Up, &lens), Grid::at(0, 0));
+        assert_eq!(Grid::at(0, 1).step(Nav::Up, &lens), Grid::at(0, 1));
+    }
+
+    #[test]
+    fn grid_tab_runs_through_every_button_and_wraps() {
+        let lens = [2, 0, 1];
+        let mut g = Grid::first(&lens);
+        let mut seen = vec![g];
+        for _ in 0..3 {
+            g = g.tab(false, &lens);
+            seen.push(g);
+        }
+        assert_eq!(
+            seen,
+            [
+                Grid::at(0, 0),
+                Grid::at(0, 1),
+                Grid::at(2, 0),
+                Grid::at(0, 0)
+            ]
+        );
+        assert_eq!(Grid::at(0, 0).tab(true, &lens), Grid::at(2, 0));
+        assert_eq!(Grid::at(1, 0).tab(false, &[0, 0]), Grid::at(1, 0));
+    }
+
+    #[test]
+    fn grid_clamps_after_rows_change() {
+        assert_eq!(Grid::at(2, 3).clamp(&[2, 4, 2]), Grid::at(2, 1));
+        assert_eq!(Grid::at(2, 0).clamp(&[2, 4, 0]), Grid::at(1, 0));
+        assert_eq!(Grid::at(5, 0).clamp(&[0, 1]), Grid::at(1, 0));
+        assert_eq!(Grid::at(0, 0).clamp(&[0, 0, 1]), Grid::at(2, 0));
+        assert_eq!(Grid::at(1, 1).clamp(&[]), Grid::at(0, 0));
+        assert_eq!(Grid::first(&[0, 0, 3]), Grid::at(2, 0));
     }
 
     #[test]

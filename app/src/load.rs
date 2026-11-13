@@ -110,17 +110,17 @@ pub fn remember_started(config: &Path, game: Game) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{Duration, UNIX_EPOCH};
     use uncharted_core::platform::Os;
 
-    /// A fresh temp folder, removed on drop.
-    struct Temp(PathBuf);
+    /// A fresh temp folder, removed on drop (also the other modules' tests).
+    pub(crate) struct Temp(pub(crate) PathBuf);
 
     impl Temp {
-        fn new() -> Temp {
+        pub(crate) fn new() -> Temp {
             static N: AtomicU32 = AtomicU32::new(0);
             let path = std::env::temp_dir().join(format!(
                 "uncharted-app-load-test-{}-{}",
