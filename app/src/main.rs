@@ -38,11 +38,12 @@ use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use strings::{fill, Text};
 use uncharted_core::games::Game;
 use uncharted_core::language::{self, Language};
 use uncharted_core::launch::Keep;
@@ -151,7 +152,8 @@ struct Crash {
 }
 
 /// The real [`Host`] of the after-crash buttons: settings in `settings.json`, the browser and
-/// the clipboard. The game starts through `Command::Start` after `Pressed::Playing`.
+/// the clipboard. The game starts through `Command::Start` after `Pressed::Playing`, and
+/// `Ui::begin` puts a start that fails on the screen as its "could not start" note.
 struct AppHost<'a> {
     window: &'a AppWindow,
     folders: &'a Folders,
@@ -535,18 +537,60 @@ impl Ui {
                 }
                 Command::None
             }
-            Pressed::Playing => {
-                *self.crash.borrow_mut() = None;
-                Command::Start(Start {
-                    game: run.game,
-                    slot: None,
-                    keep: None,
-                })
-            }
+            // The screen stays up until the game has started (`begin`).
+            Pressed::Playing => Command::Start(Start {
+                game: run.game,
+                slot: None,
+                keep: None,
+            }),
             Pressed::Home => {
                 *self.crash.borrow_mut() = None;
                 self.redraw();
                 Command::None
+            }
+        }
+    }
+
+    /// Start the game run of `start`: `program` with `args`, its output in `<logs>/last_run.log`
+    /// and the player's `BB_*` settings in its environment. The child to wait for when it
+    /// started: the after-crash screen goes and the Running overlay comes. `None` when it did not
+    /// start: no run ended, so there is no after-run step; the after-crash screen, when the start
+    /// came from it, stays with the "could not start" note, and the status line says so.
+    fn begin(&self, start: &Start, program: &Path, args: &[String]) -> Option<Child> {
+        let started = match &self.folders {
+            Some(folders) => play::start(
+                program,
+                start.game,
+                args,
+                &settings_file::extra(&folders.settings()),
+                &folders.dirs.logs(),
+            ),
+            None => std::process::Command::new(program)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn(),
+        };
+        match started {
+            Ok(child) => {
+                *self.crash.borrow_mut() = None;
+                self.screen
+                    .borrow_mut()
+                    .running(&format!("Starting {}...", start.game.name()));
+                self.redraw();
+                Some(child)
+            }
+            Err(error) => {
+                let note = fill(Text::StartFailed.get(self.crash_lang()), &error.to_string());
+                if let Some(crash) = self.crash.borrow_mut().as_mut() {
+                    crash.note = note;
+                }
+                self.screen
+                    .borrow_mut()
+                    .finished(&run_status(start.game, Err(error)));
+                self.redraw();
+                None
             }
         }
     }
@@ -893,35 +937,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 if let Some(config) = &config {
                     let _ = load::remember_started(config, start.game);
                 }
-                ui.screen
-                    .borrow_mut()
-                    .running(&format!("Starting {}...", start.game.name()));
-                ui.redraw();
-                let done = done_tx.clone();
                 let args = play::with_run_args(play_args(&start), &run_args);
-                // The run's output goes to `<logs>/last_run.log` for the after-run step, with
-                // the player's `BB_*` settings in its environment.
+                let Some(child) = ui.begin(&start, &cli_path(), &args) else {
+                    return;
+                };
+                let done = done_tx.clone();
                 let logs = ui.folders.as_ref().map(|f| f.dirs.logs());
-                let env = ui
-                    .folders
-                    .as_ref()
-                    .map(|f| settings_file::extra(&f.settings()))
-                    .unwrap_or_default();
                 std::thread::spawn(move || {
                     let result = match &logs {
-                        Some(logs) => play::start(&cli_path(), start.game, &args, &env, logs)
-                            .and_then(|mut child| child.wait())
-                            .map(|status| std::process::Output {
+                        Some(logs) => {
+                            let mut child = child;
+                            child.wait().map(|status| std::process::Output {
                                 status,
                                 stdout: Vec::new(),
                                 stderr: std::fs::read(logs.join(RUN_LOG)).unwrap_or_default(),
-                            }),
-                        None => std::process::Command::new(cli_path())
-                            .args(&args)
-                            .stdin(Stdio::null())
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::piped())
-                            .output(),
+                            })
+                        }
+                        None => child.wait_with_output(),
                     };
                     let _ = done.send((start.game, run_status(start.game, result)));
                 });
@@ -1252,6 +1284,81 @@ mod tests {
         // Without --play nothing starts.
         assert_eq!(start_now(None, false), None);
         assert_eq!(start_now(None, true), None);
+    }
+
+    /// A game that does not start is no run (#343 Done-when 3): Play again on the after-crash
+    /// screen with a missing command line writes no playthrough record, leaves no run for the
+    /// next launch to pick up, and keeps the screen up with the "could not start" note.
+    #[test]
+    fn a_game_that_does_not_start_is_not_a_run() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let dir = std::env::temp_dir().join(format!("uncharted-app-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vars = Vars {
+            home: dir.join("home"),
+            data: dir.join("data"),
+            config: dir.join("config"),
+        };
+        let dirs = AppDirs::new(&vars);
+        let logs = dirs.logs();
+        let games = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            crash: RefCell::new(Some(Crash {
+                focus: CrashFocus::new(3),
+                run: AfterCrash {
+                    game: Game::U2,
+                    chapter: None,
+                    crash: "boom".into(),
+                    known: None,
+                },
+                note: String::new(),
+            })),
+            folders: Some(Folders { vars, dirs }),
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+        });
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let run: Rc<dyn Fn(Command)> = Rc::new({
+            let commands = commands.clone();
+            move |c| commands.borrow_mut().push(c)
+        });
+        wire(&window, &ui, run);
+        ui.redraw();
+        // An unknown crash: Report, Play again, Back. Play again asks for a start and the
+        // screen waits for it.
+        window.invoke_clicked(9, 1);
+        let start = match commands.borrow().last() {
+            Some(Command::Start(start)) => *start,
+            other => panic!("Play again gave {other:?}"),
+        };
+        assert_eq!(start.game, Game::U2);
+        assert_eq!(window.get_page(), 3);
+        // The command line is missing: the start fails.
+        let missing = dir.join("no-such-uncharted-universal");
+        let args = play_args(&start);
+        assert!(ui.begin(&start, &missing, &args).is_none());
+        assert_eq!(window.get_page(), 3, "the after-crash screen stays");
+        let note = window.get_crash_note().to_string();
+        assert!(note.starts_with("Could not start the game: "), "{note:?}");
+        assert!(
+            !logs.join(logs::PLAYTHROUGH_FILE).exists(),
+            "no playthrough record for a run that never ran"
+        );
+        assert_eq!(after_crash::unfinished(&logs), None);
+        let clock = Clock {
+            now: 0,
+            offset: &|_| 0,
+        };
+        let view = ui.screen.borrow().view(&clock);
+        assert_eq!(view.overlay, OverlayView::None, "no Running overlay");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

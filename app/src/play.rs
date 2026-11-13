@@ -21,9 +21,10 @@ pub fn with_run_args(mut args: Vec<String>, run_args: &[String]) -> Vec<String> 
     args
 }
 
-/// Start `game`: rotate the run logs (`last_run.log` to `last_run.1.log` ..), note the run in
-/// `last_run.json`, then start `program` with `args` (`play <game> ...`), the player's `BB_*`
-/// settings in its environment, stdin closed and stdout and stderr in a new `last_run.log`.
+/// Start `game`: rotate the run logs (`last_run.log` to `last_run.1.log` ..), start `program`
+/// with `args` (`play <game> ...`), the player's `BB_*` settings in its environment, stdin
+/// closed and stdout and stderr in a new `last_run.log`, then note the run in `last_run.json`.
+/// A start that fails notes nothing, so the next launch does not take it for a run.
 pub fn start(
     program: &Path,
     game: Game,
@@ -35,15 +36,18 @@ pub fn start(
     if let Err(error) = logs::rotate(logs_dir, "last_run", KEEP) {
         eprintln!("could not rotate the run logs: {error}");
     }
-    mark_started(logs_dir, game)?;
     let log = File::create(logs_dir.join(RUN_LOG))?;
-    Command::new(program)
+    let child = Command::new(program)
         .args(args)
         .envs(env)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
-        .spawn()
+        .spawn()?;
+    if let Err(error) = mark_started(logs_dir, game) {
+        eprintln!("could not note the run in the logs folder: {error}");
+    }
+    Ok(child)
 }
 
 /// Open `url` in the browser without waiting for it.
