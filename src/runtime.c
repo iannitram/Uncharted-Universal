@@ -20,6 +20,10 @@ static uint64_t capabilities;
 static _Atomic size_t guards_acquired, guards_released;
 static uint64_t stack_canary;
 static _Atomic size_t memory_calls;
+/* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
+ * point: a fault on that thread jumps back to it instead of terminating (probe.c). Here since
+ * the memory module became Rust on Linux (piece 3.12): Rust cannot export a C thread-local. */
+__thread sigjmp_buf *runtime_fault_recover;
 /* Dynamic TLS of linked modules: module IDs 2..7 (1 is the eboot's static TLS). */
 #define TLS_MODULES 8
 static struct { const void *data; uint64_t filesz, memsz; } tls_modules[TLS_MODULES];
