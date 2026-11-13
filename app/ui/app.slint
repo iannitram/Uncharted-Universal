@@ -1,7 +1,76 @@
-// The launcher window. The .slint file only draws; focus order and button handling live in
-// Rust (src/focus.rs, src/vm/, ADR 0003). Keys become `Nav` through the `nav` callback; the
-// controller reaches the same callbacks from src/input.rs.
+// The launcher window. The .slint file only draws; screens, focus order and button handling
+// live in Rust (src/focus.rs, ADR 0003). Keys become `Nav` through the `nav` callback; the
+// controller reaches the same callbacks from src/input.rs. Every text is `@tr(...)`, translated
+// by the catalogues in lang/ (src/lang.rs).
 
+import { AboutSlint, ScrollView } from "std-widgets.slint";
+
+export struct PatchRow {
+    name: string,
+    author: string,
+    status: string,
+    available: bool,
+}
+
+export struct LicenceRow {
+    name: string,
+    licence: string,
+    role: string,
+}
+
+component LauncherButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> focused;
+    callback activated();
+
+    height: 56px;
+    min-width: 160px;
+    border-radius: 8px;
+    border-width: focused ? 3px : 1px;
+    border-color: focused ? #f2b134 : #5a6270;
+    background: focused ? #2d3544 : #1f2430;
+    accessible-role: button;
+    accessible-label: root.label;
+    Text {
+        text: root.label;
+        color: white;
+        font-size: 18px;
+    }
+    TouchArea {
+        clicked => { root.activated(); }
+    }
+}
+
+component Heading inherits Text {
+    color: #f2b134;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+component Body inherits Text {
+    color: #c8cdd6;
+    font-size: 14px;
+    wrap: word-wrap;
+}
+
+component Licences inherits VerticalLayout {
+    in property <[LicenceRow]> rows;
+    spacing: 6px;
+    for row in root.rows: VerticalLayout {
+        Text {
+            text: row.name + "  ·  " + row.licence;
+            color: white;
+            font-size: 14px;
+            wrap: word-wrap;
+        }
+        Body {
+            text: row.role;
+            color: #8a93a3;
+        }
+    }
+}
+
+// A button whose label may wrap (the after-crash screen's are sentences).
 component MenuButton inherits Rectangle {
     in property <string> label;
     in property <bool> focused;
@@ -12,6 +81,8 @@ component MenuButton inherits Rectangle {
     border-width: focused ? 3px : 1px;
     border-color: focused ? #f2b134 : #5a6270;
     background: focused ? #2d3544 : #1f2430;
+    accessible-role: button;
+    accessible-label: root.label;
     Text {
         text: root.label;
         color: white;
@@ -28,7 +99,8 @@ component MenuButton inherits Rectangle {
 }
 
 // The after-crash screen (roadmap 2.07): the game, the chapter, a plain sentence, what the
-// game said, and the buttons src/vm/after_crash.rs chose.
+// game said, and the buttons src/vm/after_crash.rs chose. Its texts come from Rust
+// (src/strings.rs) in the interface language.
 component AfterCrashPage inherits Rectangle {
     in property <string> heading;
     in property <string> game;
@@ -92,6 +164,103 @@ component AfterCrashPage inherits Rectangle {
     }
 }
 
+component AboutPage inherits Rectangle {
+    // A name, never translated.
+    in property <string> product: "Uncharted Universal";
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped;
+    in property <[LicenceRow]> learned;
+    callback back();
+
+    // Up and down on the controller: one step is a few lines.
+    public function scroll(steps: int) {
+        view.content-y = clamp(view.content-y + steps * 64px, min(0px, view.visible-height - view.content-height), 0px);
+    }
+
+    VerticalLayout {
+        spacing: 16px;
+
+        view := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                padding: 8px;
+                spacing: 12px;
+
+                Text {
+                    text: @tr("About");
+                    color: white;
+                    font-size: 28px;
+                    font-weight: 700;
+                }
+                Body {
+                    text: root.product + "  ·  " + @tr("Version {}", root.version);
+                }
+                Body {
+                    text: @tr("Uncharted Universal is free software under the GNU General Public License, version 2 only.");
+                }
+
+                Heading { text: @tr("Patches"); }
+                if root.patches.length == 0: Body {
+                    text: @tr("No patches yet: the patches of a prepared game are listed here.");
+                }
+                for patch in root.patches: VerticalLayout {
+                    Text {
+                        text: patch.name + (patch.author == "" ? "" : "  ·  " + patch.author);
+                        color: patch.available ? white : #8a93a3;
+                        font-size: 14px;
+                        wrap: word-wrap;
+                    }
+                    Body {
+                        text: patch.status;
+                        color: patch.available ? #9fd49f : #8a93a3;
+                    }
+                }
+
+                Heading { text: @tr("Licences"); }
+                Licences { rows: root.shipped; }
+                Body {
+                    text: @tr("Each bundled library's licence text is in the licenses folder next to the app.");
+                }
+
+                Heading { text: @tr("Learned from"); }
+                Body {
+                    text: @tr("Studied for how they work; no code was copied from them.");
+                }
+                Licences { rows: root.learned; }
+
+                Heading { text: @tr("Built with Slint"); }
+                // Slint's royalty-free licence asks for this notice on the About screen.
+                Body {
+                    text: @tr("This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).");
+                }
+                HorizontalLayout {
+                    alignment: start;
+                    AboutSlint {
+                        max-width: 320px;
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: space-between;
+            LauncherButton {
+                label: @tr("Back");
+                focused: true;
+                activated => { root.back(); }
+            }
+            Body {
+                vertical-alignment: center;
+                horizontal-alignment: right;
+                text: @tr("Up and down scroll. A or B goes back.");
+                color: #8a93a3;
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     title: "Uncharted Universal";
     min-width: 640px;
@@ -100,9 +269,16 @@ export component AppWindow inherits Window {
     preferred-height: 600px;
     background: #12151c;
 
-    // 0 = home, 1 = after-crash screen, 2 = a game is running.
-    in property <int> page: 0;
+    // 0 = Home, 1 = About, 2 = after-crash, 3 = a game is running (`Screen` in src/focus.rs).
+    in-out property <int> page: 0;
     in-out property <int> focused-index: 0;
+    // The language button's value: a language's own name, or "Automatic (<name>)".
+    in property <string> language-name;
+    in property <string> version;
+    in property <[PatchRow]> patches;
+    in property <[LicenceRow]> shipped-licences;
+    in property <[LicenceRow]> learned-licences;
+    // The running screen's line, and the after-crash screen's texts (src/strings.rs).
     in property <string> status;
     in property <string> crash-heading;
     in property <string> crash-game;
@@ -111,9 +287,14 @@ export component AppWindow inherits Window {
     in property <string> crash-detail;
     in property <string> crash-note;
     in property <[string]> crash-buttons;
+
     // 0 = Up, 1 = Down, 2 = Left, 3 = Right (see `Nav` in src/focus.rs).
     callback nav(int);
-    callback activate(int);
+    // A click on button <int> of the current page.
+    callback clicked(int);
+    // Enter, Space or A on the focused button.
+    callback activate();
+    // Escape, Backspace or B.
     callback back();
     // A game run started by the app ended (the game's key); raised from its waiting thread.
     callback run-ended(string);
@@ -135,6 +316,12 @@ export component AppWindow inherits Window {
         read-only: true;
     }
 
+    public function scroll-about(steps: int) {
+        if (root.page == 1) {
+            about.scroll(steps);
+        }
+    }
+
     FocusScope {
         init => { self.focus(); }
         key-pressed(event) => {
@@ -144,17 +331,63 @@ export component AppWindow inherits Window {
             if (event.text == Key.RightArrow) { root.nav(3); return accept; }
             if (event.text == Key.Tab) { root.nav(1); return accept; }
             if (event.text == Key.Backtab) { root.nav(0); return accept; }
-            if (event.text == Key.Escape) { root.back(); return accept; }
-            if (event.text == Key.Return || event.text == " ") { root.activate(root.focused-index); return accept; }
+            if (event.text == Key.Return || event.text == " ") { root.activate(); return accept; }
+            if (event.text == Key.Escape || event.text == Key.Backspace) { root.back(); return accept; }
             reject
         }
 
-        VerticalLayout {
-            padding: 24px;
-            spacing: 16px;
+        Rectangle {
+            VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+                visible: root.page == 0;
 
-            if root.page == 1: AfterCrashPage {
-                vertical-stretch: 1;
+                // Placeholder for the Continue screen (piece 2.04).
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: 12px;
+                    background: #1a1f2a;
+                    Text {
+                        text: @tr("Continue screen goes here");
+                        color: #8a93a3;
+                        font-size: 22px;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 16px;
+                    LauncherButton {
+                        label: @tr("Language: {}", root.language-name);
+                        focused: root.focused-index == 0;
+                        activated => { root.clicked(0); }
+                    }
+                    LauncherButton {
+                        label: @tr("About");
+                        focused: root.focused-index == 1;
+                        activated => { root.clicked(1); }
+                    }
+                }
+            }
+
+            about := AboutPage {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                visible: root.page == 1;
+                version: root.version;
+                patches: root.patches;
+                shipped: root.shipped-licences;
+                learned: root.learned-licences;
+                back => { root.clicked(0); }
+            }
+
+            AfterCrashPage {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                visible: root.page == 2;
                 heading: root.crash-heading;
                 game: root.crash-game;
                 chapter: root.crash-chapter;
@@ -163,41 +396,24 @@ export component AppWindow inherits Window {
                 note: root.crash-note;
                 buttons: root.crash-buttons;
                 focused-index: root.focused-index;
-                activate(index) => { root.activate(index); }
+                activate(index) => { root.clicked(index); }
             }
 
-            // Placeholder for the Continue screen (piece 2.04); page 2 says which game runs.
-            if root.page != 1: Rectangle {
-                vertical-stretch: 1;
+            // A game the app started is running.
+            Rectangle {
+                x: 24px;
+                y: 24px;
+                width: parent.width - 48px;
+                height: parent.height - 48px;
+                visible: root.page == 3;
                 border-radius: 12px;
                 background: #1a1f2a;
                 Text {
-                    text: root.page == 2 ? root.status : "Continue screen goes here";
+                    text: root.status;
                     color: #8a93a3;
                     font-size: 22px;
+                    wrap: word-wrap;
                 }
-            }
-
-            if root.page == 0: HorizontalLayout {
-                spacing: 16px;
-                MenuButton {
-                    label: "Placeholder A";
-                    focused: root.focused-index == 0;
-                    activated => { root.activate(0); }
-                }
-                MenuButton {
-                    label: "Placeholder B";
-                    focused: root.focused-index == 1;
-                    activated => { root.activate(1); }
-                }
-            }
-
-            // Slint's royalty-free licence asks for this notice.
-            Text {
-                text: "About: this application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev).";
-                color: #8a93a3;
-                font-size: 12px;
-                wrap: word-wrap;
             }
         }
     }

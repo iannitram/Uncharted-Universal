@@ -1,7 +1,10 @@
 //! The app's texts in the seven languages of the Python launcher (`LANGUAGES` in
 //! `launcher/uncharted_i18n.py`), English first. Only the after-crash screen's texts live here
-//! so far; piece 2.09 moves every page's texts to Slint's translation files. `{}` in a text is
-//! filled with [`fill`].
+//! so far. Piece 2.09 put the other pages' texts in the gettext catalogues (`app/lang/`); these
+//! move there too in a follow-up, and until then follow the chosen interface language through
+//! [`Lang::of`]. `{}` in a text is filled with [`fill`].
+
+use uncharted_core::language::Language;
 
 /// A language the app speaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,14 +50,10 @@ impl Lang {
         }
     }
 
-    /// The language from the first set one of `UU_LANG`, `LC_ALL`, `LC_MESSAGES`, `LANG`
-    /// (read through `var`); English when none is set.
-    pub fn detect(var: impl Fn(&str) -> Option<String>) -> Lang {
-        ["UU_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
-            .into_iter()
-            .filter_map(var)
-            .find(|value| !value.is_empty())
-            .map_or(Lang::En, |value| Lang::from_locale(&value))
+    /// The interface language the player chose (`ui_language`, Automatic resolved by
+    /// `uncharted_core::language::resolve`), so this screen speaks the same as the rest.
+    pub fn of(language: Language) -> Lang {
+        Lang::from_locale(language.code())
     }
 }
 
@@ -275,13 +274,9 @@ mod tests {
         assert_eq!(Lang::from_locale("JA"), Lang::Ja);
         assert_eq!(Lang::from_locale("C"), Lang::En);
         assert_eq!(Lang::from_locale("ru_RU"), Lang::En);
-        let vars = |name: &str| match name {
-            "LC_ALL" => Some(String::new()),
-            "LANG" => Some("fr_FR.UTF-8".to_string()),
-            _ => None,
-        };
-        assert_eq!(Lang::detect(vars), Lang::Fr);
-        assert_eq!(Lang::detect(|_| None), Lang::En);
+        for language in Language::ALL {
+            assert_eq!(Lang::of(language) as usize, language as usize);
+        }
     }
 
     #[test]

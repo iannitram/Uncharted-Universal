@@ -11,7 +11,6 @@ const STICK_THRESHOLD: f32 = 0.6;
 pub enum Action {
     Move(Nav),
     Activate,
-    /// Leave the page (the after-crash screen goes home).
     Back,
 }
 
