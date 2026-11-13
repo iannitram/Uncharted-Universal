@@ -40,6 +40,7 @@ pub fn dispatch(command: &str, args: &[String], ctx: &Ctx) -> Outcome {
         "hub" => hub::hub(args, ctx),
         "fleet" => fleet(args, ctx),
         "generate-art" => generate_art(args),
+        "setup" => Ok(crate::setup::main(args)),
         other => unreachable!("dispatch is only called with a listed command, not {other}"),
     };
     done.unwrap_or_else(|early| early)

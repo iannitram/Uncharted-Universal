@@ -13,6 +13,10 @@
 //! `uncharted-universal play <game>` (the command line, roadmap 2.02) beside this program and
 //! wait for it: that command pulls the save, starts the game and pushes the save.
 //!
+//! The guided first run (roadmap 2.05) opens over the screen when nothing is installed and no
+//! hub is paired (`setup::is_first_run`), or from a card's Set up button: its view model is
+//! `firstrun.rs`, its jobs run on threads in `work.rs`.
+//!
 //! Release builds (roadmap 2.10) ship this program as the AppImage's entry, in the Windows zip
 //! and in the macOS app bundle, with `uncharted-universal` and `uncharted-run` beside it. On
 //! Linux it first takes Steam's `LD_PRELOAD` overlay and the other host library variables out
@@ -24,6 +28,7 @@
 #![cfg_attr(all(not(debug_assertions), not(test)), windows_subsystem = "windows")]
 
 mod card;
+mod firstrun;
 mod focus;
 mod input;
 mod lang;
@@ -32,8 +37,10 @@ mod pages_io;
 mod screen;
 mod settings_store;
 mod vm;
+mod work;
 
 use card::Clock;
+use firstrun::{FirstRun, FirstRunView, Job, Key};
 use focus::{AboutFocus, Effect, FleetFocus, Nav};
 use input::Controller;
 use lang::Texts;
@@ -53,6 +60,7 @@ use uncharted_core::launch::Keep;
 use uncharted_core::patches::{Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::saves;
+use uncharted_core::setup;
 use vm::saves::{GameSaves, SavesCommand, SavesView};
 use vm::settings::{SettingsCommand, SettingsView};
 use vm::{FleetVm, SavesVm, SettingsVm};
@@ -203,6 +211,22 @@ fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures) {
             ));
         }
     }
+}
+
+/// Draw the first-run page into the window.
+fn apply_first(window: &AppWindow, view: &FirstRunView) {
+    window.set_fr_step(view.step.as_str().into());
+    window.set_fr_title(view.title.as_str().into());
+    window.set_fr_lines(strings(&view.lines));
+    window.set_fr_options(strings(&view.options));
+    window.set_fr_focus(view.focus as i32);
+    window.set_fr_field(view.field.as_str().into());
+    window.set_fr_code(strings(&view.code));
+    window.set_fr_code_cursor(view.code_cursor as i32);
+    window.set_fr_has_progress(view.progress.is_some());
+    window.set_fr_progress(view.progress.unwrap_or(0.0));
+    window.set_fr_error(view.error.as_str().into());
+    window.set_fr_hint(view.hint.as_str().into());
 }
 
 /// The interface language and what About shows, outside the window.
@@ -415,6 +439,8 @@ struct Ui {
     pictures: RefCell<Pictures>,
     now: Box<dyn Fn() -> u64>,
     offset: Box<dyn Fn(u64) -> i64>,
+    /// The first-run page while it is open.
+    first: RefCell<Option<FirstRun>>,
 }
 
 impl Ui {
@@ -445,6 +471,32 @@ impl Ui {
         });
         window.set_about_focus(about.as_ref().map_or(0, |a| a.focused() as i32));
         window.set_fleet_focus(fleet.fleet().focused() as i32);
+        match self.first.borrow().as_ref() {
+            Some(first) => {
+                apply_first(&window, &first.view());
+                window.set_mode(1);
+            }
+            None => window.set_mode(0),
+        }
+    }
+
+    /// Open the first-run page; `only` is the game whose Set up button opened it.
+    fn open_first(&self, only: Option<Game>, steam: bool) {
+        *self.first.borrow_mut() = Some(FirstRun::new(only, steam));
+        if let Some(window) = self.window.upgrade() {
+            window.set_fr_field_text(SharedString::new());
+        }
+        self.redraw();
+    }
+
+    /// Do `f` to the first-run page, if open, and redraw.
+    fn first_do(&self, f: impl FnOnce(&mut FirstRun) -> Job) -> Job {
+        let job = match self.first.borrow_mut().as_mut() {
+            Some(first) => f(first),
+            None => Job::None,
+        };
+        self.redraw();
+        job
     }
 
     /// Open a page over the Continue screen.
@@ -591,12 +643,17 @@ impl Ui {
     }
 }
 
-/// Connect the window's callbacks to the screen and the pages; every command goes to `run`.
-fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>) {
+/// Connect the window's callbacks to the screen, the pages and the first-run page; every
+/// command goes to `run`, every first-run job to `jobs`.
+fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>, jobs: Rc<dyn Fn(Job)>) {
     window.on_input({
-        let (ui, run) = (ui.clone(), run.clone());
+        let (ui, run, jobs) = (ui.clone(), run.clone(), jobs.clone());
         move |code| {
-            if let Some(input) = Input::from_code(code) {
+            if ui.first.borrow().is_some() {
+                if let Some(key) = Key::from_code(code) {
+                    jobs(ui.first_do(|first| first.handle(key)));
+                }
+            } else if let Some(input) = Input::from_code(code) {
                 run(ui.input(input));
             }
         }
@@ -608,6 +665,18 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>) {
     window.on_page_clicked({
         let ui = ui.clone();
         move |row, col| run(ui.page_click(row, col))
+    });
+    window.on_fr_clicked({
+        let (ui, jobs) = (ui.clone(), jobs.clone());
+        move |index| {
+            if let Ok(index) = usize::try_from(index) {
+                jobs(ui.first_do(|first| first.click(index)));
+            }
+        }
+    });
+    window.on_field_accepted({
+        let ui = ui.clone();
+        move |text| jobs(ui.first_do(|first| first.field(&text)))
     });
     ui.lang.borrow().show(window);
     show_fleet(window, ui.fleet.borrow().fleet());
@@ -631,7 +700,7 @@ fn places(os: Os, vars: &Vars) -> Vec<Place> {
             let user_dir = saves::user_dir(os, vars, &install).ok()?;
             Some(Place {
                 game,
-                dump: load::dump_dir(game, |k| std::env::var(k).ok()),
+                dump: load::dump_dir(game, |k| std::env::var(k).ok(), Some(&dirs)),
                 install,
                 user_dir,
             })
@@ -764,11 +833,12 @@ fn main() -> Result<(), slint::PlatformError> {
     uncharted_core::host_env::clean_process();
     let window = AppWindow::new()?;
     let os = Os::current();
-    let (places, status, dirs) = match Vars::from_lookup(os, |k| std::env::var(k).ok()) {
+    let vars = Vars::from_lookup(os, |k| std::env::var(k).ok());
+    let (places, status, dirs) = match &vars {
         Ok(vars) => (
-            places(os, &vars),
+            places(os, vars),
             NO_RELAY.to_owned(),
-            Some(AppDirs::new(&vars)),
+            Some(AppDirs::new(vars)),
         ),
         Err(err) => (Vec::new(), format!("Cannot find the saves: {err}"), None),
     };
@@ -778,12 +848,15 @@ fn main() -> Result<(), slint::PlatformError> {
         .map(language::read_setting)
         .unwrap_or_default();
     let lang = Lang::new(setting, settings_file, sys_locale::get_locale());
-    let places = Rc::new(places);
+    // Where the first run works; without the folders there is nowhere to set up.
+    let cx = vars.ok().map(|vars| work::Context::here(os, vars));
+    let steam = setup::steam_command(os, false).is_some();
+    let places = Rc::new(RefCell::new(places));
     let config = dirs.as_ref().map(|d| d.config.clone());
     let backups = dirs.as_ref().map(AppDirs::backups);
     let detected = pages_io::detected_profile(os);
     let last = config.as_deref().and_then(load::last_started);
-    let screen = Screen::new(load_all(&places), last, &status);
+    let screen = Screen::new(load_all(&places.borrow()), last, &status);
     let ui = Rc::new(Ui {
         screen: RefCell::new(screen),
         shown: RefCell::new(Shown::Continue),
@@ -794,15 +867,17 @@ fn main() -> Result<(), slint::PlatformError> {
         pictures: RefCell::default(),
         now: Box::new(local_clock_now),
         offset: Box::new(local_offset),
+        first: RefCell::new(None),
     });
 
-    // A finished game run comes back from its thread through this channel; the hardware probe
-    // through the other.
+    // A finished game run comes back from its thread through this channel, the hardware probe
+    // through the second and what the first run's jobs come to through the third.
     let (done_tx, done_rx) = mpsc::channel::<String>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
+    let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
 
     let run: Rc<dyn Fn(Cmd)> = Rc::new({
-        let (ui, places, config) = (ui.clone(), places.clone(), config.clone());
+        let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
         move |command| match command {
             Cmd::Screen(Command::None)
             | Cmd::Saves(SavesCommand::None | SavesCommand::Back)
@@ -811,9 +886,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = slint::quit_event_loop();
             }
             Cmd::Screen(Command::Open(Page::Saves)) => match &backups {
-                Some(backups) if !places.is_empty() => {
+                Some(backups) if !places.borrow().is_empty() => {
                     let game = ui.screen.borrow().current_game();
-                    let vm = SavesVm::new(saves_data(&places, backups), game, NO_RELAY);
+                    let vm = SavesVm::new(saves_data(&places.borrow(), backups), game, NO_RELAY);
                     ui.show(Shown::Saves(vm));
                 }
                 _ => {
@@ -832,8 +907,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     .as_deref()
                     .and_then(pages_io::load_cache)
                     .and_then(|probe| {
-                        pages_io::tune_from(&probe, &pages_io::read_reports(&relay_dirs(&places)))
-                            .ok()
+                        pages_io::tune_from(
+                            &probe,
+                            &pages_io::read_reports(&relay_dirs(&places.borrow())),
+                        )
+                        .ok()
                     });
                 ui.show(Shown::Settings(SettingsVm::new(stored, detected, tune)));
             }
@@ -842,17 +920,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.redraw();
             }
             Cmd::Screen(Command::SetUp(game)) => {
-                ui.screen.borrow_mut().set_status(&format!(
-                    "Setting up {} on this device comes with the guided first run (roadmap 2.05).",
-                    game.name()
-                ));
-                ui.redraw();
+                if cx.is_some() {
+                    ui.open_first(Some(game), steam);
+                } else {
+                    ui.screen
+                        .borrow_mut()
+                        .set_status("Cannot set up: this device's folders are unknown.");
+                    ui.redraw();
+                }
             }
             Cmd::Screen(Command::Keep { game, keep }) => {
                 ui.screen.borrow_mut().set_status(&keep_status(game, keep));
                 ui.redraw();
             }
             Cmd::Screen(Command::Start(start)) => {
+                let places = places.borrow();
                 let place = places.iter().find(|p| p.game == start.game);
                 if let (Some(slot), Some(place)) = (start.slot, place) {
                     if let Err(err) = saves::select(&place.user_dir, start.game, slot) {
@@ -884,6 +966,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 });
             }
             Cmd::Saves(command) => {
+                let places = places.borrow();
                 let Some(backups) = &backups else {
                     return;
                 };
@@ -929,9 +1012,42 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    wire(&window, &ui, run);
+    let jobs: Rc<dyn Fn(Job)> = Rc::new({
+        let (ui, places, cx) = (ui.clone(), places.clone(), cx.clone());
+        move |job| match job {
+            Job::None => {}
+            Job::EditField => {
+                if let Some(window) = ui.window.upgrade() {
+                    window.invoke_focus_field();
+                }
+            }
+            Job::Finish { start_steam } => {
+                if start_steam {
+                    work::start_steam(os);
+                }
+                *ui.first.borrow_mut() = None;
+                // Installs and the noted dump folder may have changed: load the cards again.
+                if let Some(cx) = &cx {
+                    *places.borrow_mut() = self::places(os, &cx.vars);
+                }
+                let games = load_all(&places.borrow());
+                ui.screen.borrow_mut().reload(games);
+                ui.redraw();
+            }
+            job => {
+                if let Some(cx) = &cx {
+                    work::start(job, cx, event_tx.clone());
+                }
+            }
+        }
+    });
+    wire(&window, &ui, run, jobs.clone());
+    if cx.as_ref().is_some_and(|cx| setup::is_first_run(&cx.dirs)) {
+        ui.open_first(None, steam);
+    }
 
-    // Poll the controller, the game run and the probe on the UI thread; all are cheap to drain.
+    // Poll the controller, the game run, the probe and the first run's jobs on the UI thread;
+    // all are cheap to drain.
     let mut controller = Controller::new();
     let timer = slint::Timer::default();
     timer.start(
@@ -939,7 +1055,7 @@ fn main() -> Result<(), slint::PlatformError> {
         Duration::from_millis(16),
         move || {
             if let Ok(status) = done_rx.try_recv() {
-                let games = load_all(&places);
+                let games = load_all(&places.borrow());
                 let mut screen = ui.screen.borrow_mut();
                 screen.reload(games);
                 screen.finished(&status);
@@ -948,8 +1064,10 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             if let Ok(probe) = probe_rx.try_recv() {
                 let result = probe.and_then(|text| {
-                    let tuned =
-                        pages_io::tune_from(&text, &pages_io::read_reports(&relay_dirs(&places)));
+                    let tuned = pages_io::tune_from(
+                        &text,
+                        &pages_io::read_reports(&relay_dirs(&places.borrow())),
+                    );
                     if let (Ok(_), Some(config)) = (&tuned, &config) {
                         let _ = pages_io::save_cache(config, &text);
                     }
@@ -959,6 +1077,9 @@ fn main() -> Result<(), slint::PlatformError> {
                     vm.tuned(result);
                 }
                 ui.redraw();
+            }
+            while let Ok(event) = event_rx.try_recv() {
+                jobs(ui.first_do(|first| first.event(event)));
             }
             let Some(controller) = controller.as_mut() else {
                 return;
@@ -1025,13 +1146,15 @@ mod tests {
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
             offset: Box::new(|_| 0),
+            first: RefCell::new(None),
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
         let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
-        wire(&window, &ui, run);
+        wire(&window, &ui, run, Rc::new(|_| {}));
+        assert_eq!(window.get_mode(), 0);
 
         // Opens on Uncharted 2 (the only save), focus on Continue.
         assert_eq!(window.get_current_game(), 1);
@@ -1103,13 +1226,14 @@ mod tests {
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
             offset: Box::new(|_| 0),
+            first: RefCell::new(None),
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
         let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
-        wire(&window, &ui, run);
+        wire(&window, &ui, run, Rc::new(|_| {}));
         assert_eq!(window.get_page(), 0);
 
         // Saves: Uncharted 2 with a save in slot 1 and one backup.
@@ -1188,6 +1312,90 @@ mod tests {
         assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 1));
     }
 
+    /// One headless Slint run of the first-run page: the client path through the window's own
+    /// callbacks, as far as a job leaves the UI thread.
+    #[test]
+    fn headless_run_of_the_first_run() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let games: Vec<GameData> = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
+            let commands = commands.clone();
+            move |c| commands.borrow_mut().push(c)
+        });
+        let jobs: Rc<dyn Fn(Job)> = Rc::new({
+            let seen = seen.clone();
+            move |j| seen.borrow_mut().push(j)
+        });
+        wire(&window, &ui, run, jobs.clone());
+        ui.open_first(None, true);
+        assert_eq!(window.get_mode(), 1);
+        assert_eq!(window.get_page(), 0);
+        assert_eq!(window.get_fr_step(), "Step 1 of 4");
+        assert_eq!(window.get_fr_options().row_count(), 3);
+        assert_eq!(window.get_fr_focus(), 0);
+
+        // Down, A: the client path looks for hubs.
+        window.invoke_input(1);
+        assert_eq!(window.get_fr_focus(), 1);
+        window.invoke_input(6);
+        assert_eq!(seen.borrow().last(), Some(&Job::Discover));
+        assert!(commands.borrow().is_empty());
+        jobs(ui.first_do(|f| f.event(firstrun::Event::Hubs(Ok(Vec::new())))));
+        assert_eq!(window.get_fr_options().row_count(), 1);
+        assert_ne!(window.get_fr_field(), "");
+        window.invoke_fr_clicked(0);
+        assert_eq!(seen.borrow().last(), Some(&Job::EditField));
+
+        // The address typed, then the code from the keyboard's digits.
+        window.invoke_field_accepted("192.168.1.20:47120".into());
+        assert_eq!(window.get_fr_title(), "Pair with 192.168.1.20:47120");
+        assert_eq!(window.get_fr_code().row_count(), 6);
+        for code in [21, 22, 23, 24, 25, 26] {
+            window.invoke_input(code);
+        }
+        window.invoke_input(30);
+        window.invoke_input(29);
+        assert_eq!(
+            window.get_fr_code().iter().collect::<Vec<_>>(),
+            ["1", "2", "3", "4", "5", "9"].map(SharedString::from)
+        );
+        window.invoke_input(6);
+        assert!(matches!(
+            seen.borrow().last(),
+            Some(Job::PairPull { code, .. }) if code == "123459"
+        ));
+        assert_eq!(window.get_fr_step(), "Step 3 of 4");
+        assert!(window.get_fr_options().row_count() == 0);
+
+        // A failed pull returns to the code; B, B, B leaves for the Continue screen.
+        ui.first_do(|f| f.event(firstrun::Event::Pulled(Err("no".into()))));
+        assert_eq!(window.get_fr_error(), "No.");
+        window.invoke_input(7);
+        window.invoke_input(7);
+        window.invoke_input(7);
+        assert_eq!(
+            seen.borrow().last(),
+            Some(&Job::Finish { start_steam: false })
+        );
+        // No key reached the Continue screen or a page while the first run was open.
+        assert!(commands.borrow().is_empty());
+    }
+
     // The testing backend, and with it Slint's translation choice, is per thread: this test's
     // language switches do not reach the one above.
     #[test]
@@ -1212,13 +1420,14 @@ mod tests {
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
             offset: Box::new(|_| 0),
+            first: RefCell::new(None),
         });
         let commands = Rc::new(RefCell::new(Vec::new()));
         let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
             move |c| commands.borrow_mut().push(c)
         });
-        wire(&window, &ui, run);
+        wire(&window, &ui, run, Rc::new(|_| {}));
 
         // Automatic with an unsupported locale is English. The Slint notice is on About only.
         assert_eq!(window.get_language_name(), "Automatic (English)");

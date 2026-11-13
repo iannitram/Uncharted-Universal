@@ -17,6 +17,7 @@
 //! uncharted-universal hub          pull [--hub <address[:port]>] [--from <hub>] [--into <folder>]
 //! uncharted-universal fleet        [<records file>] [--device <name>]
 //! uncharted-universal generate-art [<output folder>]
+//! uncharted-universal setup        [status|hub|client|steam]
 //! ```
 //!
 //! Every command is a thin layer over `uncharted_core`; a core function that is still a stub
@@ -27,12 +28,14 @@
 //!
 //! Exit status: 0 done; 1 failed (the message says why; `check` also returns 1 when the dump has
 //! problems); 2 bad arguments; 3 a piece of the core is not built yet. `play` returns the game's
-//! own exit status once the game has run.
+//! own exit status once the game has run. `setup` is the app's guided first run without the
+//! window (`setup.rs`).
 
 mod args;
 mod commands;
 #[cfg(test)]
 mod fixtures;
+mod setup;
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -82,6 +85,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "generate-art",
         "[<output folder>]",
         "write the collection artwork to a folder",
+    ),
+    (
+        "setup",
+        "[status|hub [<dump>] [u1|u2|u3]|client <address:port> <code>|steam [--close-steam]]",
+        "first run: prepare from the dump, or pull from the hub; add to Steam",
     ),
 ];
 
