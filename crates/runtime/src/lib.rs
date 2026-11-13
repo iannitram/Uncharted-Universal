@@ -14,6 +14,8 @@
 //! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
 //! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
+//! [`time`] and [`rtc`] (piece 3.02) are the guest's `gettimeofday` and `libSceRtc`, from
+//! `src/runtime_time.c` and `src/runtime_rtc.c`; `abi`'s resolver chain asks them in the C order.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
 //! from Vulkan loaded at run time. The `uncharted-run` binary has no game loader yet.
 //! [`trophy`] is libSceNpTrophy (3.05), the port of the deleted `src/runtime_trophy.c`. The
@@ -21,8 +23,8 @@
 //!
 //! # Remaining planned modules
 //!
-//! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
-//! `rtc`, `sync`, `content` and `display`, the rest of `savedata`,
+//! Each module arrives with its own piece (ROADMAP stage 3), in this order: `sync`,
+//! `content` and `display`, the rest of `savedata`,
 //! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
@@ -44,5 +46,7 @@ pub mod os;
 pub mod pad;
 /// cbindgen:ignore
 pub mod probe;
+pub mod rtc;
 pub mod savedata;
+pub mod time;
 pub mod trophy;
