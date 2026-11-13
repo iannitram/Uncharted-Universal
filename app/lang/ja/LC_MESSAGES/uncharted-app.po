@@ -1,0 +1,125 @@
+# Japanese texts of the Uncharted Universal launcher (app/). English is the source:
+# each msgid is the text as written in ui/app.slint (@tr) or src/ (texts.tr).
+# src/lang.rs tests that this file has every text the app shows, and nothing else.
+msgid ""
+msgstr ""
+"Project-Id-Version: uncharted-app\n"
+"Language: ja\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "About"
+msgstr "このアプリについて"
+
+msgid "Version {}"
+msgstr "バージョン {}"
+
+msgid "Uncharted Universal is free software under the GNU General Public License, version 2 only."
+msgstr "Uncharted Universal は GNU 一般公衆利用許諾書 バージョン 2 のみのもとで配布されるフリーソフトウェアです。"
+
+msgid "Patches"
+msgstr "パッチ"
+
+msgid "No patches yet: the patches of a prepared game are listed here."
+msgstr "まだパッチはありません。準備したゲームのパッチがここに表示されます。"
+
+msgid "Licences"
+msgstr "ライセンス"
+
+msgid "Each bundled library's licence text is in the licenses folder next to the app."
+msgstr "同梱の各ライブラリのライセンス文は、アプリと同じ場所の licenses フォルダーにあります。"
+
+msgid "Learned from"
+msgstr "参考にしたプロジェクト"
+
+msgid "Studied for how they work; no code was copied from them."
+msgstr "仕組みを理解するために調べたもので、コードはコピーしていません。"
+
+msgid "Built with Slint"
+msgstr "Slint で作成"
+
+msgid "This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev)."
+msgstr "このアプリケーションは Slint で作られており、Slint Royalty-free Desktop, Mobile, and Web Applications ライセンスのもとで使用しています (https://slint.dev)。"
+
+msgid "Back"
+msgstr "戻る"
+
+msgid "Up and down scroll. A or B goes back."
+msgstr "上下でスクロール。A または B で戻ります。"
+
+msgid "Continue screen goes here"
+msgstr "ここに「続きから」画面が入ります"
+
+msgid "Language: {}"
+msgstr "言語: {}"
+
+msgid "Automatic ({})"
+msgstr "自動 ({})"
+
+msgid "No licence stated"
+msgstr "ライセンスの記載なし"
+
+msgid "This patch is for a different title, executable or revision."
+msgstr "このパッチは別のタイトル、実行ファイル、またはリビジョン用です。"
+
+msgid "This patch has no supported literal writes."
+msgstr "このパッチには対応しているリテラル書き込みがありません。"
+
+msgid "Not available: {}"
+msgstr "利用不可: {}"
+
+msgid "On"
+msgstr "オン"
+
+msgid "Off"
+msgstr "オフ"
+
+msgid "by {}"
+msgstr "作者: {}"
+
+msgid "Graphics engine (our fork, in gpu/)"
+msgstr "グラフィックエンジン (私たちのフォーク、gpu/ 内)"
+
+msgid "The C and C++ port this one grew from"
+msgstr "このポートの元になった C/C++ 版"
+
+msgid "Targeted fixes for bugs with the same cause"
+msgstr "同じ原因のバグに対する個別の修正"
+
+msgid "The launcher's interface"
+msgstr "ランチャーのインターフェース"
+
+msgid "Input, window and audio in the game"
+msgstr "ゲーム内の入力、ウィンドウ、音声"
+
+msgid "Controller input in the launcher"
+msgstr "ランチャーでのコントローラー入力"
+
+msgid "Reading patch files"
+msgstr "パッチファイルの読み込み"
+
+msgid "Settings and record files"
+msgstr "設定ファイルと記録ファイル"
+
+msgid "Finding the system language"
+msgstr "システム言語の検出"
+
+msgid "Platform, Steam, bundle and save card modules, copied with credit"
+msgstr "プラットフォーム、Steam、バンドル、セーブカードのモジュール (クレジット付きでコピー)"
+
+msgid "Launcher profiles and settings"
+msgstr "ランチャーのプロファイルと設定"
+
+msgid "Release packaging"
+msgstr "リリースのパッケージング"
+
+msgid "Android device notes"
+msgstr "Android デバイスのメモ"
+
+msgid "The iOS app's layout"
+msgstr "iOS アプリの構成"
+
+msgid "Mac packaging"
+msgstr "Mac 向けパッケージング"

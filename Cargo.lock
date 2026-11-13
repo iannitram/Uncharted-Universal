@@ -4962,8 +4962,11 @@ name = "uncharted-app"
 version = "0.0.0"
 dependencies = [
  "gilrs",
+ "i-slint-backend-testing",
  "slint",
  "slint-build",
+ "sys-locale",
+ "uncharted_core",
 ]
 
 [[package]]
