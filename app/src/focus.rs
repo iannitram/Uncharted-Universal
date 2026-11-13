@@ -1,6 +1,8 @@
 //! Screens and focus, plain Rust so they are tested without a window. The `.slint` file only
 //! draws what this decides (ADR 0003).
 
+use crate::vm::FleetVm;
+
 /// A direction from the keyboard or the controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
@@ -40,11 +42,12 @@ impl FocusRing {
         self.index
     }
 
-    /// Focus button `index` (a click); out of range is ignored.
-    pub fn set(&mut self, index: usize) {
+    /// Focus button `index` (a click); `false`, and no change, when out of range.
+    pub fn set(&mut self, index: usize) -> bool {
         if index < self.len {
             self.index = index;
         }
+        index < self.len
     }
 
     /// Up/Left go to the previous button, Down/Right to the next.
@@ -63,12 +66,15 @@ pub enum Screen {
     Home = 0,
     /// Version, patches, licences, the Slint notice.
     About = 1,
+    /// The paired devices (2.08).
+    Fleet = 2,
 }
 
 /// The Home buttons, in focus order.
 pub const LANGUAGE_BUTTON: usize = 0;
 pub const ABOUT_BUTTON: usize = 1;
-const HOME_BUTTONS: usize = 2;
+pub const FLEET_BUTTON: usize = 2;
+const HOME_BUTTONS: usize = 3;
 
 /// What the window must do after an input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,6 +82,8 @@ pub enum Effect {
     None,
     /// Draw the focus on this Home button.
     Focus(usize),
+    /// Draw the focus on this Fleet item (a row, or Back last).
+    FleetFocus(usize),
     /// Switch to this screen.
     Show(Screen),
     /// Scroll About by this many steps (positive is towards the top).
@@ -89,18 +97,28 @@ pub enum Effect {
 pub struct Launcher {
     screen: Screen,
     home: FocusRing,
+    fleet: FleetVm,
 }
 
 impl Default for Launcher {
     fn default() -> Self {
-        Launcher {
-            screen: Screen::Home,
-            home: FocusRing::new(HOME_BUTTONS),
-        }
+        Launcher::new(FleetVm::empty())
     }
 }
 
 impl Launcher {
+    pub fn new(fleet: FleetVm) -> Self {
+        Launcher {
+            screen: Screen::Home,
+            home: FocusRing::new(HOME_BUTTONS),
+            fleet,
+        }
+    }
+
+    pub fn fleet(&self) -> &FleetVm {
+        &self.fleet
+    }
+
     pub fn screen(&self) -> Screen {
         self.screen
     }
@@ -122,6 +140,10 @@ impl Launcher {
                 Nav::Down => Effect::Scroll(-1),
                 Nav::Left | Nav::Right => Effect::None,
             },
+            Screen::Fleet => {
+                self.fleet.on_nav(nav);
+                Effect::FleetFocus(self.fleet.focused())
+            }
         }
     }
 
@@ -131,25 +153,40 @@ impl Launcher {
             Screen::Home => match self.home.index() {
                 LANGUAGE_BUTTON => Effect::NextLanguage,
                 ABOUT_BUTTON => self.show(Screen::About),
+                FLEET_BUTTON => {
+                    self.fleet.reset_focus();
+                    self.show(Screen::Fleet)
+                }
                 _ => Effect::None,
             },
             Screen::About => self.show(Screen::Home),
+            // Back is Fleet's last item; the rows do nothing yet.
+            Screen::Fleet if self.fleet.focused() == self.fleet.back_index() => {
+                self.show(Screen::Home)
+            }
+            Screen::Fleet => Effect::None,
         }
     }
 
     /// A click or tap on button `index` of the current screen: focus it, then activate it.
     pub fn click(&mut self, index: usize) -> Effect {
-        if self.screen == Screen::Home {
-            self.home.set(index);
+        let focused = match self.screen {
+            Screen::Home => self.home.set(index),
+            Screen::About => true,
+            Screen::Fleet => self.fleet.focus_on(index),
+        };
+        if focused {
+            self.activate()
+        } else {
+            Effect::None
         }
-        self.activate()
     }
 
-    /// B, Escape or Backspace: About goes back Home, with the focus on the About button.
+    /// B, Escape or Backspace: About and Fleet go back Home, with the focus on their button.
     pub fn back(&mut self) -> Effect {
         match self.screen {
             Screen::Home => Effect::None,
-            Screen::About => self.show(Screen::Home),
+            Screen::About | Screen::Fleet => self.show(Screen::Home),
         }
     }
 
@@ -218,5 +255,59 @@ mod tests {
         assert_eq!(launcher.click(ABOUT_BUTTON), Effect::Show(Screen::About));
         assert_eq!(launcher.click(0), Effect::Show(Screen::Home));
         assert_eq!(launcher.click(LANGUAGE_BUTTON), Effect::NextLanguage);
+    }
+
+    fn with_fleet() -> Launcher {
+        Launcher::new(FleetVm::from_text(include_str!("../fixtures/fleet.tsv")).unwrap())
+    }
+
+    #[test]
+    fn the_controller_reaches_fleet_and_comes_back() {
+        let mut launcher = with_fleet();
+        launcher.nav(Nav::Right);
+        assert_eq!(launcher.nav(Nav::Right), Effect::Focus(FLEET_BUTTON));
+        assert_eq!(launcher.activate(), Effect::Show(Screen::Fleet));
+        assert_eq!(launcher.fleet().focused(), 0);
+
+        // Down through the three rows to Back; A on a row does nothing, A on Back returns
+        // Home on the Fleet button.
+        assert_eq!(launcher.activate(), Effect::None);
+        for row in 1..=3 {
+            assert_eq!(launcher.nav(Nav::Down), Effect::FleetFocus(row));
+        }
+        assert_eq!(launcher.activate(), Effect::Show(Screen::Home));
+        assert_eq!(launcher.focused(), FLEET_BUTTON);
+    }
+
+    #[test]
+    fn b_returns_home_from_fleet_and_opening_it_again_starts_on_the_first_row() {
+        let mut launcher = with_fleet();
+        launcher.click(FLEET_BUTTON);
+        launcher.nav(Nav::Down);
+        assert_eq!(launcher.back(), Effect::Show(Screen::Home));
+        assert_eq!(launcher.focused(), FLEET_BUTTON);
+        assert_eq!(launcher.activate(), Effect::Show(Screen::Fleet));
+        assert_eq!(launcher.fleet().focused(), 0);
+    }
+
+    #[test]
+    fn a_fleet_click_focuses_and_activates() {
+        let mut launcher = with_fleet();
+        assert_eq!(launcher.click(FLEET_BUTTON), Effect::Show(Screen::Fleet));
+        assert_eq!(launcher.click(1), Effect::None);
+        assert_eq!(launcher.fleet().focused(), 1);
+        assert_eq!(launcher.click(99), Effect::None);
+        assert_eq!(launcher.fleet().focused(), 1);
+        let back = launcher.fleet().back_index();
+        assert_eq!(launcher.click(back), Effect::Show(Screen::Home));
+    }
+
+    #[test]
+    fn with_no_records_fleet_opens_on_back() {
+        let mut launcher = Launcher::default();
+        launcher.click(FLEET_BUTTON);
+        assert_eq!(launcher.screen(), Screen::Fleet);
+        assert_eq!(launcher.fleet().focused(), launcher.fleet().back_index());
+        assert_eq!(launcher.activate(), Effect::Show(Screen::Home));
     }
 }

@@ -1,6 +1,6 @@
 //! The launcher (ADR 0003). So far: the Continue screen's place held, a language button that
 //! steps through the seven interface languages, and About (version, patches, licences, the
-//! Slint notice), all reachable with keyboard and controller focus.
+//! Slint notice), and the Fleet page (2.08), all reachable with keyboard and controller focus.
 
 mod focus;
 mod input;
@@ -18,8 +18,48 @@ use std::time::Duration;
 use uncharted_core::language::{self, Language};
 use uncharted_core::patches::{Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
+use vm::FleetVm;
 
 slint::include_modules!();
+
+/// A file of fleet records (`fleet::to_line` lines, this device first) the Fleet page reads
+/// until the hub keeps real ones (roadmap 4.04); `app/fixtures/fleet.tsv` is an example.
+const FLEET_RECORDS_VAR: &str = "UNCHARTED_FLEET_RECORDS";
+
+fn load_fleet() -> FleetVm {
+    let Some(path) = std::env::var_os(FLEET_RECORDS_VAR) else {
+        return FleetVm::empty();
+    };
+    let read = std::fs::read_to_string(&path)
+        .map_err(|err| err.to_string())
+        .and_then(|text| FleetVm::from_text(&text).map_err(|err| err.to_string()));
+    read.unwrap_or_else(|err| {
+        eprintln!(
+            "fleet records unreadable ({}): {err}",
+            path.to_string_lossy()
+        );
+        FleetVm::empty()
+    })
+}
+
+/// Copy the Fleet page's rows and texts into the window.
+fn show_fleet(window: &AppWindow, fleet: &FleetVm) {
+    let rows: Vec<FleetRow> = fleet
+        .rows()
+        .iter()
+        .map(|r| FleetRow {
+            name: r.name.as_str().into(),
+            detail: r.detail.as_str().into(),
+            sync: r.sync.as_str().into(),
+            free: r.free.as_str().into(),
+        })
+        .collect();
+    window.set_fleet_rows(ModelRc::new(VecModel::from(rows)));
+    window.set_fleet_warning(fleet.warning().unwrap_or_default().into());
+    window.set_fleet_empty(fleet.empty_text().unwrap_or_default().into());
+    window.set_fleet_back_index(fleet.back_index() as i32);
+    window.set_fleet_focus(fleet.focused() as i32);
+}
 
 /// The launcher's state outside the window.
 struct App {
@@ -104,6 +144,7 @@ impl App {
         window.set_patches(ModelRc::new(VecModel::from(patches)));
         window.set_shipped_licences(licence_model(vm::about::SHIPPED, &self.texts));
         window.set_learned_licences(licence_model(vm::about::LEARNED_FROM, &self.texts));
+        show_fleet(window, self.launcher.fleet());
     }
 
     /// Carry out what an input means.
@@ -111,9 +152,11 @@ impl App {
         match effect {
             Effect::None => {}
             Effect::Focus(index) => window.set_focused_index(index as i32),
+            Effect::FleetFocus(index) => window.set_fleet_focus(index as i32),
             Effect::Show(screen) => {
                 window.set_page(screen as i32);
                 window.set_focused_index(self.launcher.focused() as i32);
+                window.set_fleet_focus(self.launcher.fleet().focused() as i32);
             }
             Effect::Scroll(steps) => window.invoke_scroll_about(steps),
             Effect::NextLanguage => {
@@ -178,11 +221,9 @@ fn main() -> Result<(), slint::PlatformError> {
         .as_deref()
         .map(language::read_setting)
         .unwrap_or_default();
-    let app = Rc::new(RefCell::new(App::new(
-        setting,
-        settings_file,
-        sys_locale::get_locale(),
-    )));
+    let mut app = App::new(setting, settings_file, sys_locale::get_locale());
+    app.launcher = Launcher::new(load_fleet());
+    let app = Rc::new(RefCell::new(app));
 
     let window = AppWindow::new()?;
     app.borrow().show(&window);
@@ -318,6 +359,16 @@ mod tests {
         }
         assert_eq!(language::read_setting(&file), "");
         assert_eq!(window.get_language_name(), "Automatic (English)");
+
+        // The Fleet button opens Fleet; with no records it shows the empty state on Back,
+        // and B returns Home with the focus on the Fleet button.
+        window.invoke_clicked(2);
+        assert_eq!(window.get_page(), Screen::Fleet as i32);
+        assert!(shows(&window, vm::fleet::EMPTY));
+        assert_eq!(window.get_fleet_focus(), window.get_fleet_back_index());
+        window.invoke_back();
+        assert_eq!(window.get_page(), Screen::Home as i32);
+        assert_eq!(window.get_focused_index(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
