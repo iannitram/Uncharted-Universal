@@ -3,8 +3,9 @@
 //! prompt and the fleet warning; keyboard, mouse and controller move the same focus. Its Saves
 //! and Settings buttons open those pages (roadmap 2.06, `src/vm/`). The page row's About opens
 //! About (2.09): version, patches, licences, the Slint notice, and the language button (put
-//! there until Settings existed, owner ruling 2026-11-12; it has not moved yet). The Continue
-//! screen's own texts are English until they are in the catalogues.
+//! there until Settings existed, owner ruling 2026-11-12; it has not moved yet). The page row's
+//! Fleet opens the Fleet page (2.08) the same way. The Continue screen's own texts are English
+//! until they are in the catalogues.
 //!
 //! The view models are `screen.rs` and `vm/` (tested without a window); this file draws their
 //! views into the Slint window and carries out their commands, the files through `pages_io.rs`
@@ -23,7 +24,7 @@ mod settings_store;
 mod vm;
 
 use card::Clock;
-use focus::{AboutFocus, Effect, Nav};
+use focus::{AboutFocus, Effect, FleetFocus, Nav};
 use input::Controller;
 use lang::Texts;
 use screen::{Command, GameData, Input, OverlayView, Page, Screen, Start, View};
@@ -44,9 +45,48 @@ use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::saves;
 use vm::saves::{GameSaves, SavesCommand, SavesView};
 use vm::settings::{SettingsCommand, SettingsView};
-use vm::{SavesVm, SettingsVm};
+use vm::{FleetVm, SavesVm, SettingsVm};
 
 slint::include_modules!();
+
+/// A file of fleet records (`fleet::to_line` lines, this device first) the Fleet page reads
+/// until the hub keeps real ones (roadmap 4.04); `app/fixtures/fleet.tsv` is an example.
+const FLEET_RECORDS_VAR: &str = "UNCHARTED_FLEET_RECORDS";
+
+fn load_fleet() -> FleetVm {
+    let Some(path) = std::env::var_os(FLEET_RECORDS_VAR) else {
+        return FleetVm::empty();
+    };
+    let read = std::fs::read_to_string(&path)
+        .map_err(|err| err.to_string())
+        .and_then(|text| FleetVm::from_text(&text).map_err(|err| err.to_string()));
+    read.unwrap_or_else(|err| {
+        eprintln!(
+            "fleet records unreadable ({}): {err}",
+            path.to_string_lossy()
+        );
+        FleetVm::empty()
+    })
+}
+
+/// Copy the Fleet page's rows and texts into the window.
+fn show_fleet(window: &AppWindow, fleet: &FleetVm) {
+    let rows: Vec<FleetRow> = fleet
+        .rows()
+        .iter()
+        .map(|r| FleetRow {
+            name: r.name.as_str().into(),
+            detail: r.detail.as_str().into(),
+            sync: r.sync.as_str().into(),
+            free: r.free.as_str().into(),
+        })
+        .collect();
+    window.set_fleet_rows(ModelRc::new(VecModel::from(rows)));
+    window.set_fleet_warning(fleet.warning().unwrap_or_default().into());
+    window.set_fleet_empty(fleet.empty_text().unwrap_or_default().into());
+    window.set_fleet_back_index(fleet.back_index() as i32);
+    window.set_fleet_focus(fleet.focused() as i32);
+}
 
 /// The status line until save-relay is linked (roadmap 9.01).
 const NO_RELAY: &str = "Saves stay on this device: save-relay is not in this build yet";
@@ -329,9 +369,12 @@ enum Shown {
 
 /// `page` of the window while About is open (over the Continue screen, whatever `Shown` is).
 const ABOUT_PAGE: i32 = 3;
+/// `page` of the window while Fleet is open, the same way as About.
+const FLEET_PAGE: i32 = 4;
 
 impl Shown {
-    /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings ([`ABOUT_PAGE`] is 3).
+    /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings ([`ABOUT_PAGE`] is 3,
+    /// [`FLEET_PAGE`] 4).
     fn code(&self) -> i32 {
         match self {
             Shown::Continue => 0,
@@ -356,6 +399,8 @@ struct Ui {
     lang: RefCell<Lang>,
     /// About's focus while About is open over the Continue screen.
     about: RefCell<Option<AboutFocus>>,
+    /// Fleet's records and focus; open over the Continue screen like About.
+    fleet: RefCell<FleetFocus>,
     window: slint::Weak<AppWindow>,
     pictures: RefCell<Pictures>,
     now: Box<dyn Fn() -> u64>,
@@ -380,12 +425,16 @@ impl Ui {
             Shown::Settings(vm) => apply_settings(&window, &vm.view()),
         }
         let about = self.about.borrow();
+        let fleet = self.fleet.borrow();
         window.set_page(if about.is_some() {
             ABOUT_PAGE
+        } else if fleet.is_open() {
+            FLEET_PAGE
         } else {
             shown.code()
         });
         window.set_about_focus(about.as_ref().map_or(0, |a| a.focused() as i32));
+        window.set_fleet_focus(fleet.fleet().focused() as i32);
     }
 
     /// Open a page over the Continue screen.
@@ -409,9 +458,23 @@ impl Ui {
             _ => Effect::None,
         });
         if let Some(effect) = about {
-            self.about_effect(effect);
+            self.page_effect(effect);
             return Cmd::Screen(Command::None);
         }
+        let mut fleet = self.fleet.borrow_mut();
+        if fleet.is_open() {
+            let effect = match input {
+                Input::Move(nav) => fleet.nav(nav),
+                Input::Tab { back } => fleet.nav(if back { Nav::Up } else { Nav::Down }),
+                Input::Activate => fleet.activate(),
+                Input::Back => fleet.back(),
+                _ => Effect::None,
+            };
+            drop(fleet);
+            self.page_effect(effect);
+            return Cmd::Screen(Command::None);
+        }
+        drop(fleet);
         let command = match &mut *self.shown.borrow_mut() {
             Shown::Continue => Cmd::Screen(self.screen.borrow_mut().handle(input)),
             Shown::Saves(vm) => Cmd::Saves(vm.handle(input)),
@@ -422,7 +485,8 @@ impl Ui {
         command
     }
 
-    /// `area` 7 is a button of About (`AboutFocus::click`); the others are `Screen::click`'s.
+    /// `area` 7 is a button of About (`AboutFocus::click`), 8 an item of Fleet
+    /// (`FleetFocus::click`); the others are `Screen::click`'s.
     fn click(&self, area: i32, index: i32) -> Cmd {
         let Ok(index) = usize::try_from(index) else {
             return Cmd::Screen(Command::None);
@@ -432,17 +496,30 @@ impl Ui {
             _ => Effect::None,
         });
         if let Some(effect) = about {
-            self.about_effect(effect);
+            self.page_effect(effect);
+            return Cmd::Screen(Command::None);
+        }
+        if self.fleet.borrow().is_open() {
+            let effect = match area {
+                8 => self.fleet.borrow_mut().click(index),
+                _ => Effect::None,
+            };
+            self.page_effect(effect);
             return Cmd::Screen(Command::None);
         }
         let command = Cmd::Screen(self.screen.borrow_mut().click(area, index));
         self.opened(command)
     }
 
-    /// About opens here; every other command goes on to the app.
+    /// About and Fleet open here; every other command goes on to the app.
     fn opened(&self, command: Cmd) -> Cmd {
         if command == Cmd::Screen(Command::Open(Page::About)) {
             *self.about.borrow_mut() = Some(AboutFocus::default());
+            self.redraw();
+            return Cmd::Screen(Command::None);
+        }
+        if command == Cmd::Screen(Command::Open(Page::Fleet)) {
+            self.fleet.borrow_mut().open();
             self.redraw();
             return Cmd::Screen(Command::None);
         }
@@ -481,13 +558,15 @@ impl Ui {
         self.redraw();
     }
 
-    fn about_effect(&self, effect: Effect) {
+    /// Carry out what an input on About or Fleet means.
+    fn page_effect(&self, effect: Effect) {
         let Some(window) = self.window.upgrade() else {
             return;
         };
         match effect {
             Effect::None => {}
             Effect::Focus(index) => window.set_about_focus(index as i32),
+            Effect::FleetFocus(index) => window.set_fleet_focus(index as i32),
             Effect::Scroll(steps) => window.invoke_scroll_about(steps),
             Effect::NextLanguage => {
                 let mut lang = self.lang.borrow_mut();
@@ -521,6 +600,7 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>) {
         move |row, col| run(ui.page_click(row, col))
     });
     ui.lang.borrow().show(window);
+    show_fleet(window, ui.fleet.borrow().fleet());
     ui.redraw();
 }
 
@@ -683,6 +763,7 @@ fn main() -> Result<(), slint::PlatformError> {
         shown: RefCell::new(Shown::Continue),
         lang: RefCell::new(lang),
         about: RefCell::default(),
+        fleet: RefCell::new(FleetFocus::new(load_fleet())),
         window: window.as_weak(),
         pictures: RefCell::default(),
         now: Box::new(local_clock_now),
@@ -911,6 +992,7 @@ mod tests {
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
+            fleet: RefCell::default(),
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -988,6 +1070,7 @@ mod tests {
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
             about: RefCell::default(),
+            fleet: RefCell::default(),
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1096,6 +1179,7 @@ mod tests {
             )),
             about: RefCell::default(),
             shown: RefCell::new(Shown::Continue),
+            fleet: RefCell::default(),
             window: window.as_weak(),
             pictures: RefCell::default(),
             now: Box::new(|| 1_794_519_000),
@@ -1176,6 +1260,17 @@ mod tests {
         // B goes back.
         window.invoke_input(7);
         assert_eq!(window.get_page(), 0);
+
+        // Fleet from the page row: with no records it shows the empty state on Back, and B
+        // returns to the Continue screen with the focus still on Fleet.
+        window.invoke_input(2);
+        window.invoke_input(6);
+        assert_eq!(window.get_page(), FLEET_PAGE);
+        assert!(shows(&window, vm::fleet::EMPTY));
+        assert_eq!(window.get_fleet_focus(), window.get_fleet_back_index());
+        window.invoke_input(7);
+        assert_eq!(window.get_page(), 0);
+        assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 2));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

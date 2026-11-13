@@ -13,6 +13,9 @@ msgstr ""
 msgid "About"
 msgstr "À propos"
 
+msgid "Fleet"
+msgstr "Flotte"
+
 msgid "Version {}"
 msgstr "Version {}"
 

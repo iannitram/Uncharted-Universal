@@ -1,7 +1,9 @@
 //! Focus on the Continue screen (docs/continue-screen.md, "Controller path"): two rows of
-//! buttons, the action row on top and the page row below; and on About, its two buttons. The
-//! Saves and Settings pages (2.06) use [`Grid`]: any number of rows, each with its own buttons.
-//! Plain Rust, so it is tested without a window.
+//! buttons, the action row on top and the page row below; on About, its two buttons; and on
+//! Fleet (2.08), its rows and Back. The Saves and Settings pages (2.06) use [`Grid`]: any number
+//! of rows, each with its own buttons. Plain Rust, so it is tested without a window.
+
+use crate::vm::FleetVm;
 
 /// A direction from the keyboard or the controller.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,11 +191,12 @@ impl FocusRing {
         self.index
     }
 
-    /// Focus button `index` (a click); out of range is ignored.
-    pub fn set(&mut self, index: usize) {
+    /// Focus button `index` (a click); `false`, and no change, when out of range.
+    pub fn set(&mut self, index: usize) -> bool {
         if index < self.len {
             self.index = index;
         }
+        index < self.len
     }
 
     /// Up/Left go to the previous button, Down/Right to the next.
@@ -211,12 +214,14 @@ pub const LANGUAGE_BUTTON: usize = 0;
 pub const BACK_BUTTON: usize = 1;
 const ABOUT_BUTTONS: usize = 2;
 
-/// What the window must do after an input on About.
+/// What the window must do after an input on About or Fleet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
     None,
     /// Draw the focus on this About button.
     Focus(usize),
+    /// Draw the focus on this Fleet item (a row, or Back last).
+    FleetFocus(usize),
     /// Scroll About by this many steps (positive is towards the top).
     Scroll(i32),
     /// Step the interface language to the next choice.
@@ -268,6 +273,69 @@ impl AboutFocus {
     pub fn click(&mut self, index: usize) -> Effect {
         self.ring.set(index);
         self.activate()
+    }
+}
+
+/// Fleet (2.08), opened from the page row over the Continue screen: up and down (and Tab) move
+/// over the rows and Back; A on Back, or B, closes it; A on a row does nothing yet.
+#[derive(Debug)]
+pub struct FleetFocus {
+    fleet: FleetVm,
+    open: bool,
+}
+
+impl Default for FleetFocus {
+    fn default() -> Self {
+        FleetFocus::new(FleetVm::empty())
+    }
+}
+
+impl FleetFocus {
+    pub fn new(fleet: FleetVm) -> Self {
+        FleetFocus { fleet, open: false }
+    }
+
+    pub fn fleet(&self) -> &FleetVm {
+        &self.fleet
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Open Fleet with the focus on its first row (on Back when there are no records).
+    pub fn open(&mut self) {
+        self.fleet.reset_focus();
+        self.open = true;
+    }
+
+    pub fn nav(&mut self, nav: Nav) -> Effect {
+        self.fleet.on_nav(nav);
+        Effect::FleetFocus(self.fleet.focused())
+    }
+
+    /// A or Enter on the focused item.
+    pub fn activate(&mut self) -> Effect {
+        if self.fleet.focused() == self.fleet.back_index() {
+            self.back()
+        } else {
+            Effect::None
+        }
+    }
+
+    /// A click or tap on item `index`: focus it, then activate it.
+    pub fn click(&mut self, index: usize) -> Effect {
+        if self.fleet.focus_on(index) {
+            self.activate()
+        } else {
+            Effect::None
+        }
+    }
+
+    /// B, Escape: back to the Continue screen.
+    pub fn back(&mut self) -> Effect {
+        self.open = false;
+        Effect::Close
     }
 }
 
@@ -397,5 +465,57 @@ mod tests {
         assert_eq!(about.nav(Nav::Right), Effect::Focus(LANGUAGE_BUTTON));
         assert_eq!(about.click(BACK_BUTTON), Effect::Close);
         assert_eq!(about.click(LANGUAGE_BUTTON), Effect::NextLanguage);
+    }
+
+    fn with_fleet() -> FleetFocus {
+        FleetFocus::new(FleetVm::from_text(include_str!("../fixtures/fleet.tsv")).unwrap())
+    }
+
+    #[test]
+    fn fleet_moves_over_its_rows_and_back_closes_it() {
+        let mut fleet = with_fleet();
+        assert!(!fleet.is_open());
+        fleet.open();
+        assert!(fleet.is_open());
+        assert_eq!(fleet.fleet().focused(), 0);
+
+        // Down through the three rows to Back; A on a row does nothing, A on Back closes.
+        assert_eq!(fleet.activate(), Effect::None);
+        for row in 1..=3 {
+            assert_eq!(fleet.nav(Nav::Down), Effect::FleetFocus(row));
+        }
+        assert_eq!(fleet.activate(), Effect::Close);
+        assert!(!fleet.is_open());
+    }
+
+    #[test]
+    fn b_closes_fleet_and_opening_it_again_starts_on_the_first_row() {
+        let mut fleet = with_fleet();
+        fleet.open();
+        fleet.nav(Nav::Down);
+        assert_eq!(fleet.back(), Effect::Close);
+        assert!(!fleet.is_open());
+        fleet.open();
+        assert_eq!(fleet.fleet().focused(), 0);
+    }
+
+    #[test]
+    fn a_fleet_click_focuses_and_activates() {
+        let mut fleet = with_fleet();
+        fleet.open();
+        assert_eq!(fleet.click(1), Effect::None);
+        assert_eq!(fleet.fleet().focused(), 1);
+        assert_eq!(fleet.click(99), Effect::None);
+        assert_eq!(fleet.fleet().focused(), 1);
+        let back = fleet.fleet().back_index();
+        assert_eq!(fleet.click(back), Effect::Close);
+    }
+
+    #[test]
+    fn with_no_records_fleet_opens_on_back() {
+        let mut fleet = FleetFocus::default();
+        fleet.open();
+        assert_eq!(fleet.fleet().focused(), fleet.fleet().back_index());
+        assert_eq!(fleet.activate(), Effect::Close);
     }
 }

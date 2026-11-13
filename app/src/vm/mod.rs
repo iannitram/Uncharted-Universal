@@ -3,8 +3,10 @@
 //! `src/screen.rs` (2.04); these are the pages one button away from it.
 
 pub mod about;
+pub mod fleet;
 pub mod saves;
 pub mod settings;
 
+pub use fleet::FleetVm;
 pub use saves::SavesVm;
 pub use settings::SettingsVm;

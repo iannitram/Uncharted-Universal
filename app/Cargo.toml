@@ -1,6 +1,6 @@
 [package]
 name = "uncharted-app"
-description = "The launcher: Rust + Slint (ADR 0003). The Continue screen (piece 2.04), Saves and Settings (2.06), About and the seven languages (2.09)."
+description = "The launcher: Rust + Slint (ADR 0003). The Continue screen (piece 2.04), Saves and Settings (2.06), the Fleet page (2.08), About and the seven languages (2.09)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
