@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
-# Builds dist/uncharted-windows/ (and dist/uncharted-windows.zip): Uncharted.exe (the launcher,
-# frozen with PyInstaller so players need no Python), Play Uncharted.exe, bb-probe.exe with the
-# MSYS2 CLANG64 DLLs it needs, the preparation scripts and run.py. Run from an MSYS2 CLANG64
-# shell after `bash build.sh`. Freezing uses a Windows Python 3.10+ (python.org; WINPYTHON
+# Builds dist/uncharted-windows/ (and dist/uncharted-windows.zip): uncharted-app.exe (the Rust
+# launcher, roadmap 2.10) with uncharted-universal.exe (the command line; Steam shortcuts run
+# `uncharted-universal.exe play u1`, in place of Play Uncharted.exe) and uncharted-run.exe,
+# Uncharted.exe (the classic launcher, frozen with PyInstaller so players need no Python, until
+# roadmap 2.11), bb-probe.exe with the MSYS2 CLANG64 DLLs it needs, the preparation scripts and
+# run.py. Run from an MSYS2 CLANG64 shell after `bash build.sh`. Freezing uses a Windows Python 3.10+ (python.org; WINPYTHON
 # overrides) and a private venv in out/pyenv with PyInstaller and Pillow.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 cargo run --release -p uncharted_cli -- generate-art "$PWD/launcher/covers"
+# The Rust faces, with the host's (MSVC) toolchain, before CLANG64 comes first on PATH. The C
+# runtime is linked in, so a player needs no Visual C++ redistributable.
+export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS:-} -C target-feature=+crt-static"
+# shellcheck source=packaging/rust_faces.sh
+source packaging/rust_faces.sh
+rust_host=$(rustc -vV | sed -n 's/^host: //p')
 source ./msys2-env.sh
-[[ -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe && -f out/bb-play.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 # A Windows Python (not MSYS2's) for PyInstaller.
 python=${WINPYTHON:-}
@@ -45,7 +53,9 @@ dest=out/stage/uncharted-windows
 rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher" "$dest/scripts"
 cp -r out/pyi-dist/Uncharted/. "$dest/"
-llvm-strip -o "$dest/Play Uncharted.exe" out/bb-play.exe
+# The Rust faces at the top, where the app and the command line look for each other. Release
+# builds carry no debug information (the .pdb stays in the target folder).
+for face in "${faces[@]}"; do cp "$faces_dir/$face.exe" "$dest/"; done
 cp launcher/uncharted.ico launcher/uncharted.png "$dest/launcher/"
 # The executables without debug information (out/ keeps the symbols for crash reports).
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
@@ -64,6 +74,8 @@ cp packaging/windows/licenses/*.txt "$dest/licenses/" 2>/dev/null || true
 for license in out/pyenv/Lib/site-packages/tkinterdnd2-*.dist-info/licenses/LICENSE; do
     [[ -f $license ]] && cp "$license" "$dest/licenses/tkinterdnd2-LICENSE.txt"
 done
+# The crates statically linked into the Rust faces.
+out/pyenv/Scripts/python.exe packaging/rust_licences.py "$dest/licenses/rust-crates.txt" --target "$rust_host"
 # FSR 4 (the v07 INT8 model) when its assets are in fsr4_shaders/ (tools/fetch_fsr4_assets.sh).
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 # DLSS and DLSS Frame Generation (NVIDIA RTX): the MSVC-built bridge and NVIDIA's runtimes, next

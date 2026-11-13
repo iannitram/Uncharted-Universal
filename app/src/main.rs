@@ -12,6 +12,16 @@
 //! and `settings_store.rs`. Continue and Play run
 //! `uncharted-universal play <game>` (the command line, roadmap 2.02) beside this program and
 //! wait for it: that command pulls the save, starts the game and pushes the save.
+//!
+//! Release builds (roadmap 2.10) ship this program as the AppImage's entry, in the Windows zip
+//! and in the macOS app bundle, with `uncharted-universal` and `uncharted-run` beside it. On
+//! Linux it first takes Steam's `LD_PRELOAD` overlay and the other host library variables out
+//! of its own environment (`core::host_env`, which replaced `packaging/bbport-entry.c`), so
+//! the programs it starts never load them. On Windows a release build is a window program (no
+//! console window of its own) and starts the command line without one either.
+
+// A release build on Windows opens no console window; debug builds and tests keep theirs.
+#![cfg_attr(all(not(debug_assertions), not(test)), windows_subsystem = "windows")]
 
 mod card;
 mod focus;
@@ -663,6 +673,19 @@ fn cli_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(file))
 }
 
+/// Windows: start the command line (a console program) without opening a console window over
+/// the launcher (`CREATE_NO_WINDOW`). Nothing to do elsewhere.
+fn no_console_window(command: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = command;
+}
+
 /// The arguments of `uncharted-universal play` for `start`.
 fn play_args(start: &Start) -> Vec<String> {
     let mut args = vec!["play".to_owned(), start.game.key().to_owned()];
@@ -736,6 +759,9 @@ fn keep_status(game: Game, keep: Keep) -> String {
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // First, before any thread (Slint's and gilrs's included): the host's library injection
+    // out of this process, so `uncharted-universal play` and the game never inherit it.
+    uncharted_core::host_env::clean_process();
     let window = AppWindow::new()?;
     let os = Os::current();
     let (places, status, dirs) = match Vars::from_lookup(os, |k| std::env::var(k).ok()) {
@@ -846,12 +872,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.redraw();
                 let done = done_tx.clone();
                 std::thread::spawn(move || {
-                    let result = std::process::Command::new(cli_path())
+                    let mut command = std::process::Command::new(cli_path());
+                    command
                         .args(play_args(&start))
                         .stdin(Stdio::null())
                         .stdout(Stdio::null())
-                        .stderr(Stdio::piped())
-                        .output();
+                        .stderr(Stdio::piped());
+                    no_console_window(&mut command);
+                    let result = command.output();
                     let _ = done.send(run_status(start.game, result));
                 });
             }
