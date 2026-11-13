@@ -146,8 +146,8 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
         Some(folder) => PathBuf::from(folder),
         None => core("prepare", prepare::locate(game, |name| ctx.var(name)))?.0,
     };
-    // The player's enabled third-party patches, as `run.py` applies them: from
-    // `BB_PATCHES_DIR` with the `patches` command's selection; none without the folder.
+    // Third-party patches come from BB_PATCHES_DIR, as in `run.py` and `patches` above; none
+    // set writes no patch file.
     let patches = match ctx.var("BB_PATCHES_DIR").map(PathBuf::from) {
         Some(dir) => {
             let config = ctx
@@ -155,7 +155,7 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| dir.join("patches.json"));
             let selection = core("prepare", read_selection(&config))?;
-            Some(PatchSource { dir, selection })
+            Some(prepare::PatchSource { dir, selection })
         }
         None => None,
     };

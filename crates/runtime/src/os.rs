@@ -6,8 +6,7 @@
 //! `pread` and `pwrite` do, without the save-and-restore that raced in `compat_win.c`.
 //! Duplicated descriptors share one `Description` (an `Arc`), and so share its position.
 //!
-//! Not yet wired into the legacy C runtime: the guest file layer (`file`, roadmap 3.09)
-//! routes its descriptors through this type when it moves.
+//! The guest file layer ([`crate::file`], roadmap 3.09) keeps one per open guest file.
 
 use std::fs::File;
 use std::io::{self, SeekFrom};
@@ -50,6 +49,23 @@ impl Description {
         let n = write_at(&self.file, buffer, *position)?;
         *position += n as u64;
         Ok(n)
+    }
+
+    /// Write at the end of the file and leave the position after the bytes written
+    /// (`O_APPEND`). The position is held for the whole host call, so appends on one
+    /// description never land on each other.
+    pub fn append(&self, buffer: &[u8]) -> io::Result<usize> {
+        let mut position = self.lock();
+        let end = self.file.metadata()?.len();
+        let n = write_at(&self.file, buffer, end)?;
+        *position = end + n as u64;
+        Ok(n)
+    }
+
+    /// The host file, for the calls that never move the position (`fstat`, `ftruncate`,
+    /// `fsync`).
+    pub fn file(&self) -> &File {
+        &self.file
     }
 
     /// Read at `offset`; the shared position is unchanged (`pread`). An offset past
