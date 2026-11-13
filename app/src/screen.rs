@@ -247,6 +247,13 @@ impl Screen {
         status.clone_into(&mut self.status);
     }
 
+    /// Back from a page (Saves, Settings): focus on that page's button, as B leaves it.
+    pub fn focus_page(&mut self, page: Page) {
+        if let Some(index) = Page::ALL.iter().position(|p| *p == page) {
+            self.focus = Focus::pages(index);
+        }
+    }
+
     /// New data from disk (after a pull or a game run). The same game stays shown; focus stays
     /// where it was when that button is still there, else goes to the default button.
     pub fn reload(&mut self, games: Vec<GameData>) {
