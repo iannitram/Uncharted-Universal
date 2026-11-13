@@ -1488,4 +1488,4 @@ fn write_json_string(out: &mut String, value: &str) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

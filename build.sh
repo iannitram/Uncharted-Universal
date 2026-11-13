@@ -68,11 +68,11 @@ MINGW*|MSYS*)
         -DBB_PGO_DIR="$pgo_dir" -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="$opt" -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="$opt" >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}, PGO $pgo, -O${BB_OPT:-2}"
-    if ! ninja -C out/gpu bb-probe bb-gpu-capabilities bb-play > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu bb-probe bb-gpu-capabilities > out/gpu-build.log 2>&1; then
         awk 'substr($0, 1, 1) != "["' out/gpu-build.log | tail -40 >&2 || true
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/gpu/bb-play.exe out/
+    cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/
     if [[ $pgo == use ]]; then
         # How far the code has moved from the profile: clang's per-file counts of functions
         # changed since it was recorded (out of date) or added (no data). Only the files
@@ -111,10 +111,8 @@ MINGW*|MSYS*)
             echo 'GPU unit test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
         fi
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c src/compat_win.c -lbcrypt -lws2_32 -lonecore -o out/file-mods-test.exe
-        out/file-mods-test.exe
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test.exe
-        out/speakers-test.exe
+        # The file module is Rust now (crates/runtime/src/file.rs, piece 3.09): its Windows
+        # coverage is the crate's own tests (check.yml, windows-latest).
         clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
         out/cpu-patch-test.exe
     fi
@@ -223,14 +221,12 @@ if [[ ${1:-} == --test ]]; then
     out/pad-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_file_mods.c -o out/file-mods-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/file-mods-test
     out/file-mods-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_sema.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/sema-test
     out/sema-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
     out/ajm-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test
-    out/speakers-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test

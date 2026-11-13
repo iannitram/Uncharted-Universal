@@ -7,7 +7,7 @@
  *  - linking a file: POSIX uses symlink(), which Windows only allows with
  *    Developer Mode or Administrator. scripts/mods.py already falls back to hard
  *    links there, so the tests do the same and still exercise the read-only asset
- *    path in runtime_file.c. */
+ *    path in crates/runtime/src/file.rs. */
 #ifndef BB_TEST_PORTABLE_H
 #define BB_TEST_PORTABLE_H
 #include <stdio.h>

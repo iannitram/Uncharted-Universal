@@ -70,7 +70,7 @@ One file per PS4 library. Each provides `runtime_X_resolve()`, and usually
 | `runtime_pad.c` | Controller, keyboard and mouse over SDL3, remappable via `input.ini`. |
 | `runtime_ajm.c` | Audio decode: ATRAC9 through vendored LibAtrac9, MP3 through FFmpeg. |
 | `runtime_services.c` | System services for an offline single-user console: user 1 logged in, no network, dialogs auto-complete. |
-| `runtime_file.c` | The guest VFS: `/app0` and `/hostapp` to the game root, `/temp0` and `/data` to the user directory. |
+| `crates/runtime/src/file.rs` | The guest VFS (was `runtime_file.c`, Rust since piece 3.09): `/app0` and `/hostapp` to the game root, `/temp0` and `/data` to the user directory. |
 | `runtime_thread.c` | Guest threads on host threads, FreeBSD-variant-II TCB. The loader rewrites the guest's `fs:[0]` accesses to `gs:[0]` on Linux or a claimed TEB TLS slot on Windows. |
 | `runtime_fiber.c` | User-mode fibers, saving SysV callee-saved registers plus MXCSR and the x87 control word. Fibers may migrate across threads. |
 
@@ -173,7 +173,7 @@ calls that MinGW lacks. The differences are documented in a table in
 - The launcher is GTK4 on Linux and Tkinter on Windows.
 
 The Linux tree retains the Bloodborne originals (`launcher/bbport_*.py`,
-`packaging/appimage.sh`); the Windows tree is Uncharted-specific. The
+`packaging/appimage.sh`, deleted in roadmap 2.10); the Windows tree is Uncharted-specific. The
 `bb-probe` binary name is inherited from `bloodborne_pc` and is used on both.
 
 ## Tests

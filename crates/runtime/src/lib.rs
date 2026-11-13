@@ -13,7 +13,9 @@
 //! table and the GPU library's page hooks. On Linux and Android it exports the C symbols of
 //! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
-//! shared position (#39, from `compat_win.c`); the guest file layer does not use it yet.
+//! shared position (#39, from `compat_win.c`); [`file`] keeps one per open guest file.
+//! [`file`] is the guest file system (piece 3.09): mounts, the mod overlay, the descriptor table
+//! and the file calls of the deleted `src/runtime_file.c`, with its C symbols.
 //! [`time`] and [`rtc`] (piece 3.02) are the guest's `gettimeofday` and `libSceRtc`, from
 //! `src/runtime_time.c` and `src/runtime_rtc.c`; `abi`'s resolver chain asks them in the C order.
 //! [`probe`] is `uncharted-run --probe`: the hardware report `crates/core::tune` reads (#171),
@@ -23,12 +25,15 @@
 //! `BB_GAME_RES` patch of the loaded executable from the deleted `src/runtime_display.c`.
 //! [`trophy`] is libSceNpTrophy (3.05), the port of the deleted `src/runtime_trophy.c`. The
 //! loader links this library and binds the user folder and the trophy notice into it.
+//! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
+//! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
+//! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `sync`,
 //! the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
+//! `ajm`, `pad`, `services` and `kernel`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -36,12 +41,14 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
 #[cfg(target_arch = "x86_64")]
 pub mod content;
 pub mod crash;
 pub mod display;
+pub mod file;
 // Left out of the header: src/runtime.h declares memory's symbols (src/runtime_memory.c is
 // still the Windows build), and its constants are Rust's.
 /// cbindgen:ignore

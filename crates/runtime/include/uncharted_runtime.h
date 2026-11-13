@@ -12,8 +12,9 @@
 // [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 // (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 // `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
-// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
-#define UNCHARTED_RUNTIME_ABI_VERSION 4
+// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
+// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09).
+#define UNCHARTED_RUNTIME_ABI_VERSION 6
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -98,6 +99,19 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 const char *runtime_import_name(const char *name);
 
 #if defined(__x86_64__)
+// The address of the libSceAudioOut function a guest import resolves to, or 0
+// (`uintptr_t runtime_audio_resolve(const char *name)`; `runtime_resolve` asks it in the C
+// order, after AJM).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_audio_resolve(const char *name);
+#endif
+
+// The audio counters on stdout (`runtime_report`).
+void runtime_audio_report(void);
+
+#if defined(__x86_64__)
 // Sets the content profile (`--content-profile`: five integer app parameters, the first 1
 // or 3) before the game loads AppContent. Null, another first value, or a call after the
 // load ends the process (exit code 1).
@@ -129,6 +143,94 @@ void runtime_content_report(void);
 // `image` is null or points to `image_size` writable bytes.
 void runtime_display_patch(uint8_t *image, uint64_t image_size);
 #endif
+
+// Maps guest mount point `guest` on host directory `host` (a mount of the same name is
+// replaced). 0, or -1 when the table is full or a name is too long.
+//
+// # Safety
+// Both are null or NUL-terminated strings.
+int runtime_file_mount(const char *guest, const char *host);
+
+// Removes the mount `guest`, if there is one.
+//
+// # Safety
+// `guest` is null or a NUL-terminated string.
+void runtime_file_unmount(const char *guest);
+
+// The user directory (saves, trophies): `runtime_file_configure`'s `user`, "user" before.
+const char *runtime_file_user_dir(void);
+
+// Mounts the game at `app0` and the writable mounts under `user`, creating them.
+//
+// # Safety
+// Both are null or NUL-terminated strings; null leaves the call out.
+void runtime_file_configure(const char *app0, const char *user);
+
+// The host path of guest path `guest` into `out` (`size` bytes with the NUL): 0, or an
+// errno (`ENAMETOOLONG` when it does not fit).
+//
+// # Safety
+// `guest` is null or a NUL-terminated string; `out` is writable for `size` bytes.
+int runtime_file_translate(const char *guest, char *out, uintptr_t size);
+
+// Opens a guest path: the descriptor, or `-errno`.
+//
+// # Safety
+// `path` is null or a NUL-terminated string.
+int64_t runtime_file_open(const char *path, int flags, int mode);
+
+// 0, or `-errno`.
+int64_t runtime_file_close(int fd);
+
+// Reads at the position: the bytes read, or `-errno`.
+//
+// # Safety
+// `buffer` is writable for `size` bytes.
+int64_t runtime_file_read(int fd, void *buffer, uint64_t size);
+
+// Reads at `offset` (at the position when negative): the bytes read, or `-errno`.
+//
+// # Safety
+// `buffer` is writable for `size` bytes.
+int64_t runtime_file_pread(int fd, void *buffer, uint64_t size, int64_t offset);
+
+// Writes at the position: the bytes written, or `-errno`.
+//
+// # Safety
+// `buffer` is readable for `size` bytes.
+int64_t runtime_file_write(int fd, const void *buffer, uint64_t size);
+
+// The new position, or `-errno`.
+int64_t runtime_file_lseek(int fd, int64_t offset, int whence);
+
+// Fills the FreeBSD `struct stat` (120 bytes) at `guest_stat`: 0, or `-errno`.
+//
+// # Safety
+// `path` is null or a NUL-terminated string; `guest_stat` is null or writable for 120
+// bytes.
+int64_t runtime_file_stat(const char *path, void *guest_stat);
+
+// As `runtime_file_stat`, for a descriptor.
+//
+// # Safety
+// `guest_stat` is null or writable for 120 bytes.
+int64_t runtime_file_fstat(int fd, void *guest_stat);
+
+// `getdirentries`: the bytes written, or `-errno`; `*base` (when not null) gets the
+// position before.
+//
+// # Safety
+// `buffer` is null or writable for `size` bytes; `base` is null or writable.
+int64_t runtime_file_getdents(int fd, char *buffer, uint64_t size, int64_t *base);
+
+// The module's export for scoped NID `name`, or 0.
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_file_resolve(const char *name);
+
+// Files opened, reads (and bytes), writes and opens of missing files, on stdout.
+void runtime_file_report(void);
 
 #if defined(__x86_64__)
 // The address of the guest `sceRtc*` function behind the scoped import `name`, or 0 (the C

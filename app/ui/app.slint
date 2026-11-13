@@ -1,15 +1,16 @@
-// The launcher window: the Continue screen (docs/continue-screen.md, roadmap 2.04). The .slint
-// file only draws; the view model, focus and button handling live in Rust (src/screen.rs,
-// src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
+// The launcher window: the Continue screen (docs/continue-screen.md, roadmap 2.04) and the
+// Saves and Settings pages over it (roadmap 2.06). The .slint file only draws; the view models,
+// focus and button handling live in Rust (src/screen.rs, src/vm/, src/focus.rs, ADR 0003). Keys become input codes through the `input` callback (the codes of
 // `Input::from_code`); the controller reaches the same handler from src/input.rs; clicks go
-// through `clicked(area, index)` (`Screen::click`; area 7 is About's buttons). About (2.09) is
-// drawn over the Continue screen while `page` is 1, and Fleet (2.08, area 8, its rows from
-// src/vm/fleet.rs) while `page` is 2; the after-crash screen (2.07, area 9) while it is 3. Their
-// texts are `@tr(...)`, translated by the catalogues in lang/ (src/lang.rs), except the
-// after-crash screen's, which come from src/strings.rs. The Continue screen's texts are English
-// until they are in the catalogues.
+// through `clicked(area, index)` (`Screen::click`; area 7 is About's buttons), on a page through
+// `page-clicked(row, col)`. The guided first run (roadmap 2.05, src/firstrun.rs) is a page over
+// everything while `mode` is 1. About (2.09) is drawn over the Continue screen while `page` is 3,
+// and Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; the after-crash
+// screen (2.07, area 9) while it is 5. Their texts are `@tr(...)`, translated by the catalogues
+// in lang/ (src/lang.rs), except the after-crash screen's, which come from src/strings.rs. The
+// Continue screen's texts are English until they are in the catalogues.
 
-import { AboutSlint, ScrollView } from "std-widgets.slint";
+import { AboutSlint, LineEdit, ScrollView } from "std-widgets.slint";
 
 export struct PatchRow {
     name: string,
@@ -57,6 +58,29 @@ export struct SideData {
     has-picture: bool,
     title: string,
     lines: [string],
+}
+
+// One row of the Saves page: a slot or a backup, with its buttons.
+export struct SlotRowData {
+    title: string,
+    detail: string,
+    mark: string,
+    buttons: [string],
+}
+
+// One display card of the Settings page.
+export struct TuneCardData {
+    title: string,
+    lines: [string],
+    in-use: bool,
+}
+
+// One choice row of the Settings page.
+export struct ChoiceData {
+    label: string,
+    value: string,
+    can-prev: bool,
+    can-next: bool,
 }
 
 global Theme {
@@ -533,9 +557,8 @@ export component AppWindow inherits Window {
     in property <[SideData]> sides;
     in property <int> side-index;
 
-    // 0 = the Continue screen, 1 = About over it, 2 = Fleet over it, 3 = the after-crash screen
-    // over it (`Ui::about`, `Ui::fleet`, `Ui::crash` in src/main.rs).
-    in property <int> page: 0;
+    // About's focused button while About is open (`page` 3, `Ui::about` in src/main.rs), and
+    // the after-crash screen's (`page` 5, `Ui::crash`).
     in property <int> about-focus;
     in property <int> crash-focus;
     // The language button's value: a language's own name, or "Automatic (<name>)".
@@ -551,7 +574,7 @@ export component AppWindow inherits Window {
     in property <string> fleet-empty;
 
     // 0 Up, 1 Down, 2 Left, 3 Right, 4 Tab, 5 Shift+Tab, 6 A, 7 B, 8 LB, 9 RB, 10 Y
-    // (`Input::from_code`).
+    // (`Input::from_code`); 20-29 the digits 0-9 and 30 Backspace (`firstrun::Key::from_code`).
     callback input(int);
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
@@ -583,13 +606,89 @@ export component AppWindow inherits Window {
         read-only: true;
     }
 
-    public function scroll-about(steps: int) {
+    // The page over the Continue screen: 0 none, 1 Saves, 2 Settings (`Shown::code`), 3 About
+    // (`ABOUT_PAGE`), 4 Fleet (`FLEET_PAGE`), 5 the after-crash screen (`CRASH_PAGE`). The Saves and Settings focus is a row and a column (`focus::Grid`); their
+    // clicks are `page-clicked(row, col)`, with row -1 the game strip, -2 the prompt (col 0
+    // confirm, 1 cancel) and -3 the Back button.
+    in property <int> page: 0;
+    in property <int> page-row;
+    in property <int> page-col;
+    in property <string> page-status;
+    callback page-clicked(int, int);
+
+    // Saves: the games, the slot rows, then the backup rows (their focus rows follow the
+    // slots'), what save-relay syncs, and the delete prompt's question ("" when closed).
+    in property <[string]> page-games;
+    in property <int> page-game;
+    in property <[SlotRowData]> save-slots;
+    in property <[SlotRowData]> save-backups;
+    in property <string> saves-relay;
+    in property <string> saves-confirm;
+
+    // Settings: row 0 the cards, row 1 Tune this device, rows 2.. the choices.
+    in property <[TuneCardData]> tune-cards;
+    in property <[ChoiceData]> choices;
+    in property <[string]> setting-notes;
+    in property <bool> tuning;
+
+    // Keep the focused row of a page in sight: `y` and `h` in the page's list.
+    function follow(y: length, h: length) {
+        if (y < -list.content-y) {
+            list.content-y = -y;
+        } else if (y + h > -list.content-y + list.height) {
+            list.content-y = list.height - y - h;
+        }
+    }
+    function follow-focus() {
         if (root.page == 1) {
+            root.follow(root.page-row * (root.unit * 3.4), root.unit * 3);
+        } else if (root.page == 2) {
+            root.follow(
+                root.page-row == 0 ? 0 : root.page-row == 1 ? root.unit * 9 : root.unit * (12.6 + (root.page-row - 2) * 2.9),
+                root.page-row == 0 ? root.unit * 8.6 : root.unit * 2.8);
+        }
+    }
+    changed page-row => {
+        root.follow-focus();
+    }
+    changed page => {
+        list.content-y = 0;
+    }
+
+    public function scroll-about(steps: int) {
+        if (root.page == 3) {
             about.scroll(steps);
         }
     }
 
-    FocusScope {
+    // 0 the Continue screen, 1 the first run (`FirstRunView`).
+    in property <int> mode;
+    in property <string> fr-step;
+    in property <string> fr-title;
+    in property <[string]> fr-lines;
+    in property <[string]> fr-options;
+    in property <int> fr-focus;
+    // The text field's placeholder; "" when the step has no field.
+    in property <string> fr-field;
+    in-out property <string> fr-field-text;
+    // The six pairing-code boxes; empty when the step has none.
+    in property <[string]> fr-code;
+    in property <int> fr-code-cursor;
+    in property <bool> fr-has-progress;
+    in property <float> fr-progress;
+    in property <string> fr-error;
+    in property <string> fr-hint;
+    // A first-run button clicked or tapped (`FirstRun::click`).
+    callback fr-clicked(int);
+    // Enter in the text field (`FirstRun::field`).
+    callback field-accepted(string);
+
+    // The keyboard goes to the text field (Job::EditField), or back to the page.
+    public function focus-field() {
+        field.focus();
+    }
+
+    keys := FocusScope {
         init => {
             self.focus();
         }
@@ -623,7 +722,19 @@ export component AppWindow inherits Window {
                 return accept;
             }
             if (event.text == Key.Escape) {
+                if (field.has-focus) {
+                    keys.focus();
+                    return accept;
+                }
                 root.input(7);
+                return accept;
+            }
+            if (root.mode == 1 && event.text.character-count == 1 && event.text.is-float()) {
+                root.input(20 + round(event.text.to-float()));
+                return accept;
+            }
+            if (event.text == Key.Backspace) {
+                root.input(30);
                 return accept;
             }
             if (event.text == Key.PageUp) {
@@ -754,6 +865,343 @@ export component AppWindow inherits Window {
                 Hint {
                     unit: root.unit;
                     text: "B  Quit";
+                }
+            }
+        }
+
+        // A page over the Continue screen: Saves or Settings. Opaque, and it takes every click
+        // the page itself does not.
+        Rectangle {
+            visible: root.page == 1 || root.page == 2;
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            background: Theme.page;
+            TouchArea { }
+            VerticalLayout {
+                padding: root.unit;
+                spacing: root.unit * 0.8;
+
+                HorizontalLayout {
+                    spacing: root.unit * 0.8;
+                    FocusButton {
+                        label: "Back";
+                        hint: "B";
+                        unit: root.unit * 0.9;
+                        clicked => {
+                            root.page-clicked(-3, 0);
+                        }
+                    }
+                    Text {
+                        text: root.page == 1 ? "Saves" : "Settings";
+                        color: Theme.text;
+                        font-size: root.unit * 1.6;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // Saves: the game strip, as on the Continue screen.
+                if root.page == 1: HorizontalLayout {
+                    spacing: root.unit * 0.6;
+                    Hint {
+                        unit: root.unit;
+                        text: "LB";
+                        vertical-alignment: center;
+                    }
+                    for name[i] in root.page-games: Rectangle {
+                        horizontal-stretch: 1;
+                        min-height: root.unit * 2;
+                        border-radius: root.unit * 0.3;
+                        background: i == root.page-game ? Theme.button-focused : transparent;
+                        border-width: i == root.page-game ? 2px : 0px;
+                        border-color: Theme.accent;
+                        Text {
+                            text: name;
+                            color: i == root.page-game ? Theme.text : Theme.dim;
+                            font-size: root.unit * 1.1;
+                            font-weight: i == root.page-game ? 700 : 400;
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.page-clicked(-1, i);
+                            }
+                        }
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: "RB";
+                        vertical-alignment: center;
+                    }
+                }
+
+                list := Flickable {
+                    vertical-stretch: 1;
+                    content-height: root.page == 1 ? saves-list.preferred-height : settings-list.preferred-height;
+
+                    // Saves: one row per slot, then one per backup, newest first.
+                    saves-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 1;
+                        spacing: root.unit * 0.4;
+                        for row[r] in root.save-slots: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: r == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    HorizontalLayout {
+                                        spacing: root.unit * 0.6;
+                                        Text {
+                                            text: row.title;
+                                            color: Theme.text;
+                                            font-size: root.unit;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                        if row.mark != "": Text {
+                                            text: row.mark;
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && r == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(r, c);
+                                    }
+                                }
+                            }
+                        }
+                        if root.save-backups.length > 0: Text {
+                            text: "Backups";
+                            color: Theme.text;
+                            font-size: root.unit * 1.1;
+                            font-weight: 700;
+                        }
+                        for row[b] in root.save-backups: Rectangle {
+                            height: root.unit * 3;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: root.save-slots.length + b == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text {
+                                        text: row.title;
+                                        color: Theme.text;
+                                        font-size: root.unit;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in row.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && root.save-slots.length + b == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(root.save-slots.length + b, c);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Settings: the three cards, Tune this device, the choices, the notes.
+                    settings-list := VerticalLayout {
+                        width: list.width;
+                        visible: root.page == 2;
+                        spacing: root.unit * 0.4;
+                        HorizontalLayout {
+                            spacing: root.unit * 0.6;
+                            for card[i] in root.tune-cards: Rectangle {
+                                horizontal-stretch: 1;
+                                min-height: root.unit * 8.6;
+                                border-radius: root.unit * 0.4;
+                                border-width: root.page-row == 0 && root.page-col == i ? 3px : 1px;
+                                border-color: root.page-row == 0 && root.page-col == i ? Theme.accent : Theme.edge;
+                                background: root.page-row == 0 && root.page-col == i ? Theme.button-focused : Theme.button;
+                                VerticalLayout {
+                                    padding: root.unit * 0.5;
+                                    spacing: root.unit * 0.2;
+                                    HorizontalLayout {
+                                        Text {
+                                            text: card.title;
+                                            color: Theme.text;
+                                            font-size: root.unit * 1.1;
+                                            font-weight: 700;
+                                            horizontal-stretch: 1;
+                                        }
+                                        if card.in-use: Text {
+                                            text: "In use";
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.9;
+                                            font-weight: 700;
+                                        }
+                                    }
+                                    for line in card.lines: Text {
+                                        text: line;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.8;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                                TouchArea {
+                                    clicked => {
+                                        root.page-clicked(0, i);
+                                    }
+                                }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            FocusButton {
+                                label: root.tuning ? "Tuning..." : "Tune this device";
+                                hint: "A";
+                                unit: root.unit * 0.9;
+                                focused: root.page-row == 1;
+                                clicked => {
+                                    root.page-clicked(1, 0);
+                                }
+                            }
+                        }
+                        for choice[r] in root.choices: Rectangle {
+                            height: root.unit * 2.5;
+                            border-radius: root.unit * 0.3;
+                            border-width: root.page-row == r + 2 ? 3px : 1px;
+                            border-color: root.page-row == r + 2 ? Theme.accent : Theme.edge;
+                            background: root.page-row == r + 2 ? Theme.button-focused : Theme.button;
+                            HorizontalLayout {
+                                padding-left: root.unit * 0.6;
+                                padding-right: root.unit * 0.6;
+                                spacing: root.unit * 0.6;
+                                Text {
+                                    text: choice.label;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: "<";
+                                    color: choice.can-prev ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 0);
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: choice.value;
+                                    color: Theme.text;
+                                    font-size: root.unit;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    min-width: root.unit * 12;
+                                }
+                                Text {
+                                    text: ">";
+                                    color: choice.can-next ? Theme.text : Theme.edge;
+                                    font-size: root.unit * 1.2;
+                                    vertical-alignment: center;
+                                    TouchArea {
+                                        clicked => {
+                                            root.page-clicked(r + 2, 1);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        for note in root.setting-notes: Text {
+                            text: note;
+                            color: Theme.dim;
+                            font-size: root.unit * 0.85;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if root.page == 1: Hint {
+                    unit: root.unit;
+                    text: root.saves-relay;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    Hint {
+                        unit: root.unit;
+                        text: root.page-status;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Hint {
+                        unit: root.unit;
+                        text: root.page == 1 ? "A  Choose   LB/RB  Game   B  Back" : "A  Choose   Left/Right  Change   B  Back";
+                    }
+                }
+            }
+
+            // Delete a slot? It is backed up first.
+            if root.page == 1 && root.saves-confirm != "": Prompt {
+                x: 0;
+                y: 0;
+                width: root.width;
+                height: root.height;
+                unit: root.unit;
+                Text {
+                    text: root.saves-confirm;
+                    color: Theme.text;
+                    font-size: root.unit * 1.2;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: root.unit;
+                    FocusButton {
+                        label: "Delete";
+                        hint: "A";
+                        unit: root.unit;
+                        focused: true;
+                        clicked => {
+                            root.page-clicked(-2, 0);
+                        }
+                    }
+                    FocusButton {
+                        label: "Keep";
+                        hint: "B";
+                        unit: root.unit;
+                        clicked => {
+                            root.page-clicked(-2, 1);
+                        }
+                    }
                 }
             }
         }
@@ -1010,13 +1458,108 @@ export component AppWindow inherits Window {
             }
         }
 
+        // The guided first run (roadmap 2.05, src/firstrun.rs): one column of buttons, the
+        // pairing-code boxes, a text field and a progress bar, over everything.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            visible: root.mode == 1;
+            background: Theme.page;
+            TouchArea { }
+            VerticalLayout {
+                padding: root.unit * 1.5;
+                spacing: root.unit * 0.8;
+                Hint {
+                    unit: root.unit;
+                    text: root.fr-step;
+                }
+                Text {
+                    text: root.fr-title;
+                    color: Theme.text;
+                    font-size: root.unit * 1.6;
+                    font-weight: 700;
+                    wrap: word-wrap;
+                }
+                for line in root.fr-lines: Text {
+                    text: line;
+                    color: Theme.text;
+                    font-size: root.unit;
+                    wrap: word-wrap;
+                }
+                if root.fr-has-progress: Rectangle {
+                    height: root.unit * 0.8;
+                    border-radius: root.unit * 0.4;
+                    background: Theme.button;
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        height: parent.height;
+                        width: parent.width * clamp(root.fr-progress, 0, 1);
+                        border-radius: root.unit * 0.4;
+                        background: Theme.accent;
+                    }
+                }
+                if root.fr-code.length > 0: HorizontalLayout {
+                    alignment: start;
+                    spacing: root.unit * 0.5;
+                    for digit[i] in root.fr-code: Rectangle {
+                        width: root.unit * 2.4;
+                        height: root.unit * 3;
+                        border-radius: root.unit * 0.4;
+                        border-width: i == root.fr-code-cursor ? 3px : 1px;
+                        border-color: i == root.fr-code-cursor ? Theme.accent : Theme.edge;
+                        background: i == root.fr-code-cursor ? Theme.button-focused : Theme.button;
+                        Text {
+                            text: digit;
+                            color: Theme.text;
+                            font-size: root.unit * 1.6;
+                        }
+                    }
+                }
+                for option[i] in root.fr-options: FocusButton {
+                    label: option;
+                    unit: root.unit;
+                    focused: root.fr-focus == i;
+                    clicked => {
+                        root.fr-clicked(i);
+                    }
+                }
+                field := LineEdit {
+                    visible: root.fr-field != "";
+                    height: root.fr-field == "" ? 0px : root.unit * 2.6;
+                    font-size: root.unit;
+                    placeholder-text: root.fr-field;
+                    text <=> root.fr-field-text;
+                    accepted(text) => {
+                        root.field-accepted(text);
+                        keys.focus();
+                    }
+                }
+                if root.fr-error != "": Text {
+                    text: root.fr-error;
+                    color: #ff8a7a;
+                    font-size: root.unit;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                }
+                Hint {
+                    unit: root.unit;
+                    text: root.fr-hint;
+                }
+            }
+        }
+
         // About, from the page row; Slint's royalty-free licence notice is on it.
         about := AboutPage {
             x: 24px;
             y: 24px;
             width: root.width - 48px;
             height: root.height - 48px;
-            visible: root.page == 1;
+            visible: root.page == 3;
             version: root.version;
             patches: root.patches;
             shipped: root.shipped-licences;
@@ -1029,7 +1572,7 @@ export component AppWindow inherits Window {
         }
 
         // Fleet, from the page row.
-        if root.page == 2: VerticalLayout {
+        if root.page == 4: VerticalLayout {
             x: 0;
             y: 0;
             width: root.width;
@@ -1089,13 +1632,14 @@ export component AppWindow inherits Window {
             }
         }
 
-        // The after-crash screen (2.07), after a run that crashed.
+        // The after-crash screen (2.07), after a run that crashed; the first run, while open,
+        // takes all input, so the screen waits under it.
         AfterCrashPage {
             x: 24px;
             y: 24px;
             width: root.width - 48px;
             height: root.height - 48px;
-            visible: root.page == 3;
+            visible: root.page == 5 && root.mode == 0;
             heading: root.crash-heading;
             game: root.crash-game;
             chapter: root.crash-chapter;

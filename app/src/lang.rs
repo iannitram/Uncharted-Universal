@@ -239,10 +239,12 @@ mod tests {
     fn the_slint_file_shows_no_untranslated_text() {
         let slint = std::fs::read_to_string(app_dir().join("ui/app.slint")).unwrap();
         // The Continue screen (2.04) in `AppWindow` stays English until its texts are in the
-        // catalogues (#379, owner ruling 2026-11-12). Only these literals there are let through;
-        // any other literal, and any literal before `AppWindow`, needs @tr.
+        // catalogues (#379, owner ruling 2026-11-12), and so do the Saves and Settings pages
+        // (2.06), whose other texts Rust builds in English. Only these literals there are let
+        // through; any other literal, and any literal before `AppWindow`, needs @tr.
         const CONTINUE_ENGLISH: &str = "|LB|RB|B  Quit|Quit the launcher?|Quit|Stay|B  Back|Back|\
-            A  Continue this save|Newer|A  Keep this save|B  Decide later|Play anyway";
+            A  Continue this save|Newer|A  Keep this save|B  Decide later|Play anyway|\
+            Backups|In use|<|>|Delete|Keep";
         let window = slint
             .lines()
             .position(|l| l.starts_with("export component AppWindow"));

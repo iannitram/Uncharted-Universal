@@ -1,8 +1,9 @@
 //! `uncharted-universal`: the launcher without its window. The Steam shortcut in Game Mode runs
 //! `uncharted-universal play`; the other commands do what the app's pages do (docs/code-map.md,
-//! Faces). Replaces the command line of `run.py` and, once release builds ship it (2.10), the
-//! Windows `Play Uncharted.exe` (`packaging/windows/play.c`): `play` waits for the game and
-//! returns its exit code, and passes on the arguments after `--`. No argument-parsing crate:
+//! Faces). Replaces the command line of `run.py` and, since the release builds ship it (2.10),
+//! the Windows `Play Uncharted.exe` (the deleted `packaging/windows/play.c`): `play` waits for
+//! the game and returns its exit code, and passes on the arguments after `--`. In the AppImage
+//! it runs as `<AppImage> play u1` (AppRun hands the commands to it). No argument-parsing crate:
 //! the commands take few arguments and are parsed by hand (`args`).
 //!
 //! ```text
@@ -16,6 +17,7 @@
 //! uncharted-universal hub          pull [--hub <address[:port]>] [--from <hub>] [--into <folder>]
 //! uncharted-universal fleet        [<records file>] [--device <name>]
 //! uncharted-universal generate-art [<output folder>]
+//! uncharted-universal setup        [status|hub|client|steam]
 //! ```
 //!
 //! Every command is a thin layer over `uncharted_core`; a core function that is still a stub
@@ -26,12 +28,14 @@
 //!
 //! Exit status: 0 done; 1 failed (the message says why; `check` also returns 1 when the dump has
 //! problems); 2 bad arguments; 3 a piece of the core is not built yet. `play` returns the game's
-//! own exit status once the game has run.
+//! own exit status once the game has run. `setup` is the app's guided first run without the
+//! window (`setup.rs`).
 
 mod args;
 mod commands;
 #[cfg(test)]
 mod fixtures;
+mod setup;
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
@@ -81,6 +85,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "generate-art",
         "[<output folder>]",
         "write the collection artwork to a folder",
+    ),
+    (
+        "setup",
+        "[status|hub [<dump>] [u1|u2|u3]|client <address:port> <code>|steam [--close-steam]]",
+        "first run: prepare from the dump, or pull from the hub; add to Steam",
     ),
 ];
 
@@ -274,6 +283,10 @@ fn run(args: &[String], ctx: &Ctx) -> Outcome {
 }
 
 fn main() -> ExitCode {
+    // First, before any thread: the host's library injection (Steam's LD_PRELOAD overlay) out
+    // of this process, so the runtime and anything else it starts never load it (Linux; this
+    // replaces packaging/bbport-entry.c).
+    uncharted_core::host_env::clean_process();
     // A stub's "not built yet" panic is reported as a plain line by `run`; keep its backtrace
     // note off the screen. Any other panic is a bug and prints as usual.
     let default_hook = std::panic::take_hook();

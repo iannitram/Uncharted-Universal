@@ -35,8 +35,9 @@ pub mod libc;
 /// [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 /// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 /// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
-/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 4;
+/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
+/// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 6;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -45,7 +46,7 @@ pub fn nid_name(nid: &str) -> Option<&'static str> {
     nid_entry(nid.as_bytes()).and_then(|symbol| symbol.to_str().ok())
 }
 
-fn nid_entry(nid: &[u8]) -> Option<&'static CStr> {
+pub(crate) fn nid_entry(nid: &[u8]) -> Option<&'static CStr> {
     NID_TABLE
         .binary_search_by(|(entry, _)| entry.to_bytes().cmp(nid))
         .ok()
@@ -174,7 +175,7 @@ mod tests {
 
     #[test]
     fn version_is_raised_with_each_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 4);
+        assert_eq!(ffi::uncharted_runtime_version(), 6);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION

@@ -23,7 +23,8 @@ pub fn with_run_args(mut args: Vec<String>, run_args: &[String]) -> Vec<String> 
 
 /// Start `game`: rotate the run logs (`last_run.log` to `last_run.1.log` ..), start `program`
 /// with `args` (`play <game> ...`), the player's `BB_*` settings in its environment, stdin
-/// closed and stdout and stderr in a new `last_run.log`, then note the run in `last_run.json`.
+/// closed and stdout and stderr in a new `last_run.log` (no console window on Windows), then
+/// note the run in `last_run.json`.
 /// A start that fails notes nothing, so the next launch does not take it for a run.
 pub fn start(
     program: &Path,
@@ -37,13 +38,15 @@ pub fn start(
         eprintln!("could not rotate the run logs: {error}");
     }
     let log = File::create(logs_dir.join(RUN_LOG))?;
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .envs(env)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
-        .stderr(log)
-        .spawn()?;
+        .stderr(log);
+    crate::no_console_window(&mut command);
+    let child = command.spawn()?;
     if let Err(error) = mark_started(logs_dir, game) {
         eprintln!("could not note the run in the logs folder: {error}");
     }

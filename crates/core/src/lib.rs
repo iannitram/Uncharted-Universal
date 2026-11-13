@@ -33,6 +33,7 @@ pub mod dump;
 pub mod error;
 pub mod fleet;
 pub mod games;
+pub mod host_env;
 #[cfg(feature = "hub")]
 pub mod hub;
 pub mod language;
@@ -50,6 +51,7 @@ pub mod render_size;
 pub mod run_env;
 pub mod savecard;
 pub mod saves;
+pub mod setup;
 pub mod sfo;
 pub mod steam;
 pub mod trophies;

@@ -1,9 +1,13 @@
-//! View models: what each screen shows and what its buttons do, built in plain Rust so it is
-//! tested without a window (docs/code-map.md, `app/src/vm/`). No Slint types here; the `.slint`
-//! file only draws these.
+//! One view model per page (ADR 0003): plain Rust state, focus and what each input does, with no
+//! Slint types, so every page is tested without a window. The Continue screen's is
+//! `src/screen.rs` (2.04); these are the pages one button away from it.
 
 pub mod about;
 pub mod after_crash;
 pub mod fleet;
+pub mod saves;
+pub mod settings;
 
 pub use fleet::FleetVm;
+pub use saves::SavesVm;
+pub use settings::SettingsVm;
