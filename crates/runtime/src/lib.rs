@@ -5,8 +5,9 @@
 //! [`abi`] is the first ported module (piece 3.01): the NID table, `runtime_resolve` and the libc
 //! contracts of the deleted `src/runtime.c`, exporting its C symbols (declared for C in
 //! `include/uncharted_runtime.h`, written by `cbindgen`; `tests/header.rs` keeps it current).
-//! [`savedata`] has the local save-location metadata commit (#168); the guest savedata ABI
-//! and loader are still pending.
+//! [`savedata`] (piece 3.06) is libSceSaveData and the save dialog of the deleted
+//! `src/runtime_savedata.c` and `src/runtime_services.c`, and writes `where.json` (#168) when a
+//! save is committed; it mounts through the C file layer until `file` moves.
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
 //! wiring it into the fault/assertion handlers remains part of the loader port.
 //! [`os`] has the open file description whose positioned reads and writes never touch the
@@ -17,8 +18,7 @@
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: `time` and
-//! `rtc`, `sync`, `content` and `display`, `trophy`, the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
+//! `rtc`, `sync`, `content` and `display`, `trophy`, `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `memory`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 

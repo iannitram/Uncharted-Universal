@@ -64,7 +64,7 @@ extern "C" const unsigned char bb_font_ttf[];
 extern "C" const unsigned char bb_font_ttf_end[];
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
-extern "C" int runtime_savedata_wait_idle(unsigned timeout_ms); // bb-probe (runtime_savedata.c)
+extern "C" int runtime_savedata_wait_idle(unsigned timeout_ms); // bb-probe (crates/runtime savedata)
 
 namespace BbOverlay {
 

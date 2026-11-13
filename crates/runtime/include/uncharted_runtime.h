@@ -9,7 +9,8 @@
 // The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 // its copy of the header has and refuses to start on a mismatch (a stale static library).
 // Raised when a symbol moves, changes or goes away. 1: `src/runtime.c` moved here (3.01).
-#define UNCHARTED_RUNTIME_ABI_VERSION 1
+// 2: `src/runtime_savedata.c` moved to `savedata` (3.06).
+#define UNCHARTED_RUNTIME_ABI_VERSION 2
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -92,6 +93,28 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 // # Safety
 // `name` is null or a NUL-terminated string.
 const char *runtime_import_name(const char *name);
+
+// The title the saves belong to (`INSTALL_DIR_SAVEDATA` or `TITLE_ID` of param.sfo; at
+// most 15 characters; null or empty keeps `UNKNOWN`), then the Bloodborne sound flag of
+// its saves.
+//
+// # Safety
+// `title` is null or a NUL-terminated string.
+void runtime_savedata_configure(const char *title);
+
+// The libSceSaveData or libSceSaveDataDialog function for a scoped NID, or 0 (always 0
+// off x86-64).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_savedata_resolve(const char *name);
+
+// `Runtime: save data mounts=<n>, memory writes=<n>` on stdout.
+void runtime_savedata_report(void);
+
+// Waits up to `timeout_ms` for a save in progress (a directory mounted for writing):
+// 0 none, 1 it finished, -1 timed out.
+int runtime_savedata_wait_idle(unsigned int timeout_ms);
 
 #ifdef __cplusplus
 }  // extern "C"

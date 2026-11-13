@@ -160,7 +160,7 @@ def delete(saves, game, slot):
 
 
 def mapping(saves):
-    """BB_SAVEDATA_DIRS for the runtime (runtime_savedata.c mapped_folder): each game's save
+    """BB_SAVEDATA_DIRS for the runtime (crates/runtime savedata mapped_folder): each game's save
     directories in its selected slot."""
     state = load(saves)
     return ';'.join(f'{PREFIXES[g]}={relative(g, selected(saves, g, state))}' for g in GAMES)

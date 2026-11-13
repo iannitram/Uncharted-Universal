@@ -136,7 +136,7 @@ def find_executable(name):
 
 
 # Linux fork: each game's saves in its own folder of the saves directory, by save name prefix
-# (runtime_savedata.c), whichever executable (the collection menu or the game) mounts them.
+# (crates/runtime savedata), whichever executable (the collection menu or the game) mounts them.
 SAVE_FOLDERS = {'SAVEDATA01': 'Uncharted 1', 'SAVEDATA02': 'Uncharted 2', 'SAVEDATA03': 'Uncharted 3'}
 
 

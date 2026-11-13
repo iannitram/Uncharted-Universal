@@ -477,7 +477,7 @@ pub fn delete(user_dir: &Path, game: Game, slot: u8) -> Result<()> {
     Ok(())
 }
 
-/// `BB_SAVEDATA_DIRS` for the runtime (`runtime_savedata.c` `mapped_folder`): each game's save
+/// `BB_SAVEDATA_DIRS` for the runtime (`crates/runtime` `savedata` `mapped_folder`): each game's save
 /// directories in its selected slot, `SAVEDATA01=Uncharted 1;..`.
 pub fn mapping(user_dir: &Path) -> String {
     Game::ALL

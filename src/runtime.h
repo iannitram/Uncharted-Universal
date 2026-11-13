@@ -13,7 +13,9 @@ typedef bb_jmp_buf sigjmp_buf;
 #endif
 /* The runtime's own exports (runtime_start, runtime_resolve, runtime_report, runtime_finalize,
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
- * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header. */
+ * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header, as
+ * are the save store's (runtime_savedata_configure, _resolve, _report, _wait_idle;
+ * crates/runtime/src/savedata.rs, piece 3.06). */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
@@ -85,12 +87,9 @@ int runtime_pad_tool(int test, int strength);
 int runtime_pad_watch(int seconds);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
-void runtime_savedata_configure(const char *title);
-uintptr_t runtime_savedata_resolve(const char *name);
 /* Trophies (runtime_trophy.c): the folder run.py prepared for the running game (scripts/trophies.py). */
 void runtime_trophy_configure(const char *dir);
 uintptr_t runtime_trophy_resolve(const char *name);
-void runtime_savedata_report(void);
 /* Benchmark mode (BB_BENCHMARK=<seconds>, #173): runtime_benchmark.c forwards to
  * crates/runtime/src/benchmark_run.rs when the build links it (BB_RUST_BENCHMARK) and is a no-op
  * otherwise. With BB_BENCHMARK unset every call costs one atomic load and changes nothing.
@@ -104,11 +103,6 @@ int runtime_benchmark_active(void);
 int runtime_benchmark_pad(RuntimeBenchmarkPad *out);
 void runtime_benchmark_frame(uint64_t vram_mib);
 void runtime_benchmark_crash(void);
-
-/* Waits up to timeout_ms for a save in progress: 0 none, 1 it finished, -1 timed out. */
-int runtime_savedata_wait_idle(unsigned timeout_ms);
-int runtime_savedata_pick(int32_t user, const char *title, const char (*names)[32], uint32_t count,
-                          int which, const char *focus, char out[32], void *param_out);
 void runtime_thread_attach_host(const char *name);
 uintptr_t runtime_fiber_resolve(const char *name);
 void runtime_fiber_report(void);

@@ -5,6 +5,10 @@ contracts that are Rust now (`_init_env`, `atexit` with a handler of its own) an
 libc `exit(0)`. Passing means the loader started, its ABI version check agreed with the static
 library, imports resolved through the Rust `runtime_resolve`, the guest's exit ran the handlers
 and the report, and the process ended through the loader's `runtime_quit` with the guest's status.
+A second image calls libSceSaveData, which is Rust since piece 3.06 (`crates/runtime` `savedata`):
+`sceSaveDataTerminate` before any `Initialize` answers NOT_INITIALIZED (0x809F0001), and the
+guest exits with that code, so its low byte (1) is the process status; the save store's report
+line comes from Rust too.
 CI runs it on Linux after `bash build.sh --test` (.github/workflows/build.yml, "Boot smoke test").
 """
 from paths import ROOT
@@ -20,6 +24,7 @@ EXE = ROOT / ('out/bb-probe' + ('.exe' if os.name == 'nt' else ''))
 INIT_ENV = 'bzQExy189ZI#q#q'
 ATEXIT = '8G2LB+A3rzg#q#q'
 EXIT = 'uMei1W9uyNo#q#q'
+SAVE_TERMINATE = 'yKDy8S5yLA0#O#P'
 
 
 def package(code, relocs, names, capabilities):
@@ -47,6 +52,19 @@ def boot_image(capabilities=1):
     return package(code, relocs, [INIT_ENV, ATEXIT, EXIT], capabilities)
 
 
+def savedata_image():
+    # Import slots at 40 (sceSaveDataTerminate) and 48 (exit).
+    code = (b'\x48\x83\xec\x08'              # sub rsp, 8          (call alignment)
+            b'\x31\xff'                      # xor edi, edi
+            b'\xff\x15\x1c\0\0\0'            # call [rip+28]       sceSaveDataTerminate()
+            b'\x89\xc7'                      # mov edi, eax
+            b'\xff\x15\x1c\0\0\0'            # call [rip+28]       exit(its result)
+            b'\x0f\x0b')                     # ud2                 (exit does not return)
+    assert len(code) <= 40
+    relocs = [(40, 1, 0, 0), (48, 1, 1, 0)]
+    return package(code, relocs, [SAVE_TERMINATE, EXIT], 1)
+
+
 @unittest.skipUnless(EXE.exists(), 'build native probe first')
 class BootSmokeTests(unittest.TestCase):
     def run_image(self, data, *options):
@@ -63,6 +81,14 @@ class BootSmokeTests(unittest.TestCase):
         self.assertIn('Runtime: _init_env returned', r.stdout)
         self.assertIn('Runtime: guest requested exit(0)', r.stdout)
         self.assertIn('Runtime: _init_env=1, atexit=1', r.stdout)
+        self.assertNotIn('STOP:', r.stdout)
+
+    def test_guest_calls_the_rust_save_store(self):
+        r = self.run_image(savedata_image())
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertNotIn('ABI version', r.stderr)
+        self.assertIn('Runtime: save data mounts=0, memory writes=0', r.stdout)
+        self.assertNotIn('first unsupported PS4 import', r.stdout)
         self.assertNotIn('STOP:', r.stdout)
 
     def test_without_the_runtime_capability_the_first_import_stops(self):

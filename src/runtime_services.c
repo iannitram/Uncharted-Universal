@@ -233,6 +233,7 @@ typedef struct { const char *name; int initialized, status; } Dialog;
 static Dialog dialogs[]={{"CommonDialog",0,0},{"MsgDialog",0,0},{"SaveDataDialog",0,0},
                          {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0},
                          {"ErrorDialog",0,0},{"InvitationDialog",0,0}};
+/* [2] SaveDataDialog moved to crates/runtime/src/savedata/dialog.rs (piece 3.06); the indices stay. */
 static int common_initialized __attribute__((unused));
 static ABI int32_t common_init(void) { common_initialized=1; return 0; }
 static int32_t dialog_init(int i) {
@@ -255,104 +256,7 @@ static int32_t dialog_term(int i) {
     static ABI int32_t tag##_status(void) { return dialog_status(i); } \
     static ABI int32_t tag##_term(void) { return dialog_term(i); }
 DIALOG(msg,1) DIALOG(profile,3) DIALOG(commerce,4)
-/* SaveDataDialog. Dialogs that only wait (progress bar, a message without buttons, the
- * "progress" system message) stay running until the game closes them, as on the console;
- * the others are answered OK/Yes when the game next asks for the status.
- * OrbisSaveDataDialogParam: BaseParam(48), size, mode, dispType, pad, animParam, items,
- * userMsgParam, sysMsgParam, errorCodeParam, progressBarParam, userData, optionParam. */
-enum { SAVE_LIST=1, SAVE_USER_MSG=2, SAVE_SYSTEM_MSG=3, SAVE_ERROR_CODE=4, SAVE_PROGRESS_BAR=5 };
-#define SAVE_PARAM_SIZE 1328 /* OrbisSaveDataParam */
-static struct { uint32_t mode; int waits, pick; void *user_data; char dir[32]; unsigned char param[SAVE_PARAM_SIZE]; } save_dialog;
-/* List mode: SaveDialogItems {userId, pad, titleId*, dirName*, dirNameNum, pad, newItem*,
- * focusPos, pad, focusPosDirName*, ...}; dispType 1 save, 2 load, 3 delete. The entry the
- * dialog focuses is taken, as when the player confirms at once: focusPos 0 list head (the new
- * save entry comes first), 1 list tail, 2 first slot, 3 last slot, 4 latest, 5 oldest, 6 named.
- * pick: 1 existing slot, 0 the new save entry (empty name: the game names it), -1 cancelled. */
-static void save_list(const unsigned char *param) {
-    uint32_t type; const unsigned char *items;
-    memcpy(&type,param+56,4); memcpy(&items,param+72,8);
-    save_dialog.pick=-1;
-    memset(save_dialog.dir,0,sizeof(save_dialog.dir));
-    if (!items || type==3) return;
-    int32_t user; const char *title, *focus; const char (*names)[32]; uint32_t count, focus_pos;
-    const void *new_item;
-    memcpy(&user,items,4); memcpy(&title,items+8,8); memcpy(&names,items+16,8);
-    memcpy(&count,items+24,4); memcpy(&new_item,items+32,8); memcpy(&focus_pos,items+40,4);
-    memcpy(&focus,items+48,8);
-    int offer_new=type==1 && new_item;
-    static const int which[]={0,1,0,1,2,3,4};
-    if (focus_pos==0 && offer_new) save_dialog.pick=0;
-    else save_dialog.pick=runtime_savedata_pick(user,title,names,count,focus_pos<7 ? which[focus_pos] : 2,
-                                                focus,save_dialog.dir,save_dialog.param);
-    if (save_dialog.pick<0 && offer_new) save_dialog.pick=0;
-    printf("Runtime: SaveDataDialog list (%s, %u slots, focus %u): %s%.32s\n",type==1 ? "save" : "load",count,focus_pos,
-           save_dialog.pick<0 ? "nothing to choose, cancelled" : save_dialog.pick ? "chose " : "new save data",
-           save_dialog.pick>0 ? save_dialog.dir : "");
-}
-static int save_log(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_SAVE_LOG"); v=e && e[0]=='1'; } return v; } /* diagnosis, as in runtime_savedata.c */
-static ABI int32_t save_init(void) { return dialog_init(2); }
-static ABI int32_t save_term(void) { return dialog_term(2); }
-static ABI int32_t save_open(const unsigned char *param) {
-    if (!dialogs[2].initialized) return DIALOG_NOT_INITIALIZED;
-    if (!param) return (int32_t)0x80B80006; /* ARG_NULL */
-    if (save_log() && dialogs[2].status==2) printf("Runtime: SaveLog Open while RUNNING (previous mode %u, waits %d); accepted\n",save_dialog.mode,save_dialog.waits);
-    uint32_t mode, kind=0, buttons=0;
-    const unsigned char *user_msg, *sys_msg;
-    void *user_data;
-    memcpy(&mode,param+52,4);
-    memcpy(&user_msg,param+80,8); memcpy(&sys_msg,param+88,8); memcpy(&user_data,param+112,8);
-    if (mode==SAVE_USER_MSG && user_msg) memcpy(&buttons,user_msg,4);   /* OK, YESNO, NONE, OKCANCEL */
-    if (mode==SAVE_SYSTEM_MSG && sys_msg) memcpy(&kind,sys_msg,4);      /* NODATA, CONFIRM, OVERWRITE, ... PROGRESS=5 */
-    save_dialog.mode=mode; save_dialog.user_data=user_data;
-    save_dialog.waits=mode==SAVE_PROGRESS_BAR || (mode==SAVE_USER_MSG && buttons==2) || (mode==SAVE_SYSTEM_MSG && kind==5);
-    if (mode==SAVE_LIST) save_list(param);
-    else printf("Runtime: SaveDataDialog mode %u (message type %u)%s\n",mode,mode==SAVE_SYSTEM_MSG ? kind : buttons,
-           save_dialog.waits ? ": shown until the game closes it" : ": answered OK/Yes");
-    dialogs[2].status=2; /* RUNNING */
-    if (save_log()) printf("Runtime: SaveLog Open mode %u -> status RUNNING\n",mode);
-    return 0;
-}
-static ABI int32_t save_status(void) {
-    if (dialogs[2].status==2 && !save_dialog.waits) dialogs[2].status=3;
-    return dialogs[2].status;
-}
 static ABI int32_t profile_result(void *result) { if (result) memset(result,0,4); return 0; }
-/* Result {mode, result, buttonId, pad, dirName*, param*, userData*}: OK / Yes. The output
- * pointers the game passes in (dirName, param) are left alone. */
-static ABI int32_t save_result(unsigned char *result) {
-    if (!result) return (int32_t)0x80B80006; /* ARG_NULL */
-    if (dialogs[2].status!=3) {
-        if (save_log()) printf("Runtime: SaveLog GetResult -> 0x80B80005 NOT_FINISHED (status %d)\n",dialogs[2].status);
-        return (int32_t)0x80B80005; /* NOT_FINISHED */
-    }
-    int cancelled=save_dialog.mode==SAVE_LIST && save_dialog.pick<0;
-    uint32_t outcome=cancelled ? 1 : 0, button=cancelled ? 0 : 1; /* OK / USER_CANCELED; button YES */
-    memcpy(result,&save_dialog.mode,4); memcpy(result+4,&outcome,4); memcpy(result+8,&button,4);
-    memcpy(result+32,&save_dialog.user_data,8);
-    if (save_dialog.mode==SAVE_LIST && !cancelled) {
-        char *dir; unsigned char *out_param;
-        memcpy(&dir,result+16,8); memcpy(&out_param,result+24,8);
-        if (dir) memcpy(dir,save_dialog.dir,32);
-        if (out_param && save_dialog.pick>0) memcpy(out_param,save_dialog.param,SAVE_PARAM_SIZE);
-        if (save_log()) printf("Runtime: SaveLog GetResult list: dirName ptr %s (wrote '%.32s'), param ptr %s (%s)\n",dir ? "set" : "NULL",
-                               dir ? save_dialog.dir : "",out_param ? "set" : "NULL",
-                               out_param && save_dialog.pick>0 ? "filled" : "left alone");
-    }
-    if (save_log()) printf("Runtime: SaveLog GetResult -> 0: wrote mode %u result %u button %u userData %p; pad (offset 12) left alone\n",
-                           save_dialog.mode,outcome,button,save_dialog.user_data);
-    return 0;
-}
-static ABI int32_t save_ready(void) { return 1; }
-static ABI int32_t save_progress(int32_t target,uint32_t rate) {
-    if (save_log()) printf("Runtime: SaveLog ProgressBarSetValue target %d value %u (status %d, mode %u)\n",target,rate,dialogs[2].status,save_dialog.mode);
-    return 0;
-}
-static ABI int32_t save_close(const void *param) {
-    (void)param;
-    if (save_log()) printf("Runtime: SaveLog Close (status before %d, mode %u) -> 0\n",dialogs[2].status,save_dialog.mode);
-    if (dialogs[2].status==2) dialogs[2].status=3;
-    return 0;
-}
 /* ErrorDialog param {size, errorCode, userId, reserved}: the code is what the player would see. */
 static ABI int32_t error_init(void) { return dialog_init(6); }
 static ABI int32_t error_open(const int32_t *param) {
@@ -648,8 +552,6 @@ static const RuntimeExport exports[]={
     {"sceCommonDialogInitialize",common_init},
     {"sceMsgDialogInitialize",msg_init}, {"sceMsgDialogOpen",msg_open},
     {"sceMsgDialogUpdateStatus",msg_status}, {"sceMsgDialogTerminate",msg_term},
-    {"sceSaveDataDialogInitialize",save_init}, {"sceSaveDataDialogOpen",save_open},
-    {"sceSaveDataDialogUpdateStatus",save_status}, {"sceSaveDataDialogTerminate",save_term},
     {"sceNpProfileDialogInitialize",profile_init}, {"sceNpProfileDialogOpen",profile_open},
     {"sceNpProfileDialogUpdateStatus",profile_status}, {"sceNpProfileDialogTerminate",profile_term},
     {"sceNpProfileDialogGetResult",profile_result},
@@ -663,9 +565,6 @@ static const RuntimeExport exports[]={
     {"scePlayGoGetProgress",playgo_progress}, {"scePlayGoGetToDoList",playgo_todo},
     {"scePlayGoPrefetch",playgo_prefetch}, {"scePlayGoGetLanguageMask",playgo_get_languages},
     {"scePlayGoSetLanguageMask",playgo_set_languages},
-    {"sceSaveDataDialogGetStatus",save_status}, {"sceSaveDataDialogGetResult",save_result},
-    {"sceSaveDataDialogIsReadyToDisplay",save_ready}, {"sceSaveDataDialogProgressBarSetValue",save_progress},
-    {"sceSaveDataDialogClose",save_close},
     {"sceErrorDialogInitialize",error_init}, {"sceErrorDialogOpen",error_open},
     {"sceErrorDialogUpdateStatus",error_status}, {"sceErrorDialogTerminate",error_term},
     {"sceInvitationDialogTerminate",invitation_term},

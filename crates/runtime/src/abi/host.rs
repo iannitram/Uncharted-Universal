@@ -1,9 +1,11 @@
 //! What [`super::libc`] calls on the C side: C stdio (the loader's stdout is unbuffered C stdio,
-//! so messages go through it in order, with the C runtime's line endings), the C memory
-//! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
-//! the C modules' resolvers and reports and `runtime_quit`. Without the loader the chain is
-//! empty, the reports print nothing and quitting flushes stdio and ends the process at once, as
-//! `tests/test_runtime.c`'s `runtime_quit` did.
+//! so messages go through it in order, with the C runtime's line endings; the Rust modules print
+//! through [`out_line`] too), the C memory primitives the guest asked for, `exit`, and, in the
+//! loader build (`cfg(uncharted_loader)`), the C modules' resolvers and reports and
+//! `runtime_quit`. The modules already in Rust (`savedata`) keep their place in the chain and
+//! the reports. Without the loader the chain and the reports are those Rust modules only, and
+//! quitting flushes stdio and ends the process at once, as `tests/test_runtime.c`'s
+//! `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
@@ -53,7 +55,7 @@ fn c_string(text: &str) -> CString {
 }
 
 /// `puts`: one line on the C stdout (the newline is added).
-pub(super) fn out_line(text: &str) {
+pub(crate) fn out_line(text: &str) {
     let line = c_string(text);
     // SAFETY: `line` is a NUL-terminated string.
     unsafe { puts(line.as_ptr()) };
@@ -85,7 +87,6 @@ mod loader {
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
-        pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_file_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
@@ -99,7 +100,6 @@ mod loader {
         pub fn runtime_ajm_report();
         pub fn runtime_audio_report();
         pub fn runtime_pad_report();
-        pub fn runtime_savedata_report();
         pub fn runtime_file_report();
         pub fn runtime_fiber_report();
 
@@ -127,7 +127,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         runtime_audio_resolve,
         runtime_pad_resolve,
         runtime_rtc_resolve,
-        runtime_savedata_resolve,
+        crate::savedata::ffi::runtime_savedata_resolve,
         runtime_file_resolve,
         runtime_fiber_resolve,
         bbgpu_resolve,
@@ -141,8 +141,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
 
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    let _ = name;
-    None
+    crate::savedata::resolve(name)
 }
 
 /// The C modules' report lines, in `runtime.c`'s order.
@@ -159,7 +158,7 @@ pub(super) fn report_modules() {
         runtime_ajm_report,
         runtime_audio_report,
         runtime_pad_report,
-        runtime_savedata_report,
+        crate::savedata::ffi::runtime_savedata_report,
         runtime_file_report,
         runtime_fiber_report,
     ];
@@ -170,7 +169,9 @@ pub(super) fn report_modules() {
 }
 
 #[cfg(not(uncharted_loader))]
-pub(super) fn report_modules() {}
+pub(super) fn report_modules() {
+    crate::savedata::report();
+}
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.

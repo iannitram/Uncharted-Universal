@@ -1,9 +1,204 @@
-//! Local save-location metadata (#168, SPEC.md M9). Only the three player-visible save
-//! strings cross this boundary; no guest buffers, icons, paths or binary metadata do.
+//! libSceSaveData and libSceSaveDataDialog on host directories (piece 3.06; the deleted
+//! `src/runtime_savedata.c` and the save dialog of `src/runtime_services.c`), and the local
+//! save-location metadata `where.json` (#168, SPEC.md M9).
 //!
-//! This starts roadmap 3.06 with the metadata commit. The guest savedata ABI, mounts and
-//! file VFS are not ported yet. Their successful save commit must call [`commit`]; this
-//! module is not wired into the legacy C runtime.
+//! - `store`: the save store, plain Rust over decoded values: mounts `/savedata0` ..
+//!   `/savedata15`, `param.bin` and `icon0.png`, delete, the directory search, SaveDataMemory,
+//!   the save dialog's choice, `wait_idle` and the report. Its module doc has the layout, the
+//!   `BB_SAVEDATA_DIRS` mapping and how it lines up with the save-relay manifest (1.17).
+//! - `guest` and `dialog` (x86-64 hosts): the guest's `extern "sysv64"` functions, which read
+//!   its structures and call the store; `runtime_resolve` reaches them through
+//!   [`ffi::runtime_savedata_resolve`].
+//! - [`commit`]: `where.json`. Only the three player-visible save strings cross this boundary;
+//!   no guest buffers, icons, paths or binary metadata do. The store calls it when a directory
+//!   mounted for writing is unmounted (a save committed).
+//!
+//! The file layer (`runtime_file.c`) is still C until piece 3.09: in the loader build
+//! (`cfg(uncharted_loader)`) the store mounts through `runtime_file_mount` and reads
+//! `runtime_file_user_dir`; elsewhere (tests, mobile builds) the user directory is `user` and a
+//! mount always succeeds.
+
+/// cbindgen:ignore
+#[cfg(target_arch = "x86_64")]
+mod dialog;
+/// cbindgen:ignore
+#[cfg(target_arch = "x86_64")]
+mod guest;
+/// cbindgen:ignore
+mod store;
+
+/// The runtime's side of [`store::Host`].
+struct HostSide;
+
+/// The C file layer the store mounts through (loader build only; declared in `src/runtime.h`).
+/// cbindgen:ignore
+#[cfg(uncharted_loader)]
+mod file_layer {
+    use std::ffi::{c_char, c_int};
+
+    extern "C" {
+        pub fn runtime_file_user_dir() -> *const c_char;
+        pub fn runtime_file_mount(guest: *const c_char, host: *const c_char) -> c_int;
+        pub fn runtime_file_unmount(guest: *const c_char);
+    }
+}
+
+/// Without the loader: the user directory `runtime_file.c` starts with (tests set their own).
+#[cfg(not(uncharted_loader))]
+static USER_DIR: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+#[cfg(all(test, not(uncharted_loader)))]
+fn set_user_dir(dir: &str) {
+    *USER_DIR.lock().unwrap_or_else(|p| p.into_inner()) = dir.to_owned();
+}
+
+#[cfg(uncharted_loader)]
+fn c_string(text: &str) -> std::ffi::CString {
+    std::ffi::CString::new(text.replace('\0', "")).unwrap_or_default()
+}
+
+impl store::Host for HostSide {
+    #[cfg(uncharted_loader)]
+    fn user_dir(&self) -> String {
+        // SAFETY: the file layer's user directory, a NUL-terminated string it keeps.
+        let dir = unsafe { file_layer::runtime_file_user_dir() };
+        if dir.is_null() {
+            return "user".to_owned();
+        }
+        // SAFETY: as above.
+        unsafe { std::ffi::CStr::from_ptr(dir) }
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[cfg(not(uncharted_loader))]
+    fn user_dir(&self) -> String {
+        let dir = USER_DIR.lock().unwrap_or_else(|p| p.into_inner());
+        if dir.is_empty() {
+            "user".to_owned()
+        } else {
+            dir.clone()
+        }
+    }
+
+    #[cfg(uncharted_loader)]
+    fn mount(&self, guest: &str, host: &str) -> bool {
+        let (guest, host) = (c_string(guest), c_string(host));
+        // SAFETY: two NUL-terminated strings; the file layer copies them.
+        unsafe { file_layer::runtime_file_mount(guest.as_ptr(), host.as_ptr()) == 0 }
+    }
+
+    #[cfg(not(uncharted_loader))]
+    fn mount(&self, guest: &str, host: &str) -> bool {
+        let _ = (guest, host);
+        true
+    }
+
+    #[cfg(uncharted_loader)]
+    fn unmount(&self, guest: &str) {
+        let guest = c_string(guest);
+        // SAFETY: a NUL-terminated string.
+        unsafe { file_layer::runtime_file_unmount(guest.as_ptr()) }
+    }
+
+    #[cfg(not(uncharted_loader))]
+    fn unmount(&self, guest: &str) {
+        let _ = guest;
+    }
+
+    fn var(&self, name: &str) -> Option<String> {
+        std::env::var(name).ok()
+    }
+
+    fn say(&self, line: &str) {
+        // The loader's stdout is C stdio: the lines stay in order with the C modules' lines.
+        #[cfg(target_arch = "x86_64")]
+        crate::abi::host::out_line(line);
+        #[cfg(not(target_arch = "x86_64"))]
+        println!("{line}");
+    }
+}
+
+/// The process's save store.
+static STORE: store::Store<HostSide> = store::Store::new(HostSide);
+
+/// The exported C functions of the save store, declared in `include/uncharted_runtime.h`.
+pub mod ffi {
+    use super::STORE;
+    use std::ffi::{c_char, c_int, c_uint, CStr};
+
+    /// The title the saves belong to (`INSTALL_DIR_SAVEDATA` or `TITLE_ID` of param.sfo; at
+    /// most 15 characters; null or empty keeps `UNKNOWN`), then the Bloodborne sound flag of
+    /// its saves.
+    ///
+    /// # Safety
+    /// `title` is null or a NUL-terminated string.
+    #[no_mangle]
+    pub unsafe extern "C" fn runtime_savedata_configure(title: *const c_char) {
+        let title = if title.is_null() {
+            &[][..]
+        } else {
+            // SAFETY: a NUL-terminated string (caller).
+            unsafe { CStr::from_ptr(title) }.to_bytes()
+        };
+        STORE.configure(title);
+    }
+
+    /// The libSceSaveData or libSceSaveDataDialog function for a scoped NID, or 0 (always 0
+    /// off x86-64).
+    ///
+    /// # Safety
+    /// `name` is null or a NUL-terminated string.
+    #[no_mangle]
+    pub unsafe extern "C" fn runtime_savedata_resolve(name: *const c_char) -> usize {
+        if name.is_null() {
+            return 0;
+        }
+        // SAFETY: a NUL-terminated string (caller).
+        let name = unsafe { CStr::from_ptr(name) };
+        super::resolve(name).unwrap_or(0)
+    }
+
+    /// `Runtime: save data mounts=<n>, memory writes=<n>` on stdout.
+    #[no_mangle]
+    pub extern "C" fn runtime_savedata_report() {
+        STORE.report();
+    }
+
+    /// Waits up to `timeout_ms` for a save in progress (a directory mounted for writing):
+    /// 0 none, 1 it finished, -1 timed out.
+    #[no_mangle]
+    pub extern "C" fn runtime_savedata_wait_idle(timeout_ms: c_uint) -> c_int {
+        STORE.wait_idle(timeout_ms)
+    }
+}
+
+/// The guest function for scoped NID `name` (x86-64 hosts only).
+pub(crate) fn resolve(name: &std::ffi::CStr) -> Option<usize> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        guest::resolve(name)
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = name;
+        None
+    }
+}
+
+/// `runtime_savedata_report` for `runtime_report` without the loader's chain.
+pub(crate) fn report() {
+    STORE.report();
+}
+
+#[cfg(test)]
+static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Tests that use the process's store hold this lock.
+#[cfg(test)]
+fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
