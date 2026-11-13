@@ -4920,6 +4920,7 @@ name = "uncharted_runtime"
 version = "0.0.0"
 dependencies = [
  "ash",
+ "libc",
  "serde_json",
  "windows-sys 0.61.2",
 ]

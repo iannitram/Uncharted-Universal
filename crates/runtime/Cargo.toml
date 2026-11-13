@@ -27,3 +27,8 @@ ash = { version = "0.38", default-features = false, features = ["loaded", "std"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+# mmap, memfd_create and fallocate for the guest address space (`memory::linux`, piece 3.12).
+# MIT or Apache-2.0.
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+libc = "0.2"
