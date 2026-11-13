@@ -11,6 +11,7 @@ const STICK_THRESHOLD: f32 = 0.6;
 pub enum Action {
     Move(Nav),
     Activate,
+    /// Leave the page (B on Xbox pads, Circle on PlayStation pads).
     Back,
 }
 
@@ -93,7 +94,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dpad_and_south_map() {
+    fn dpad_south_and_east_map() {
         assert_eq!(
             button_action(Button::DPadLeft),
             Some(Action::Move(Nav::Left))
