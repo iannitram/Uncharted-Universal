@@ -27,11 +27,14 @@
 //! `BB_GAME_RES` patch of the loaded executable from the deleted `src/runtime_display.c`.
 //! [`trophy`] is libSceNpTrophy (3.05), the port of the deleted `src/runtime_trophy.c`. The
 //! loader links this library and binds the user folder and the trophy notice into it.
+//! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
+//! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
+//! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
-//! `audio`, `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
+//! `ajm`, `file`, `pad`, `services` and `kernel`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -39,6 +42,7 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
 #[cfg(target_arch = "x86_64")]

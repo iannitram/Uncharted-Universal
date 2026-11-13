@@ -82,7 +82,6 @@ mod loader {
         pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
         pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
-        pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_file_resolve(name: *const c_char) -> usize;
@@ -93,7 +92,6 @@ mod loader {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
-        pub fn runtime_audio_report();
         pub fn runtime_pad_report();
         pub fn runtime_savedata_report();
         pub fn runtime_file_report();
@@ -106,8 +104,8 @@ mod loader {
 use crate::sync::ffi as sync;
 
 /// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
-/// `sync`, piece 3.03, `content`, piece 3.04, and `time` and `rtc`, piece 3.02), then the GPU
-/// library: the first that knows `name` answers.
+/// `sync`, piece 3.03, `content`, piece 3.04, `time` and `rtc`, piece 3.02, and `audio`, piece
+/// 3.07), then the GPU library: the first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     use crate::content::ffi::runtime_content_resolve;
@@ -127,7 +125,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         crate::trophy::runtime_trophy_resolve,
         runtime_services_resolve,
         runtime_ajm_resolve,
-        runtime_audio_resolve,
+        crate::audio::runtime_audio_resolve,
         runtime_pad_resolve,
         runtime_rtc_resolve,
         runtime_savedata_resolve,
@@ -155,6 +153,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| ask(sync::runtime_sema_resolve))
         .or_else(|| ask(sync::runtime_rwlock_resolve))
         .or_else(|| crate::rtc::resolve(name))
+        .or_else(|| crate::audio::resolve(name))
 }
 
 /// The modules' report lines, in `runtime.c`'s order.
@@ -170,7 +169,7 @@ pub(super) fn report_modules() {
         runtime_content_report,
         runtime_memory_report,
         runtime_ajm_report,
-        runtime_audio_report,
+        crate::audio::runtime_audio_report,
         runtime_pad_report,
         runtime_savedata_report,
         runtime_file_report,
@@ -189,6 +188,7 @@ pub(super) fn report_modules() {
     sync::runtime_rwlock_report();
     sync::runtime_sema_report();
     crate::content::ffi::runtime_content_report();
+    crate::audio::runtime_audio_report();
 }
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no

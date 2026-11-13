@@ -35,9 +35,9 @@ pub mod libc;
 /// [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 /// (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 /// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
-/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5 and 6 are taken by
-/// the audio (#375) and file (#376) ports; 7: `src/runtime_mutex.c`, `runtime_sema.c` and
-/// `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
+/// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
+/// moved to [`crate::audio`] (3.07); 6 is taken by the file port (#376); 7: `src/runtime_mutex.c`,
+/// `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
 pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 7;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));

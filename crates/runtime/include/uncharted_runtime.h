@@ -12,9 +12,9 @@
 // [`crate::trophy`] (3.05) and, on Linux and Android, `src/runtime_memory.c` to [`crate::memory`]
 // (3.12); 2: `src/runtime.c` moved here (3.01); 3: `runtime_time_resolve` and
 // `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
-// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5 and 6 are taken by
-// the audio (#375) and file (#376) ports; 7: `src/runtime_mutex.c`, `runtime_sema.c` and
-// `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
+// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
+// moved to [`crate::audio`] (3.07); 6 is taken by the file port (#376); 7: `src/runtime_mutex.c`,
+// `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
 #define UNCHARTED_RUNTIME_ABI_VERSION 7
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
@@ -98,6 +98,19 @@ uintptr_t runtime_lookup(const struct RuntimeExport *table, uintptr_t count, con
 // # Safety
 // `name` is null or a NUL-terminated string.
 const char *runtime_import_name(const char *name);
+
+#if defined(__x86_64__)
+// The address of the libSceAudioOut function a guest import resolves to, or 0
+// (`uintptr_t runtime_audio_resolve(const char *name)`; `runtime_resolve` asks it in the C
+// order, after AJM).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_audio_resolve(const char *name);
+#endif
+
+// The audio counters on stdout (`runtime_report`).
+void runtime_audio_report(void);
 
 #if defined(__x86_64__)
 // Sets the content profile (`--content-profile`: five integer app parameters, the first 1
