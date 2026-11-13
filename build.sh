@@ -173,13 +173,27 @@ if ! ninja ${BB_JOBS:+-j"$BB_JOBS"} -C out/gpu bbgpu > out/gpu-build.log 2>&1; t
 fi
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-runtime=(src/runtime*.c)
-# crates/runtime (ADR 0002): the runtime modules already in Rust (trophy), a static library that
-# everything linking the C runtime links too. BB_BENCHMARK=<seconds> (#173/#242) is Rust as well,
-# but only bb-probe turns it on (-DBB_RUST_BENCHMARK); the C unit tests keep the no-op glue.
-command -v cargo >/dev/null || { echo 'Need cargo (rustup): crates/runtime is part of the loader.' >&2; exit 1; }
+# crates/runtime (ADR 0002): the runtime modules already in Rust (trophy; memory, piece 3.12,
+# so src/runtime_memory.c is Windows only), a static library that everything linking the C
+# runtime links too.
+runtime=()
+for source in src/runtime*.c; do
+    if [[ $source != src/runtime_memory.c ]]; then runtime+=("$source"); fi
+done
+if ! command -v cargo >/dev/null; then
+    echo 'cargo not found: crates/runtime (the guest memory module) is required on Linux.' >&2; exit 1
+fi
 cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
-rust=(out/rust/release/libuncharted_runtime.a -ldl -lpthread -lm)
+# Symbols only libbbgpu.so asks for: --undefined makes the linker take them from the archive.
+rust=(out/rust/release/libuncharted_runtime.a)
+for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing \
+    runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped \
+    runtime_disabled_optimizations runtime_disabled_optimizations2; do
+    rust+=(-Wl,--undefined="$symbol")
+done
+rust+=(-ldl -lpthread -lm)
+# BB_BENCHMARK=<seconds> (#173/#242) is Rust as well, but only bb-probe turns it on
+# (-DBB_RUST_BENCHMARK); the C unit tests keep the no-op glue.
 # Third-party decoders: compiled once, without this project's -Werror policy.
 atrac9=(third_party/LibAtrac9/C/src/*.c)
 if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/libatrac9.a -name '*.c') ]]; then
