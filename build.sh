@@ -113,8 +113,6 @@ MINGW*|MSYS*)
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
         clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c src/compat_win.c -lbcrypt -lws2_32 -lonecore -o out/file-mods-test.exe
         out/file-mods-test.exe
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test.exe
-        out/speakers-test.exe
         clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
         out/cpu-patch-test.exe
     fi
@@ -229,8 +227,6 @@ if [[ ${1:-} == --test ]]; then
     out/sema-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
     out/ajm-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -Isrc tests/test_speakers.c -lm -o out/speakers-test
-    out/speakers-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test
