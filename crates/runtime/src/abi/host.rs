@@ -109,8 +109,8 @@ mod loader {
 }
 
 /// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
-/// `content`, piece 3.04, `time` and `rtc`, piece 3.02, and `audio`, piece 3.07), then the GPU library: the first
-/// that knows `name` answers.
+/// `content`, piece 3.04, `time` and `rtc`, piece 3.02, and `audio`, piece 3.07), then the GPU
+/// library: the first that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     use crate::content::ffi::runtime_content_resolve;
