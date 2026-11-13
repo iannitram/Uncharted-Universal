@@ -1,0 +1,122 @@
+# German texts of the Uncharted Universal launcher (app/). English is the source:
+# each msgid is the text as written in ui/app.slint (@tr) or src/ (texts.tr).
+# src/lang.rs tests that this file has every text the app shows, and nothing else.
+msgid ""
+msgstr ""
+"Project-Id-Version: uncharted-app\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "About"
+msgstr "Über"
+
+msgid "Version {}"
+msgstr "Version {}"
+
+msgid "Uncharted Universal is free software under the GNU General Public License, version 2 only."
+msgstr "Uncharted Universal ist freie Software unter der GNU General Public License, nur Version 2."
+
+msgid "Patches"
+msgstr "Patches"
+
+msgid "No patches yet: the patches of a prepared game are listed here."
+msgstr "Noch keine Patches: Hier stehen die Patches eines vorbereiteten Spiels."
+
+msgid "Licences"
+msgstr "Lizenzen"
+
+msgid "Each bundled library's licence text is in the licenses folder next to the app."
+msgstr "Der Lizenztext jeder mitgelieferten Bibliothek liegt im Ordner licenses neben der App."
+
+msgid "Learned from"
+msgstr "Gelernt von"
+
+msgid "Studied for how they work; no code was copied from them."
+msgstr "Untersucht, um zu verstehen, wie sie funktionieren; kein Code wurde daraus kopiert."
+
+msgid "Built with Slint"
+msgstr "Erstellt mit Slint"
+
+msgid "This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev)."
+msgstr "Diese Anwendung ist mit Slint erstellt, verwendet unter der Lizenz Slint Royalty-free Desktop, Mobile, and Web Applications (https://slint.dev)."
+
+msgid "Back"
+msgstr "Zurück"
+
+msgid "Up and down scroll. A or B goes back."
+msgstr "Hoch und runter scrollen. A oder B geht zurück."
+
+msgid "Language: {}"
+msgstr "Sprache: {}"
+
+msgid "Automatic ({})"
+msgstr "Automatisch ({})"
+
+msgid "No licence stated"
+msgstr "Keine Lizenz angegeben"
+
+msgid "This patch is for a different title, executable or revision."
+msgstr "Dieser Patch ist für einen anderen Titel, eine andere ausführbare Datei oder Revision."
+
+msgid "This patch has no supported literal writes."
+msgstr "Dieser Patch hat keine unterstützten literalen Schreibvorgänge."
+
+msgid "Not available: {}"
+msgstr "Nicht verfügbar: {}"
+
+msgid "On"
+msgstr "An"
+
+msgid "Off"
+msgstr "Aus"
+
+msgid "by {}"
+msgstr "von {}"
+
+msgid "Graphics engine (our fork, in gpu/)"
+msgstr "Grafik-Engine (unser Fork, in gpu/)"
+
+msgid "The C and C++ port this one grew from"
+msgstr "Die C- und C++-Portierung, aus der diese hervorging"
+
+msgid "Targeted fixes for bugs with the same cause"
+msgstr "Gezielte Korrekturen für Fehler mit derselben Ursache"
+
+msgid "The launcher's interface"
+msgstr "Die Oberfläche des Launchers"
+
+msgid "Input, window and audio in the game"
+msgstr "Eingabe, Fenster und Ton im Spiel"
+
+msgid "Controller input in the launcher"
+msgstr "Controller-Eingabe im Launcher"
+
+msgid "Reading patch files"
+msgstr "Lesen von Patch-Dateien"
+
+msgid "Settings and record files"
+msgstr "Einstellungs- und Protokolldateien"
+
+msgid "Finding the system language"
+msgstr "Erkennen der Systemsprache"
+
+msgid "Platform, Steam, bundle and save card modules, copied with credit"
+msgstr "Module für Plattform, Steam, Bundle und Speicherkarte, mit Nennung übernommen"
+
+msgid "Launcher profiles and settings"
+msgstr "Launcher-Profile und -Einstellungen"
+
+msgid "Release packaging"
+msgstr "Paketierung der Releases"
+
+msgid "Android device notes"
+msgstr "Notizen zu Android-Geräten"
+
+msgid "The iOS app's layout"
+msgstr "Der Aufbau der iOS-App"
+
+msgid "Mac packaging"
+msgstr "Paketierung für den Mac"

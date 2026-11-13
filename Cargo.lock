@@ -4891,6 +4891,7 @@ dependencies = [
  "i-slint-backend-testing",
  "slint",
  "slint-build",
+ "sys-locale",
  "uncharted_core",
 ]
 
