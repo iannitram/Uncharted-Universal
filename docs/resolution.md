@@ -8,7 +8,7 @@ variables below are what it passes to the game.
 
 The three games draw at a fixed 1920x1080. Their renderer reads one display configuration
 block (width, height, aspect, a few tile counts) that a startup function fills with
-constants. `src/runtime_display.c` finds that function by its code in every executable
+constants. `crates/runtime/src/display.rs` finds that function by its code in every executable
 (1.00 and 1.02 of Uncharted 1, 2 and 3) and rewrites the immediates, so the game allocates
 and renders everything at the new size. Output is a real higher resolution, not an enlarged
 1080p picture. Checked on Uncharted 2 1.02 at 2560x1440 against the same scene at 1080p
@@ -24,7 +24,7 @@ What had to follow the size:
   `run.py` computes how much each render target heap grows from the pixel count
   (`BB_GAME_RT_MB`, `BB_GAME_RT2_MB`), gives up the pool's unreserved remainder
   (`BB_GAME_FREE_MB`, entry 14) if needed, and raises the direct memory the same amount
-  (`BB_DMEM_MB`). `runtime_display.c` applies the amounts to the table and the constant.
+  (`BB_DMEM_MB`). `display.rs` applies the amounts to the table and the constant.
 - **A 4 GiB limit.** The pool is one arena whose size the game stores in 32 bits. At 1440p
   the heaps need about 720 MiB (497 plus about 215). At 4K they would need about 1400 MiB and
   250 MiB more in the second heap, and the pool cannot grow that far (see Limits).
@@ -45,7 +45,8 @@ Variables (all optional, `run.py` fills the amounts):
 | `BB_GAME_MOVIE_MB` | movie frame buffer slot size, a multiple of 2 |
 | `BB_GAME_SKIP=0x38,0x18` | display configuration fields to leave at 1920x1080 (diagnosis) |
 
-Tests: `tests/test_display.c` (patch on a synthetic image) and `tests/test_display.py`.
+Tests: the `display` unit tests in `crates/runtime/src/display.rs` (patch on a synthetic image),
+`crates/runtime/tests/display_env.rs` and `tests/test_display.py` (run.py's budget, the launcher's sizes).
 
 ## Ultrawide
 

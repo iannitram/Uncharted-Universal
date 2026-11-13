@@ -2,18 +2,17 @@
 //! constant data reads back. Delete a case here when its module is built (its own tests
 //! replace it).
 
+use uncharted_core::artwork;
 use uncharted_core::error::Error;
 use uncharted_core::games::{self, Game};
-use uncharted_core::platform::{AppDirs, Os};
-use uncharted_core::recipe::{self, Hub};
-use uncharted_core::{artwork, cheats};
+use uncharted_core::platform::AppDirs;
 
 #[test]
 fn a_stub_returns_not_built_with_a_stable_code() {
-    let err = cheats::parse("").unwrap_err();
-    assert_eq!(err, Error::NotBuilt("cheats::parse"));
+    let err = games::title_region(games::TITLE_IDS[0]).unwrap_err();
+    assert_eq!(err, Error::NotBuilt("games::title_region"));
     assert_eq!(err.code(), "not_built");
-    assert_eq!(err.to_string(), "not built yet: cheats::parse");
+    assert_eq!(err.to_string(), "not built yet: games::title_region");
 }
 
 #[test]
@@ -57,14 +56,6 @@ fn games_and_their_executables() {
         games::check_revision(Game::U1, "01.00").unwrap_err().code(),
         "wrong_revision"
     );
-}
-
-#[test]
-fn every_target_has_a_hub_that_serves_it() {
-    for os in Os::ALL {
-        assert!(recipe::serves(recipe::hub_for(os)).contains(&os));
-    }
-    assert_eq!(Hub::from_key("mac"), Ok(Hub::Mac));
 }
 
 #[test]

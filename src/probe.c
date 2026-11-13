@@ -479,7 +479,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
     }
     /* GPU page tracking (write-protected guest pages) is resolved first. */
     if (gpu_enabled && sig == SIGSEGV && bbgpu_handle_fault(context, info->si_addr)) return;
-    /* A speculative guest memory read (runtime_memory.c) failed: resume its recovery point. */
+    /* A speculative guest memory read (runtime_fault_recover, runtime_fault.c) failed: resume its recovery point. */
     if ((sig == SIGSEGV || sig == SIGBUS) && runtime_fault_recover) {
         sigjmp_buf *recover = runtime_fault_recover;
         runtime_fault_recover = NULL;
@@ -1598,6 +1598,7 @@ int main(int argc, char **argv) {
         sfo_value(sfo,"APP_VER",version,sizeof(version),NULL);
         bbnet_configure(app0,serial,title,version);
     }
+    runtime_trophy_bind(runtime_file_user_dir, bbgpu_trophy_notify);
     if (trophy_dir) runtime_trophy_configure(trophy_dir);
     if (runtime_benchmark_start(user_dir ? user_dir : "user") < 0) return 2; /* BB_BENCHMARK set but unusable */
     bbgpu_register_kernel();
