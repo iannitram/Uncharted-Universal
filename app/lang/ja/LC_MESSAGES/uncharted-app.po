@@ -52,9 +52,6 @@ msgstr "戻る"
 msgid "Up and down scroll. A or B goes back."
 msgstr "上下でスクロール。A または B で戻ります。"
 
-msgid "Continue screen goes here"
-msgstr "ここに「続きから」画面が入ります"
-
 msgid "Language: {}"
 msgstr "言語: {}"
 
