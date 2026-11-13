@@ -23,7 +23,7 @@ const MONTHS: [&str; 12] = [
 ];
 
 /// The calendar date (year, month 1-12, day 1-31) of a day number (days since 1970-01-01).
-fn civil(days: i64) -> (i64, usize, i64) {
+pub(crate) fn civil(days: i64) -> (i64, usize, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
