@@ -6,25 +6,14 @@ use crate::vm::after_crash::mark_started;
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use uncharted_core::games::Game;
 use uncharted_core::logs::{self, KEEP, RUN_LOG};
 
-/// `uncharted-universal` next to this app's executable, else the one on `PATH`.
-pub fn cli_program() -> PathBuf {
-    let name = format!("uncharted-universal{}", std::env::consts::EXE_SUFFIX);
-    std::env::current_exe()
-        .ok()
-        .map(|exe| exe.with_file_name(&name))
-        .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from(name))
-}
-
-/// The command line after the program: `play <game key>`, then `--` and `run_args` (the
-/// runtime's own arguments, such as `--force-fault`) when there are any.
-pub fn play_args(game: Game, run_args: &[String]) -> Vec<String> {
-    let mut args = vec!["play".to_string(), game.key().to_string()];
+/// The play command's arguments `args`, then `--` and `run_args` (the runtime's own arguments,
+/// such as `--force-fault`) when there are any.
+pub fn with_run_args(mut args: Vec<String>, run_args: &[String]) -> Vec<String> {
     if !run_args.is_empty() {
         args.push("--".into());
         args.extend(run_args.iter().cloned());
@@ -33,12 +22,12 @@ pub fn play_args(game: Game, run_args: &[String]) -> Vec<String> {
 }
 
 /// Start `game`: rotate the run logs (`last_run.log` to `last_run.1.log` ..), note the run in
-/// `last_run.json`, then start `program` with [`play_args`], the player's `BB_*` settings in
-/// its environment, stdin closed and stdout and stderr in a new `last_run.log`.
+/// `last_run.json`, then start `program` with `args` (`play <game> ...`), the player's `BB_*`
+/// settings in its environment, stdin closed and stdout and stderr in a new `last_run.log`.
 pub fn start(
     program: &Path,
     game: Game,
-    run_args: &[String],
+    args: &[String],
     env: &BTreeMap<String, String>,
     logs_dir: &Path,
 ) -> io::Result<Child> {
@@ -49,7 +38,7 @@ pub fn start(
     mark_started(logs_dir, game)?;
     let log = File::create(logs_dir.join(RUN_LOG))?;
     Command::new(program)
-        .args(play_args(game, run_args))
+        .args(args)
         .envs(env)
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
@@ -87,9 +76,10 @@ mod tests {
 
     #[test]
     fn runtime_arguments_follow_a_double_dash() {
-        assert_eq!(play_args(Game::U2, &[]), ["play", "u2"]);
+        let play = |key: &str| vec!["play".to_string(), key.to_string()];
+        assert_eq!(with_run_args(play("u2"), &[]), ["play", "u2"]);
         assert_eq!(
-            play_args(Game::U1, &["--force-fault".into()]),
+            with_run_args(play("u1"), &["--force-fault".into()]),
             ["play", "u1", "--", "--force-fault"]
         );
     }

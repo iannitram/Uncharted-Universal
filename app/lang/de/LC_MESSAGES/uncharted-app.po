@@ -13,6 +13,9 @@ msgstr ""
 msgid "About"
 msgstr "Über"
 
+msgid "Fleet"
+msgstr "Geräte"
+
 msgid "Version {}"
 msgstr "Version {}"
 
@@ -48,9 +51,6 @@ msgstr "Zurück"
 
 msgid "Up and down scroll. A or B goes back."
 msgstr "Hoch und runter scrollen. A oder B geht zurück."
-
-msgid "Continue screen goes here"
-msgstr "Hier kommt der Fortsetzen-Bildschirm hin"
 
 msgid "Language: {}"
 msgstr "Sprache: {}"

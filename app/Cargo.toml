@@ -1,6 +1,6 @@
 [package]
 name = "uncharted-app"
-description = "The launcher: Rust + Slint (ADR 0003). Scaffold, About and the seven languages, the after-crash screen (2.07); the Continue screen is piece 2.04."
+description = "The launcher: Rust + Slint (ADR 0003). The Continue screen (piece 2.04), About and the seven languages (2.09), the Fleet page (2.08) and the after-crash screen (2.07)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,9 +20,11 @@ gilrs = "0.11.2"
 sys-locale = "0.3.2"
 serde_json = "1"
 uncharted_core = { path = "../crates/core" }
+# The device's time zone for "Saved today 21:14".
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
-# Builds the window without a display, for the translation and About tests in src/main.rs.
+# The headless Slint runs of the window in `cargo test` (src/main.rs); same version as slint.
 i-slint-backend-testing = "=1.18.1"
 
 [build-dependencies]

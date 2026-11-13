@@ -75,13 +75,12 @@ pub enum Text {
     Copied,
     SaveFailed,
     StartFailed,
-    Running,
 }
 
 impl Text {
     /// Every text, for the tests.
     #[cfg(test)]
-    pub const ALL: [Text; 16] = [
+    pub const ALL: [Text; 15] = [
         Text::Heading,
         Text::Chapter,
         Text::NoChapter,
@@ -97,7 +96,6 @@ impl Text {
         Text::Copied,
         Text::SaveFailed,
         Text::StartFailed,
-        Text::Running,
     ];
 
     /// The text in `lang`: English, Spanish, Portuguese, French, German, Italian, Japanese.
@@ -231,15 +229,6 @@ impl Text {
                 "Das Spiel konnte nicht gestartet werden: {}",
                 "Impossibile avviare il gioco: {}",
                 "ゲームを開始できませんでした: {}",
-            ],
-            Text::Running => [
-                "{} is running",
-                "{} está en marcha",
-                "{} está em execução",
-                "{} est en cours",
-                "{} läuft",
-                "{} è in esecuzione",
-                "{} を実行中",
             ],
         };
         all[lang as usize]

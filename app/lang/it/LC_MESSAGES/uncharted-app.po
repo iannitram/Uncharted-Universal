@@ -13,6 +13,9 @@ msgstr ""
 msgid "About"
 msgstr "Informazioni"
 
+msgid "Fleet"
+msgstr "Flotta"
+
 msgid "Version {}"
 msgstr "Versione {}"
 
@@ -48,9 +51,6 @@ msgstr "Indietro"
 
 msgid "Up and down scroll. A or B goes back."
 msgstr "Su e giù scorrono. A o B torna indietro."
-
-msgid "Continue screen goes here"
-msgstr "Qui andrà la schermata Continua"
 
 msgid "Language: {}"
 msgstr "Lingua: {}"
