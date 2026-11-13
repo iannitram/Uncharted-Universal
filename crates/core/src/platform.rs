@@ -316,6 +316,11 @@ impl AppDirs {
         }
     }
 
+    /// `<config>/settings.json`: the launcher's own settings (`language::SETTING_KEY`).
+    pub fn settings(&self) -> PathBuf {
+        self.config.join("settings.json")
+    }
+
     /// `<data>/installs/<game key>`: one prepared install (`Game::key`).
     pub fn install(&self, game_key: &str) -> PathBuf {
         self.data.join("installs").join(game_key)
