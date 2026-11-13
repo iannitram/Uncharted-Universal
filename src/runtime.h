@@ -13,14 +13,14 @@ typedef bb_jmp_buf sigjmp_buf;
 #endif
 /* The runtime's own exports (runtime_start, runtime_resolve, runtime_report, runtime_finalize,
  * the TLS and process-param setters, runtime_symbol, runtime_lookup, runtime_import_name and
- * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header. */
+ * RuntimeExport) are Rust now: crates/runtime/src/abi.rs, declared by its cbindgen header, as are
+ * runtime_time_resolve and runtime_rtc_resolve (crates/runtime/src/time.rs and rtc.rs) and the
+ * content and display modules (runtime_content_*, runtime_display_patch: 3.04). */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
 /* Restarts the game (in-game settings menu, render resolution change). */
 void runtime_restart(void);
-/* BB_GAME_RES: rewrites the display configuration the game initializes (runtime_display.c). */
-void runtime_display_patch(unsigned char *image, uint64_t image_size);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
 uintptr_t runtime_mutex_resolve(const char *name);
@@ -42,10 +42,6 @@ int32_t *runtime_errno(void);
 uintptr_t runtime_sema_resolve(const char *name);
 void runtime_sema_report(void);
 unsigned runtime_sema_waiters(uint32_t id);
-uintptr_t runtime_time_resolve(const char *name);
-void runtime_content_configure(const uint32_t values[5]);
-uintptr_t runtime_content_resolve(const char *name);
-void runtime_content_report(void);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 uintptr_t runtime_kernel_resolve(const char *name);
 uintptr_t runtime_file_resolve(const char *name);
@@ -83,7 +79,6 @@ uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 int runtime_pad_tool(int test, int strength);
 int runtime_pad_watch(int seconds);
-uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
 uintptr_t runtime_savedata_resolve(const char *name);

@@ -1,8 +1,10 @@
 //! What [`super::libc`] calls on the C side: C stdio (the loader's stdout is unbuffered C stdio,
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
-//! the C modules' resolvers and reports and `runtime_quit`. Without the loader the chain is
-//! empty, the reports print nothing and quitting flushes stdio and ends the process at once, as
+//! the C modules' resolvers and reports and `runtime_quit`. The modules already in Rust
+//! ([`crate::content`], [`crate::time`] and [`crate::rtc`]) keep their place in the chain and
+//! the reports. Without the loader the chain holds only those, and quitting flushes stdio and
+//! ends the process at once, as
 //! `tests/test_runtime.c`'s `runtime_quit` did.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -12,7 +14,7 @@ type File = c_void;
 extern "C" {
     fn puts(text: *const c_char) -> c_int;
     fn fputs(text: *const c_char, stream: *mut File) -> c_int;
-    pub(super) fn exit(code: c_int) -> !;
+    pub(crate) fn exit(code: c_int) -> !;
     pub(super) fn calloc(count: usize, size: usize) -> *mut c_void;
     pub(super) fn memset(dst: *mut c_void, value: c_int, size: usize) -> *mut c_void;
     pub(super) fn memcpy(dst: *mut c_void, src: *const c_void, size: usize) -> *mut c_void;
@@ -53,14 +55,14 @@ fn c_string(text: &str) -> CString {
 }
 
 /// `puts`: one line on the C stdout (the newline is added).
-pub(super) fn out_line(text: &str) {
+pub(crate) fn out_line(text: &str) {
     let line = c_string(text);
     // SAFETY: `line` is a NUL-terminated string.
     unsafe { puts(line.as_ptr()) };
 }
 
 /// `fputs(text, stderr)`; `text` carries its own newline.
-pub(super) fn err(text: &str) {
+pub(crate) fn err(text: &str) {
     let text = c_string(text);
     // SAFETY: `text` is a NUL-terminated string and `stderr()` the C library's stream.
     unsafe { fputs(text.as_ptr(), stderr()) };
@@ -77,8 +79,6 @@ mod loader {
     extern "C" {
         pub fn runtime_mutex_resolve(name: *const c_char) -> usize;
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
-        pub fn runtime_content_resolve(name: *const c_char) -> usize;
-        pub fn runtime_time_resolve(name: *const c_char) -> usize;
         pub fn runtime_sema_resolve(name: *const c_char) -> usize;
         pub fn runtime_rwlock_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -88,7 +88,6 @@ mod loader {
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_audio_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
-        pub fn runtime_rtc_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_file_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
@@ -98,7 +97,6 @@ mod loader {
         pub fn runtime_mutex_report();
         pub fn runtime_rwlock_report();
         pub fn runtime_sema_report();
-        pub fn runtime_content_report();
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
@@ -112,10 +110,14 @@ mod loader {
     }
 }
 
-/// The C modules' resolvers in `runtime.c`'s order, then the GPU library: the first that knows
-/// `name` answers.
+/// The modules' resolvers in `runtime.c`'s order (the C modules and those already in Rust:
+/// `content`, piece 3.04, and `time` and `rtc`, piece 3.02), then the GPU library: the first
+/// that knows `name` answers.
 #[cfg(uncharted_loader)]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
+    use crate::content::ffi::runtime_content_resolve;
+    use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
         runtime_mutex_resolve,
@@ -145,15 +147,18 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .find(|&address| address != 0)
 }
 
+/// Without the loader only the Rust modules answer, in the same order.
 #[cfg(not(uncharted_loader))]
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
-    let _ = name;
-    None
+    crate::content::resolve(name)
+        .or_else(|| crate::time::resolve(name))
+        .or_else(|| crate::rtc::resolve(name))
 }
 
-/// The C modules' report lines, in `runtime.c`'s order.
+/// The modules' report lines, in `runtime.c`'s order.
 #[cfg(uncharted_loader)]
 pub(super) fn report_modules() {
+    use crate::content::ffi::runtime_content_report;
     use loader::*;
     let reports: [unsafe extern "C" fn(); 12] = [
         runtime_thread_report,
@@ -175,19 +180,22 @@ pub(super) fn report_modules() {
     }
 }
 
+/// Without the loader only the modules already in Rust report.
 #[cfg(not(uncharted_loader))]
-pub(super) fn report_modules() {}
+pub(super) fn report_modules() {
+    crate::content::ffi::runtime_content_report();
+}
 
 /// Ends the process: the loader's `runtime_quit` (log flushed, shader cache saved, no
 /// destructors), or without the loader stdio flushed and `_exit`.
 #[cfg(uncharted_loader)]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     // SAFETY: `runtime_quit` takes any exit code and does not return.
     unsafe { loader::runtime_quit(code) }
 }
 
 #[cfg(not(uncharted_loader))]
-pub(super) fn quit(code: c_int) -> ! {
+pub(crate) fn quit(code: c_int) -> ! {
     extern "C" {
         fn fflush(stream: *mut File) -> c_int;
         fn _exit(code: c_int) -> !;

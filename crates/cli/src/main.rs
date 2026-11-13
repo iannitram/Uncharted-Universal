@@ -11,7 +11,9 @@
 //! uncharted-universal play         <u1|u2|u3> [--keep server|local] [-- <runtime arguments>]
 //! uncharted-universal steam-add    [<u1|u2|u3>] [--userdata <folder>] [--dump <folder>]
 //! uncharted-universal patches      [<dump folder>] [--patches-dir <folder>]
-//! uncharted-universal hub          serve|pair|pull
+//! uncharted-universal hub          serve [--builds <folder>] [--role <hub>] [--port <n>] ...
+//! uncharted-universal hub          pair <code> [--hub <address[:port]>]
+//! uncharted-universal hub          pull [--hub <address[:port]>] [--from <hub>] [--into <folder>]
 //! uncharted-universal fleet        [<records file>] [--device <name>]
 //! uncharted-universal generate-art [<output folder>]
 //! uncharted-universal setup        [status|hub|client|steam]
@@ -19,7 +21,9 @@
 //!
 //! Every command is a thin layer over `uncharted_core`; a core function that is still a stub
 //! ends the command with "not built yet: <module>::<fn>" and exit status 3, so a script can tell
-//! a missing piece from a failure.
+//! a missing piece from a failure. `hub` needs the `hub` feature (`--features hub`, roadmap
+//! 4.05); without it `hub serve|pair|pull` check their arguments and end with status 3 too.
+//! `hub serve` runs until stopped (or `--stop-after <n>` connections) and prints as it goes.
 //!
 //! Exit status: 0 done; 1 failed (the message says why; `check` also returns 1 when the dump has
 //! problems); 2 bad arguments; 3 a piece of the core is not built yet. `play` returns the game's
@@ -68,8 +72,8 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "hub",
-        "serve|pair|pull",
-        "serve, pair with or pull from a build hub",
+        "serve|pair <code>|pull [options]",
+        "run a build hub, or pair with and pull from one",
     ),
     (
         "fleet",
@@ -118,7 +122,12 @@ fn command_usage(name: &str) -> String {
         .iter()
         .find(|(command, _, _)| *command == name)
         .map(|(command, arguments, about)| {
-            format!("usage: uncharted-universal {command} {arguments}\n\n{about}\n")
+            let details = if *command == "hub" {
+                format!("\n{}", commands::HUB_DETAILS)
+            } else {
+                String::new()
+            };
+            format!("usage: uncharted-universal {command} {arguments}\n\n{about}\n{details}")
         })
         .unwrap_or_else(usage)
 }
