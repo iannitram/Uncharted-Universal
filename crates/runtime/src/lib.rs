@@ -32,11 +32,15 @@
 //! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
 //! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
 //! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
+//! [`kernel`] and [`services`] (piece 3.11) are libkernel/libScePosix process services and the
+//! offline system services, from the deleted `src/runtime_kernel.c` and
+//! `src/runtime_services.c`; they export their resolvers and the process clock the GPU library
+//! shares, and keep their places in `abi`'s resolver chain.
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
-//! `ajm`, `pad`, `services` and `kernel`, `fiber` and `thread`,
+//! `ajm`, `pad`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -52,6 +56,7 @@ pub mod content;
 pub mod crash;
 pub mod display;
 pub mod file;
+pub mod kernel;
 // Left out of the header: src/runtime.h declares memory's symbols (src/runtime_memory.c is
 // still the Windows build), and its constants are Rust's.
 /// cbindgen:ignore
@@ -64,6 +69,7 @@ pub mod pad;
 pub mod probe;
 pub mod rtc;
 pub mod savedata;
+pub mod services;
 #[cfg(target_arch = "x86_64")]
 pub mod sync;
 pub mod time;

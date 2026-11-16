@@ -14,8 +14,10 @@
 // `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
 // `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
 // moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09); 7:
-// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
-#define UNCHARTED_RUNTIME_ABI_VERSION 7
+// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03);
+// 8: `src/runtime_kernel.c` and `src/runtime_services.c` moved to [`crate::kernel`] and
+// [`crate::services`] (3.11).
+#define UNCHARTED_RUNTIME_ABI_VERSION 8
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -234,12 +236,57 @@ uintptr_t runtime_file_resolve(const char *name);
 void runtime_file_report(void);
 
 #if defined(__x86_64__)
+// The address of the guest libkernel/libScePosix function behind the scoped import `name`,
+// or 0 (the C `runtime_kernel_resolve`, now in `crates/runtime/src/kernel.rs`).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_kernel_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The guest's (FreeBSD) errno for a host errno; unknown errors are `EIO` (5).
+int32_t runtime_guest_errno(int host_errno);
+#endif
+
+#if defined(__x86_64__)
+// The guest's process time in microseconds; the GPU library stamps flips and labels with
+// it, so guest and GPU share one clock.
+uint64_t runtime_process_time_us(void);
+#endif
+
+#if defined(__x86_64__)
+// The guest's process time counter, in nanoseconds.
+uint64_t runtime_process_time_counter(void);
+#endif
+
+#if defined(__x86_64__)
+// The TSC frequency in Hz (measured once).
+uint64_t runtime_tsc_frequency(void);
+#endif
+
+#if defined(__x86_64__)
+// Runs the guest's thread-specific-data destructors for the calling thread (at its exit).
+void runtime_thread_keys_cleanup(void);
+#endif
+
+#if defined(__x86_64__)
 // The address of the guest `sceRtc*` function behind the scoped import `name`, or 0 (the C
 // `runtime_rtc_resolve`, now in `crates/runtime/src/rtc.rs`).
 //
 // # Safety
 // `name` is null or a NUL-terminated string.
 uintptr_t runtime_rtc_resolve(const char *name);
+#endif
+
+#if defined(__x86_64__)
+// The address of the guest service function (user, system, network, PSN, dialogs, PlayGo
+// and absent devices) behind the scoped import `name`, or 0 (the C
+// `runtime_services_resolve`, now in `crates/runtime/src/services.rs`).
+//
+// # Safety
+// `name` is null or a NUL-terminated string.
+uintptr_t runtime_services_resolve(const char *name);
 #endif
 
 #if defined(__x86_64__)

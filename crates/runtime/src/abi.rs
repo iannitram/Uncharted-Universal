@@ -14,9 +14,9 @@
 //! bug found while porting is its own issue.
 //!
 //! `runtime_resolve` asks this module's own contracts first, then the other modules in the order
-//! `runtime.c` did (the Rust ones, [`crate::sync`], `time` and `rtc` so far, in their C places),
-//! then the GPU library. The calls into C exist only in the loader build (`cfg(uncharted_loader)`,
-//! set by `build.rs`); elsewhere the chain holds only the Rust modules.
+//! `runtime.c` did (the Rust ones, [`crate::sync`], `time`, `rtc`, `kernel` and `services` so far,
+//! in their C places), then the GPU library. The calls into C exist only in the loader build
+//! (`cfg(uncharted_loader)`, set by `build.rs`); elsewhere the chain holds only the Rust modules.
 //!
 //! Only this crate has `unsafe` and FFI; every `unsafe` block carries a `// SAFETY:` line.
 
@@ -37,8 +37,10 @@ pub mod libc;
 /// `runtime_rtc_resolve` moved to [`crate::time`] and [`crate::rtc`] (3.02); 4:
 /// `src/runtime_content.c` and `src/runtime_display.c` moved here (3.04); 5: `src/runtime_audio.c`
 /// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09); 7:
-/// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 7;
+/// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03);
+/// 8: `src/runtime_kernel.c` and `src/runtime_services.c` moved to [`crate::kernel`] and
+/// [`crate::services`] (3.11).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 8;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -176,7 +178,7 @@ mod tests {
 
     #[test]
     fn version_is_raised_with_each_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 7);
+        assert_eq!(ffi::uncharted_runtime_version(), 8);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION
