@@ -810,8 +810,7 @@ mod guest {
         count: u32,
         which: i32,
         focus: *const c_char,
-        out: &mut [u8; 32],
-        param_out: &mut [u8; SAVE_PARAM_SIZE],
+        save: &mut SaveDialog,
     ) -> i32 {
         extern "C" {
             fn runtime_savedata_pick(
@@ -825,8 +824,8 @@ mod guest {
                 param_out: *mut c_void,
             ) -> i32;
         }
-        // SAFETY: the guest's pointers passed through; `out` and `param_out` are live buffers of
-        // the sizes the C function writes.
+        // SAFETY: the guest's pointers passed through; `save.dir` and `save.param` are live
+        // buffers of the sizes the C function writes.
         unsafe {
             runtime_savedata_pick(
                 user,
@@ -835,15 +834,14 @@ mod guest {
                 count,
                 which,
                 focus,
-                out.as_mut_ptr(),
-                param_out.as_mut_ptr().cast(),
+                save.dir.as_mut_ptr(),
+                save.param.as_mut_ptr().cast(),
             )
         }
     }
 
     /// Without the loader there is no save store to pick from: nothing to choose.
     #[cfg(not(uncharted_loader))]
-    #[allow(clippy::too_many_arguments)]
     fn savedata_pick(
         _user: i32,
         _title: *const c_char,
@@ -851,8 +849,7 @@ mod guest {
         _count: u32,
         _which: i32,
         _focus: *const c_char,
-        _out: &mut [u8; 32],
-        _param_out: &mut [u8; SAVE_PARAM_SIZE],
+        _save: &mut SaveDialog,
     ) -> i32 {
         -1
     }
@@ -899,16 +896,7 @@ mod guest {
             0
         } else {
             let which = WHICH.get(focus_pos as usize).copied().unwrap_or(2);
-            savedata_pick(
-                user,
-                title,
-                names,
-                count,
-                which,
-                focus,
-                &mut save.dir,
-                &mut save.param,
-            )
+            savedata_pick(user, title, names, count, which, focus, save)
         };
         if save.pick < 0 && offer_new {
             save.pick = 0;
