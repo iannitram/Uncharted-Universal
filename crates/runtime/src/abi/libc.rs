@@ -178,6 +178,9 @@ extern "sysv64" fn guest_tls_get_addr(index: *const u64) -> *mut c_void {
 /// resolution) and draws the guest's stack canary, low byte zero. Without bit 1 nothing resolves.
 #[no_mangle]
 pub extern "C" fn runtime_start(flags: u64) {
+    // The guest's process time counts from here (the C `runtime_kernel.c` read the start at load).
+    #[cfg(target_arch = "x86_64")]
+    crate::kernel::mark_process_start();
     CAPABILITIES.store(flags, Ordering::Release);
     if flags & 1 == 0 {
         return;
