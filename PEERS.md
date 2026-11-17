@@ -80,6 +80,7 @@ stay in the historical survey below.
 
 ### Imported peer fixes
 
+- **#392, Intel GPU barrier and pipeline-cache fixes:** Mevlock/uncharted_pc-dev (branch `dev`), imported by hand under GPL-2.0 from `6a4ee35a52fc859127ecf26c6ab4787587823708`, `daba76f2bea555d0dd35beb880ae40abf6039413`, `ce63ecd9a9e9c7df2894180d14bed09d78820258`, and `f1a466fd09672c8f345c3c8ea1b02522e5e6e532`. The CFG moves eligible barriers out of divergent scopes and drops execz skips that cross them; the translated shader cache key isolates U3 shader `f8fa9165`. A shared mutex excludes pipeline-cache reads while cached compute or graphics pipelines are created. Intel hardware validation remains needed.
 - **#389, U1 shadow_mutex self-deadlock:** [Supermedo/uncharted_pc#841](https://github.com/Supermedo/uncharted_pc/pull/841) at [f83ab16a](https://github.com/Supermedo/uncharted_pc/commit/f83ab16a659b0c6c064d0fa5807b9142c6e8b31a) (open, unmerged; GPL-2.0). Imported 2026-11-16 with a review of the PR here: the shadow reads go through the backing view; the Linux backend gets the matching symbol.
 
 ## Earlier survey and adopted-work history

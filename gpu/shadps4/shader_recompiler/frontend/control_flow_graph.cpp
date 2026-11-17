@@ -3,6 +3,10 @@
 
 #include <unordered_map>
 #include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "shader_recompiler/frontend/control_flow_graph.h"
@@ -104,15 +108,77 @@ static std::optional<u32> ResolveSetPcTarget(std::span<const GcnInst> list, u32 
 
 static constexpr size_t LabelReserveSize = 32;
 
+bool ScopeSplitBarrier() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_SCOPE_SPLIT_BARRIER");
+        return !value || value[0] != '0';
+    }();
+    return enabled;
+}
+
 CFG::CFG(Common::ObjectPool<Block>& block_pool_, std::span<const GcnInst> inst_list_)
     : block_pool{block_pool_}, inst_list{inst_list_} {
     index_to_pc.resize(inst_list.size() + 1);
     labels.reserve(LabelReserveSize);
+    DropBarrierExeczSkips();
     EmitLabels();
     EmitBlocks();
     LinkBlocks();
     SplitDivergenceScopes();
     RemoveUnreachableBlocks();
+}
+
+void CFG::DropBarrierExeczSkips() {
+    if (!ScopeSplitBarrier()) {
+        return;
+    }
+    std::vector<u32> pcs(inst_list.size() + 1);
+    for (size_t i = 0; i < inst_list.size(); ++i) {
+        pcs[i + 1] = pcs[i] + inst_list[i].length;
+    }
+    for (size_t i = 0; i < inst_list.size(); ++i) {
+        const auto& branch = inst_list[i];
+        if (branch.opcode != Opcode::S_CBRANCH_EXECZ) {
+            continue;
+        }
+        const u32 target = branch.BranchTarget(pcs[i]);
+        if (target <= pcs[i]) {
+            continue;
+        }
+        bool has_barrier = false;
+        bool only_vector_and_barrier_support = true;
+        size_t j = i + 1;
+        for (; j < inst_list.size() && pcs[j] < target; ++j) {
+            const auto& skipped = inst_list[j];
+            if (skipped.opcode == Opcode::S_BARRIER) {
+                has_barrier = true;
+            } else if (skipped.opcode == Opcode::S_WAITCNT || skipped.opcode == Opcode::S_NOP) {
+                continue;
+            } else {
+                bool writes_exec = skipped.IsCmpx();
+                for (u32 d = 0; d < skipped.dst_count; ++d) {
+                    writes_exec |= skipped.dst[d].field == OperandField::ExecLo ||
+                                   skipped.dst[d].field == OperandField::ExecHi;
+                }
+                if (IgnoresExecMask(skipped) || writes_exec ||
+                    (skipped.category != InstCategory::VectorALU &&
+                     skipped.category != InstCategory::VectorMemory)) {
+                    only_vector_and_barrier_support = false;
+                    break;
+                }
+            }
+        }
+        if (!has_barrier || !only_vector_and_barrier_support || pcs[j] != target) {
+            continue;
+        }
+        static std::atomic<u32> logged{0};
+        if (logged.fetch_add(1) < 20) {
+            std::printf("Shader recompiler: s_cbranch_execz at pc %#x skips s_barrier: dropped\n",
+                        pcs[i]);
+            std::fflush(stdout);
+        }
+        const_cast<GcnInst&>(branch).opcode = Opcode::S_NOP;
+    }
 }
 
 void CFG::EmitLabels() {
@@ -226,7 +292,7 @@ void CFG::SplitDivergenceScopes() {
                     // threads (Uncharted 3 light shafts). End the scope before such an
                     // instruction and continue it after, when the instruction reads nothing the
                     // scope wrote to scalar registers.
-                    const s32 split_at = [&] {
+                    const s32 scalar_split_at = [&] {
                         bool scalar_written = false;
                         for (s32 i = curr_begin; i < curr_end; ++i) {
                             const auto& scope_inst = inst_list[i];
@@ -269,6 +335,31 @@ void CFG::SplitDivergenceScopes() {
                         }
                         return -1;
                     }();
+                    s32 split_at = scalar_split_at;
+                    s32 scope_continue_at = -1;
+                    if (ScopeSplitBarrier()) {
+                        for (s32 i = curr_begin + 1; i <= curr_end; ++i) {
+                            if (inst_list[i].opcode != Opcode::S_BARRIER) {
+                                continue;
+                            }
+                            const auto scope_start = inst_list.begin() + curr_begin + 1;
+                            if (std::ranges::any_of(scope_start, inst_list.begin() + i,
+                                                    [](const GcnInst& scope_inst) {
+                                                        return !IgnoresExecMask(scope_inst);
+                                                    }) &&
+                                (split_at == -1 || i < split_at)) {
+                                split_at = i;
+                                scope_continue_at = i;
+                                static std::atomic<u32> logged{0};
+                                if (logged.fetch_add(1) < 20) {
+                                    std::printf("Shader recompiler: s_barrier at pc %#x moved out of a divergence scope\n",
+                                                index_to_pc[i]);
+                                    std::fflush(stdout);
+                                }
+                                break;
+                            }
+                        }
+                    }
                     if (split_at != -1) {
                         curr_end = split_at - 1;
                         while (IgnoresExecMask(inst_list[curr_end])) {
@@ -301,7 +392,9 @@ void CFG::SplitDivergenceScopes() {
                         epi_block->num_predecessors = 2;
                         blocks.insert_before(next_blk, *epi_block);
                         if (split_at != -1) {
-                            continued_scopes.emplace(epi_block, curr_end);
+                            continued_scopes.emplace(epi_block,
+                                                     scope_continue_at != -1 ? scope_continue_at
+                                                                             : curr_end);
                         }
 
                         // Have divergence block always jump to epilogue block.

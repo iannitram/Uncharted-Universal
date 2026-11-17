@@ -436,6 +436,7 @@ PipelineCache::~PipelineCache() {
 
 size_t PipelineCache::DriverCacheSize() {
     size_t size = 0;
+    std::unique_lock cache_use{PipelineCacheUse()};
     if (pipeline_cache && instance.GetDevice().getPipelineCacheData(*pipeline_cache, &size,
                                                                    nullptr) != vk::Result::eSuccess) {
         return 0;
@@ -450,7 +451,14 @@ void PipelineCache::SaveDriverCache() {
     }
     std::scoped_lock lock{driver_cache_mutex};
     driver_cache_dirty.store(0);
-    auto [result, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+    vk::Result result;
+    std::vector<char> data;
+    {
+        std::unique_lock cache_use{PipelineCacheUse()};
+        auto read = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+        result = read.result;
+        data = std::move(read.value);
+    }
     if (result != vk::Result::eSuccess || data.empty()) {
         return;
     }
@@ -464,6 +472,11 @@ void PipelineCache::SaveDriverCache() {
     }
     std::error_code ec;
     std::filesystem::rename(temp, driver_cache_path, ec);
+}
+
+std::shared_mutex& PipelineCacheUse() {
+    static std::shared_mutex use;
+    return use;
 }
 
 void PipelineCache::DriverCacheSaver(std::stop_token stop) {

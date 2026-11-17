@@ -21,6 +21,8 @@ class Block;
 
 namespace Shader::Gcn {
 
+bool ScopeSplitBarrier();
+
 using Hook =
     boost::intrusive::set_base_hook<boost::intrusive::link_mode<boost::intrusive::normal_link>>;
 
@@ -69,6 +71,7 @@ public:
     [[nodiscard]] std::string Dot() const;
 
 private:
+    void DropBarrierExeczSkips();
     void EmitLabels();
     void EmitBlocks();
     void LinkBlocks();
