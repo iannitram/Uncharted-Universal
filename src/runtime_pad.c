@@ -418,45 +418,42 @@ static FollowState *follow_state(uint64_t camera, uint64_t now) {
     *slot=(FollowState){.camera=camera,.last_us=now};
     return slot;
 }
-/* Raw mouse: drain new motion on every callback, and remember what each blending camera has
- * received. Ownership can change between frames; waiting for the first camera to return leaves
- * fresh motion queued and replays its old share. A camera joining a blend without fresh input
- * gets this input sample's batch once, never a stale batch from an earlier sample. Each new sample
- * ends all previous shares and resets the totals, so returning cameras cannot catch up on missed
- * frames and motion cannot accumulate over a whole session. An idle gap or a new aim press also
- * starts with no remembered motion. */
+/* Raw mouse: drain new motion on every callback into each live camera's pending share. Pad reads
+ * can happen between cameras, so a new input sample must not discard their pending motion. Each
+ * camera takes and clears only its own share; after 50 ms away its slot is forgotten. A new camera
+ * gets fresh motion, or this sample's latest batch when joining without fresh input. Only pending
+ * motion is kept, never session totals. An idle gap or a new aim press clears all shares too. */
 static void frame_motion(uint64_t camera, uint64_t now, float *dx, float *dy) {
     static uint64_t last_us, session_press, last_sample;
-    static float total_x, total_y, batch_x, batch_y;
-    static struct { uint64_t camera, last_us; float x, y; int used; } given[4];
+    static float batch_x, batch_y;
+    static struct { uint64_t camera, last_us; float x, y; int used; } pending[4];
     if (!last_us || now-last_us>50000 || session_press!=aim_press_us) {
-        total_x=total_y=batch_x=batch_y=0.0f;
-        memset(given,0,sizeof(given));
+        batch_x=batch_y=0.0f;
+        memset(pending,0,sizeof(pending));
         session_press=aim_press_us;
     }
     last_us=now;
     float fresh_x, fresh_y;
     const uint64_t sample=camera_take(0,&fresh_x,&fresh_y);
-    if (sample!=last_sample) {
-        total_x=total_y=batch_x=batch_y=0.0f;
-        memset(given,0,sizeof(given));
-        last_sample=sample;
-    }
-    total_x+=fresh_x; total_y+=fresh_y;
+    if (sample!=last_sample) { batch_x=batch_y=0.0f; last_sample=sample; }
     const int fresh=fresh_x!=0.0f || fresh_y!=0.0f;
     if (fresh) { batch_x=fresh_x; batch_y=fresh_y; }
     int slot=0;
     for (int i=0;i<4;++i) {
-        if (given[i].used && given[i].camera==camera) { slot=i; break; }
-        if (given[i].last_us<given[slot].last_us) slot=i;
+        if (pending[i].used && now-pending[i].last_us>50000)
+            memset(&pending[i],0,sizeof(pending[i]));
+        if (pending[i].used) {
+            pending[i].x+=fresh_x; pending[i].y+=fresh_y;
+        }
+        if (pending[i].last_us<pending[slot].last_us) slot=i;
     }
-    if (given[slot].used && given[slot].camera==camera) {
-        *dx=total_x-given[slot].x; *dy=total_y-given[slot].y;
-    } else {
-        *dx=fresh ? fresh_x : batch_x; *dy=fresh ? fresh_y : batch_y;
+    for (int i=0;i<4;++i) {
+        if (pending[i].used && pending[i].camera==camera) { slot=i; break; }
     }
-    given[slot].camera=camera; given[slot].last_us=now; given[slot].used=1;
-    given[slot].x=total_x; given[slot].y=total_y;
+    *dx=pending[slot].used && pending[slot].camera==camera ? pending[slot].x : batch_x;
+    *dy=pending[slot].used && pending[slot].camera==camera ? pending[slot].y : batch_y;
+    pending[slot].camera=camera; pending[slot].last_us=now; pending[slot].used=1;
+    pending[slot].x=pending[slot].y=0.0f;
 }
 static volatile float follow_correction;  /* degrees the direction is short of the wanted heading */
 static volatile float follow_push;        /* the right stick while the direction turns (-0.3, 0, 0.3) */

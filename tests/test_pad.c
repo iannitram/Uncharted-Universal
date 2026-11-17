@@ -164,6 +164,40 @@ static void test_frame_leave_and_return(void) {
     assert(dx==0 && dy==0);
 }
 
+static void test_frame_split_reads(void) {
+    for (int extra=0;extra<=4;extra+=4) {
+        float dx,dy, ax=0,ay=0,bx=0,by=0;
+        uint64_t now=5000000+(uint64_t)extra*100000;
+        /* Both cameras are live before the split read, with no motion carried in. */
+        ++camera_sample;
+        camera_dx[0]=camera_dy[0]=0;
+        frame_motion(0x1000,now-16667,&dx,&dy);
+        frame_motion(0x2000,now-16666,&dx,&dy);
+        for (int frame=0;frame<2;++frame) {
+            ++camera_sample;
+            camera_dx[0]=frame==0 ? 10.0f : 0.0f;
+            camera_dy[0]=frame==0 ? -5.0f : 0.0f;
+            frame_motion(0x1000,now,&dx,&dy);
+            ax+=dx; ay+=dy;
+            assert(camera_dx[0]==0 && camera_dy[0]==0);
+            if (frame==0) {
+                ++camera_sample; /* extra pad read between A and B */
+                camera_dx[0]=(float)extra; camera_dy[0]=-(float)extra/2;
+            }
+            frame_motion(0x2000,now+1,&dx,&dy);
+            bx+=dx; by+=dy;
+            assert(camera_dx[0]==0 && camera_dy[0]==0);
+            now+=16667;
+        }
+        printf("FRAME_SPLIT (%d px extra): A %.2f / B %.2f px, expected %.2f each\n",
+               extra,ax,bx,10.0f+(float)extra);
+        fflush(stdout);
+        assert(SDL_fabsf(ax-(10.0f+(float)extra))<0.01f);
+        assert(SDL_fabsf(bx-ax)<0.01f && SDL_fabsf(by-ay)<0.01f);
+        assert(SDL_fabsf(ay-(-5.0f-(float)extra/2))<0.01f);
+    }
+}
+
 static void test_frame_next_press(void) {
     float dx,dy;
     camera_dx[0]=8;
@@ -334,6 +368,7 @@ int main(void) {
         test_frame_owner_handoff();
         test_frame_next_press();
         test_frame_leave_and_return();
+        test_frame_split_reads();
         input.mouse_sensitivity=1.0f; input.mouse_aim_sensitivity=1.0f;
         aim_held=0;
         const size_t camera_size=0xa000;
