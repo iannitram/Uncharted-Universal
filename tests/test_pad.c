@@ -125,6 +125,45 @@ static void test_frame_owner_handoff(void) {
     assert(dx==0 && dy==0 && camera_dx[0]==0); /* no stale share for a new owner */
 }
 
+static void test_frame_leave_and_return(void) {
+    float dx,dy;
+    uint64_t now=2000000;
+    ++camera_sample;
+    camera_dx[0]=5; camera_dy[0]=-2;
+    frame_motion(0x1000,now,&dx,&dy);
+    assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+    for (int i=0;i<120;++i) {
+        ++camera_sample; now+=16667;
+        camera_dx[0]=5; camera_dy[0]=-2;
+        frame_motion(0x3000,now,&dx,&dy);
+        assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+        assert(camera_dx[0]==0 && camera_dy[0]==0);
+    }
+    ++camera_sample; now+=16667;
+    camera_dx[0]=5; camera_dy[0]=-2;
+    frame_motion(0x1000,now,&dx,&dy);
+    printf("FRAME_RETURN: A received %.2f px, expected 5.00 px\n",dx);
+    fflush(stdout);
+    assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+    /* Both cameras share this frame once, including when their call order reverses. */
+    frame_motion(0x3000,now+1,&dx,&dy);
+    assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+    frame_motion(0x1000,now+2,&dx,&dy);
+    assert(dx==0 && dy==0);
+    frame_motion(0x3000,now+3,&dx,&dy);
+    assert(dx==0 && dy==0);
+    ++camera_sample; now+=16667;
+    camera_dx[0]=5; camera_dy[0]=-2;
+    frame_motion(0x3000,now,&dx,&dy);
+    assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+    frame_motion(0x1000,now+1,&dx,&dy);
+    assert(SDL_fabsf(dx-5)<0.01f && SDL_fabsf(dy+2)<0.01f);
+    frame_motion(0x3000,now+2,&dx,&dy);
+    assert(dx==0 && dy==0);
+    frame_motion(0x1000,now+3,&dx,&dy);
+    assert(dx==0 && dy==0);
+}
+
 static void test_frame_next_press(void) {
     float dx,dy;
     camera_dx[0]=8;
@@ -294,6 +333,7 @@ int main(void) {
         test_aim_next_press();
         test_frame_owner_handoff();
         test_frame_next_press();
+        test_frame_leave_and_return();
         input.mouse_sensitivity=1.0f; input.mouse_aim_sensitivity=1.0f;
         aim_held=0;
         const size_t camera_size=0xa000;

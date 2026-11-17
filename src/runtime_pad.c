@@ -421,8 +421,10 @@ static FollowState *follow_state(uint64_t camera, uint64_t now) {
 /* Raw mouse: drain new motion on every callback, and remember what each blending camera has
  * received. Ownership can change between frames; waiting for the first camera to return leaves
  * fresh motion queued and replays its old share. A camera joining a blend without fresh input
- * gets this input sample's batch once, never a stale batch from an earlier sample. An idle gap
- * or a new aim press starts with no remembered motion. */
+ * gets this input sample's batch once, never a stale batch from an earlier sample. Each new sample
+ * ends all previous shares and resets the totals, so returning cameras cannot catch up on missed
+ * frames and motion cannot accumulate over a whole session. An idle gap or a new aim press also
+ * starts with no remembered motion. */
 static void frame_motion(uint64_t camera, uint64_t now, float *dx, float *dy) {
     static uint64_t last_us, session_press, last_sample;
     static float total_x, total_y, batch_x, batch_y;
@@ -435,7 +437,11 @@ static void frame_motion(uint64_t camera, uint64_t now, float *dx, float *dy) {
     last_us=now;
     float fresh_x, fresh_y;
     const uint64_t sample=camera_take(0,&fresh_x,&fresh_y);
-    if (sample!=last_sample) { batch_x=batch_y=0.0f; last_sample=sample; }
+    if (sample!=last_sample) {
+        total_x=total_y=batch_x=batch_y=0.0f;
+        memset(given,0,sizeof(given));
+        last_sample=sample;
+    }
     total_x+=fresh_x; total_y+=fresh_y;
     const int fresh=fresh_x!=0.0f || fresh_y!=0.0f;
     if (fresh) { batch_x=fresh_x; batch_y=fresh_y; }
