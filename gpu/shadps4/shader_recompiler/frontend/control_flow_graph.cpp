@@ -342,7 +342,8 @@ void CFG::SplitDivergenceScopes() {
                             if (inst_list[i].opcode != Opcode::S_BARRIER) {
                                 continue;
                             }
-                            const auto scope_start = inst_list.begin() + curr_begin + 1;
+                            // curr_begin is already the scope's first exec-masked instruction.
+                            const auto scope_start = inst_list.begin() + curr_begin;
                             if (std::ranges::any_of(scope_start, inst_list.begin() + i,
                                                     [](const GcnInst& scope_inst) {
                                                         return !IgnoresExecMask(scope_inst);
