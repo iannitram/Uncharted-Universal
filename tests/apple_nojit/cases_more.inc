@@ -24,6 +24,15 @@ static void x64(uint8_t *x, uint64_t lo, uint64_t hi) { memcpy(x, &lo, 8); memcp
 static size_t build_more(tcase *nxt0) {
     tcase *nxt = nxt0;
 
+    /* jz selects eax=2 when ZF=1, else eax=1; jmp skips the other arm; MOV/Jcc preserve flags. */
+    CASE("branches", "jz_taken", 0x74, 0x07, 0xB8, 1, 0, 0, 0, 0xEB, 0x05, 0xB8, 2, 0, 0, 0);
+    IN.rflags = F_ZF; SAME(); EX.gpr[RAX] = 2; cur->flag_mask = FLAGS_ARITH;
+    CASE("branches", "jz_not_taken", 0x74, 0x07, 0xB8, 1, 0, 0, 0, 0xEB, 0x05, 0xB8, 2, 0, 0, 0);
+    SAME(); EX.gpr[RAX] = 1; cur->flag_mask = FLAGS_ARITH;
+    /* call +2 to lea rax,[rax+rax]; ret, then jmp +5 past the callee: 21*2=42, flags unchanged. */
+    CASE("calls-returns", "guest_call_ret", 0xE8, 2, 0, 0, 0, 0xEB, 5, 0x48, 0x8D, 0x04, 0x00, 0xC3);
+    IN.gpr[RAX] = 21; SAME(); EX.gpr[RAX] = 42; cur->flag_mask = FLAGS_ARITH;
+
     /* ---- string-ops (SDM: MOVS, STOS, LODS, CMPS, SCAS; REP/REPE/REPNE; DF) ---- */
     /* rep movsb, rcx=5: copies mem[0..5)=1..5 to mem[64..69); rsi/rdi advance 5, rcx=0 */
     CASE("string-ops", "rep_movsb", 0xF3, 0xA4);

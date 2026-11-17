@@ -11,8 +11,8 @@ booted by the script and shut down afterwards).
 
 | Run | Command | Target | no_jit_build | pass | fail | unsupported |
 | --- | --- | --- | --- | --- | --- | --- |
-| macOS host, interpreter forced (`BB_JIT=0`) | `sh tests/apple_nojit/run.sh host report.json` | arm64-apple-darwin | 0 | 63 | 0 | 1 |
-| iOS no-JIT build, in the simulator (`xcrun simctl spawn`) | `sh tests/apple_nojit/run.sh sim report.json` | arm64-apple-ios17.0-simulator | 1 (`TARGET_OS_IPHONE` sets `BB_NO_JIT`) | 63 | 0 | 1 |
+| macOS host, interpreter forced (`BB_JIT=0`) | `sh tests/apple_nojit/run.sh host report.json` | arm64-apple-darwin | 0 | 66 | 0 | 1 |
+| iOS no-JIT build, in the simulator (`xcrun simctl spawn`) | `sh tests/apple_nojit/run.sh sim report.json` | arm64-apple-ios17.0-simulator | 1 (`TARGET_OS_IPHONE` sets `BB_NO_JIT`) | 66 | 0 | 1 |
 
 Both runs have identical per-family numbers (pass / fail / unsupported), and `not_authored` is
 empty in both reports:
@@ -27,6 +27,8 @@ empty in both reports:
 | sse-float | 8 | 0 | 0 |
 | avx-avx2 | 3 | 0 | 0 |
 | x87 | 6 | 0 | 0 |
+| branches | 2 | 0 | 0 |
+| calls-returns | 1 | 0 | 0 |
 | string-ops | 7 | 0 | 0 |
 | atomics-ordering | 8 | 0 | 0 |
 | unaligned-memory | 8 | 0 | 0 |
