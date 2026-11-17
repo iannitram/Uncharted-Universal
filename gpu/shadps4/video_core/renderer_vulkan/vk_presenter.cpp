@@ -564,6 +564,12 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             source && hudless_size == image_size) {
             if (hudless_frame.width != frame->width || hudless_frame.height != frame->height ||
                 !hudless_frame.image) {
+                // The previous frame's generation may still read it on the GPU (the switch from
+                // 16:9 menus to ultrawide gameplay crashed in that frame's DLSS-G evaluation).
+                // From the drakolordx7 community build (miroslavdanutalexandru-alt c80c9d8b).
+                if (hudless_frame.image) {
+                    draw_scheduler.WaitSubmitted();
+                }
                 RecreateFrame(&hudless_frame, frame->width, frame->height);
             }
             const vk::ImageMemoryBarrier2 to_target{
