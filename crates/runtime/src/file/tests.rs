@@ -438,6 +438,37 @@ fn positioned_calls_never_move_the_position_sequential_ones_share_it() {
     close(fd).unwrap();
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_positioned_reads_do_not_disturb_concurrent_sequential_reads() {
+    let scratch = Scratch::new("windows-pread-side");
+    let contents: Vec<u8> = (0..(256 * 1024)).map(|n| (n % 251) as u8).collect();
+    fs::write(scratch.user("data/file"), &contents).unwrap();
+    let fd = open(b"/data/file", 0, 0).unwrap();
+
+    std::thread::scope(|scope| {
+        for worker in 0..4 {
+            let expected = &contents;
+            scope.spawn(move || {
+                for turn in 0..256 {
+                    let offset = ((worker * 8191 + turn * 997) % (expected.len() - 64)) as i64;
+                    assert_eq!(
+                        pread(fd, 64, offset).unwrap(),
+                        expected[offset as usize..][..64]
+                    );
+                }
+            });
+        }
+
+        let mut sequential = Vec::with_capacity(contents.len());
+        while sequential.len() < contents.len() {
+            sequential.extend(read(fd, 257).unwrap());
+        }
+        assert_eq!(sequential, contents);
+    });
+    close(fd).unwrap();
+}
+
 #[test]
 fn open_flags_create_truncate_and_directories() {
     let scratch = Scratch::new("flags");

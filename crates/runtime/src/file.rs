@@ -445,6 +445,8 @@ struct OpenFile {
     description: Description,
     append: bool,
     sync: bool,
+    #[cfg(windows)]
+    pread_side: OnceLock<Option<File>>,
 }
 
 struct Directory {
@@ -650,6 +652,8 @@ pub fn open(guest: &[u8], flags: c_int, mode: c_int) -> Result<c_int> {
                 description: Description::new(file)?,
                 append: flags & O_APPEND != 0,
                 sync: flags & O_SYNC != 0,
+                #[cfg(windows)]
+                pread_side: OnceLock::new(),
             };
             (Kind::File(Arc::new(file)), size)
         }
@@ -871,20 +875,19 @@ pub unsafe fn read_into(fd: c_int, dst: *mut u8, size: u64, offset: i64) -> Resu
                     if offset < 0 {
                         file.read(buffer)
                     } else {
-                        positioned_read(file, buffer, offset as u64 + done)
+                        positioned_read_for_stdio(fd, file, buffer, offset as u64 + done)
                     }
                 })
             }
         }
         Target::File(file) => {
-            let description = &file.description;
             // SAFETY: forwarded from the caller.
             unsafe {
                 read_full(dst, size, false, |buffer, done| {
                     if offset < 0 {
-                        description.read(buffer)
+                        file.description.read(buffer)
                     } else {
-                        description.read_at(buffer, offset as u64 + done)
+                        positioned_read_for_open(file, buffer, offset as u64 + done)
                     }
                 })
             }
@@ -925,6 +928,88 @@ fn positioned_read(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<us
 #[cfg(windows)]
 fn positioned_read(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
     std::os::windows::fs::FileExt::seek_read(file, buffer, offset)
+}
+
+#[cfg(windows)]
+fn positioned_read_for_open(file: &OpenFile, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    if pread_side_enabled() {
+        let side = file
+            .pread_side
+            .get_or_init(|| reopen_read_handle(file.description.file()));
+        if let Some(side) = side {
+            return positioned_read(side, buffer, offset);
+        }
+    }
+    file.description.read_at(buffer, offset)
+}
+
+#[cfg(windows)]
+fn positioned_read_for_stdio(
+    fd: c_int,
+    file: &File,
+    buffer: &mut [u8],
+    offset: u64,
+) -> io::Result<usize> {
+    static STDIO_SIDE: OnceLock<[OnceLock<Option<File>>; 3]> = OnceLock::new();
+    if pread_side_enabled() {
+        if let Ok(index) = usize::try_from(fd) {
+            if index < 3 {
+                let sides = STDIO_SIDE.get_or_init(|| std::array::from_fn(|_| OnceLock::new()));
+                if let Some(side) = sides[index].get_or_init(|| reopen_read_handle(file)) {
+                    return positioned_read(side, buffer, offset);
+                }
+            }
+        }
+    }
+    positioned_read(file, buffer, offset)
+}
+
+#[cfg(windows)]
+fn pread_side_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("BB_PREAD_SIDE").is_none_or(|value| value != "0"))
+}
+
+#[cfg(windows)]
+fn reopen_read_handle(file: &File) -> Option<File> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::Foundation::GENERIC_READ;
+    use windows_sys::Win32::Storage::FileSystem::{
+        ReOpenFile, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    // ReOpenFile creates a new file object with its own file pointer. Positioned reads may move
+    // that pointer, but they cannot race with sequential reads on the guest descriptor's handle.
+    // SAFETY: the source handle is owned by `file`; a successful result is uniquely wrapped below.
+    let handle = unsafe {
+        ReOpenFile(
+            file.as_raw_handle().cast(),
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    if handle.is_null() || handle == windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE {
+        None
+    } else {
+        // SAFETY: ReOpenFile returned a new owned handle.
+        Some(unsafe { File::from_raw_handle(handle.cast()) })
+    }
+}
+
+#[cfg(not(windows))]
+fn positioned_read_for_open(file: &OpenFile, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    file.description.read_at(buffer, offset)
+}
+
+#[cfg(not(windows))]
+fn positioned_read_for_stdio(
+    _fd: c_int,
+    file: &File,
+    buffer: &mut [u8],
+    offset: u64,
+) -> io::Result<usize> {
+    positioned_read(file, buffer, offset)
 }
 
 #[cfg(not(any(unix, windows)))]
