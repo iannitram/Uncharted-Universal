@@ -123,3 +123,51 @@ msgstr "La struttura dell'app iOS"
 
 msgid "Mac packaging"
 msgstr "Pacchettizzazione per Mac"
+
+msgid "Raw mouse aiming and cover camera (Uncharted 1 and 2)"
+msgstr "Mira e telecamera in copertura con mouse diretto (Uncharted 1 e 2)"
+
+msgid "Aim sensitivity (raw mouse)"
+msgstr "Sensibilità della mira (mouse diretto)"
+
+msgid "The game stopped"
+msgstr "Il gioco si è interrotto"
+
+msgid "Chapter: {}"
+msgstr "Capitolo: {}"
+
+msgid "Chapter: not known yet (no save)"
+msgstr "Capitolo: ancora sconosciuto (nessun salvataggio)"
+
+msgid "This is a known problem: {}"
+msgstr "È un problema noto: {}"
+
+msgid "Fixed in version {}; update the launcher."
+msgstr "Risolto nella versione {}; aggiorna il launcher."
+
+msgid "This crash is new to us. Report it and we can look into it."
+msgstr "Questo arresto anomalo ci è nuovo. Segnalalo e lo esamineremo."
+
+msgid "What the game said: {}"
+msgstr "Messaggio del gioco: {}"
+
+msgid "Turn on {} and play again"
+msgstr "Attiva {} e gioca di nuovo"
+
+msgid "Play again"
+msgstr "Gioca di nuovo"
+
+msgid "Open the issue page"
+msgstr "Apri la pagina del problema"
+
+msgid "Report it"
+msgstr "Segnala"
+
+msgid "The log is copied. Paste it into the Log field of the form."
+msgstr "Il registro è copiato. Incollalo nel campo Log del modulo."
+
+msgid "Could not save the setting: {}"
+msgstr "Impossibile salvare l'impostazione: {}"
+
+msgid "Could not start the game: {}"
+msgstr "Impossibile avviare il gioco: {}"

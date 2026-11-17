@@ -43,6 +43,8 @@ struct Info;
 
 namespace Vulkan {
 
+std::shared_mutex& PipelineCacheUse();
+
 class Instance;
 class Scheduler;
 class ShaderCache;

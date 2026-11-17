@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <shared_mutex>
 #include <utility>
 #include <boost/container/small_vector.hpp>
 
@@ -15,6 +16,7 @@
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
+std::shared_mutex& PipelineCacheUse();
 
 using Shader::Backend::SPIRV::AuxShaderType;
 
@@ -420,8 +422,10 @@ GraphicsPipeline::GraphicsPipeline(
         .layout = *pipeline_layout,
     };
 
+    std::shared_lock cache_use{PipelineCacheUse()};
     auto [pipeline_result, pipe] =
         device.createGraphicsPipelineUnique(pipeline_cache, pipeline_info);
+    cache_use.unlock();
     if (pipeline_result != vk::Result::eSuccess) {
         // bbport (Mevlock, drakolordx7): some drivers refuse a pipeline only because of the
         // pipeline cache (ErrorInitializationFailed on a Radeon RX 9070 XT at start): try once

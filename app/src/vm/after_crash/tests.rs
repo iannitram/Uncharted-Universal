@@ -5,7 +5,12 @@
 use super::*;
 use crate::settings_file;
 use serde_json::json;
+use uncharted_core::language::Language;
 use uncharted_core::logs::{parse_known_issues, read, RUN_LOG};
+
+fn en() -> Texts {
+    Texts::new(Language::English)
+}
 
 const AT: u64 = 1_793_527_200;
 const HOME: &str = "/home/kamadha";
@@ -136,7 +141,7 @@ fn a_known_crash_shows_the_fix_and_sets_the_toggle_before_playing() {
         [Button::PlayWithFix, Button::OpenIssue, Button::Back]
     );
     assert_eq!(
-        screen.screen(Lang::En),
+        screen.screen(&en()),
         Screen {
             heading: "The game stopped".into(),
             game: "Uncharted 2".into(),
@@ -154,7 +159,7 @@ fn a_known_crash_shows_the_fix_and_sets_the_toggle_before_playing() {
     );
 
     let mut host = FakeHost::new(&dir);
-    let got = screen.press(Button::PlayWithFix, &ctx, &mut host, Lang::En);
+    let got = screen.press(Button::PlayWithFix, &ctx, &mut host, &en());
     assert_eq!(got, Pressed::Playing);
     assert_eq!(host.calls, ["set BB_SAFE_SHADERS=1", "play u2"]);
     assert_eq!(
@@ -164,14 +169,14 @@ fn a_known_crash_shows_the_fix_and_sets_the_toggle_before_playing() {
         Some("1")
     );
 
-    let got = screen.press(Button::OpenIssue, &ctx, &mut host, Lang::En);
+    let got = screen.press(Button::OpenIssue, &ctx, &mut host, &en());
     assert_eq!(got, Pressed::Stay(String::new()));
     assert_eq!(
         host.opened,
         ["https://github.com/iannitram/Uncharted-Universal/issues/999"]
     );
     assert_eq!(
-        screen.press(Button::Back, &ctx, &mut host, Lang::En),
+        screen.press(Button::Back, &ctx, &mut host, &en()),
         Pressed::Home
     );
 }
@@ -223,7 +228,7 @@ fn an_unknown_crash_reports_with_the_game_and_chapter() {
         screen.buttons(),
         [Button::Report, Button::PlayAgain, Button::Back]
     );
-    let texts = screen.screen(Lang::En);
+    let texts = screen.screen(&en());
     assert_eq!(
         texts.summary,
         "This crash is new to us. Report it and we can look into it."
@@ -231,7 +236,7 @@ fn an_unknown_crash_reports_with_the_game_and_chapter() {
     assert_eq!(texts.buttons, ["Report it", "Play again", "Back"]);
 
     let mut host = FakeHost::new(&dir);
-    let got = screen.press(Button::Report, &ctx, &mut host, Lang::En);
+    let got = screen.press(Button::Report, &ctx, &mut host, &en());
     assert_eq!(
         got,
         Pressed::Stay("The log is copied. Paste it into the Log field of the form.".into())
@@ -248,7 +253,7 @@ fn an_unknown_crash_reports_with_the_game_and_chapter() {
     assert!(host.opened[0].contains("&where=Train-wreck"));
 
     assert_eq!(
-        screen.press(Button::PlayAgain, &ctx, &mut host, Lang::En),
+        screen.press(Button::PlayAgain, &ctx, &mut host, &en()),
         Pressed::Playing
     );
     assert_eq!(host.calls.last().unwrap(), "play u2");
@@ -272,7 +277,7 @@ fn a_shipped_known_issue_without_a_toggle_offers_play_again_and_its_page() {
         [Button::PlayAgain, Button::OpenIssue, Button::Back]
     );
     let mut host = FakeHost::new(&dir);
-    screen.press(Button::OpenIssue, &ctx, &mut host, Lang::En);
+    screen.press(Button::OpenIssue, &ctx, &mut host, &en());
     assert_eq!(
         host.opened,
         ["https://github.com/iannitram/Uncharted-Universal/issues/110"]
@@ -289,7 +294,7 @@ fn a_setting_that_cannot_be_saved_does_not_start_the_game() {
     assert_eq!(screen.chapter, None);
     assert_eq!(screen.known, None);
     assert_eq!(
-        screen.screen(Lang::En).chapter,
+        screen.screen(&en()).chapter,
         "Chapter: not known yet (no save)"
     );
 
@@ -299,7 +304,12 @@ fn a_setting_that_cannot_be_saved_does_not_start_the_game() {
     };
     let mut host = FakeHost::new(&dir);
     host.fail_save = true;
-    let got = fixable.press(Button::PlayWithFix, &ctx, &mut host, Lang::De);
+    let got = fixable.press(
+        Button::PlayWithFix,
+        &ctx,
+        &mut host,
+        &Texts::new(Language::German),
+    );
     assert_eq!(
         got,
         Pressed::Stay("Die Einstellung konnte nicht gespeichert werden: read-only folder".into())
@@ -331,14 +341,14 @@ fn every_language_fills_the_screen() {
         crash: "x".into(),
         known: parse_known_issues(FIXABLE).unwrap().pop(),
     };
-    for lang in Lang::ALL {
-        let texts = screen.screen(lang);
-        assert!(texts.chapter.contains("Train-wreck"), "{lang:?}");
-        assert!(texts.buttons[0].contains("safe shaders"), "{lang:?}");
+    for language in Language::ALL {
+        let texts = screen.screen(&Texts::new(language));
+        assert!(texts.chapter.contains("Train-wreck"), "{language:?}");
+        assert!(texts.buttons[0].contains("safe shaders"), "{language:?}");
         assert!(!texts.heading.is_empty() && !texts.summary.contains("{}"));
     }
     assert_eq!(
-        screen.screen(Lang::Ja).buttons[0],
+        screen.screen(&Texts::new(Language::Japanese)).buttons[0],
         "safe shaders をオンにしてもう一度プレイ"
     );
 }

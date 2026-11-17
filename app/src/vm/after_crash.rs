@@ -13,7 +13,7 @@
 //! (the app was closed, or Game Mode left it) is still `"done": false` there, so the next start
 //! runs the after-run step for it ([`unfinished`]) and shows its screen once.
 
-use crate::strings::{fill, Lang, Text};
+use crate::lang::Texts;
 use serde_json::{json, Value};
 use std::fs;
 use std::io;
@@ -188,38 +188,39 @@ impl AfterCrash {
         }
     }
 
-    /// The texts in `lang`. The known issue's summary is the English of `known_issues.json`.
-    pub fn screen(&self, lang: Lang) -> Screen {
+    /// The texts in `texts`. The known issue's summary is the English of `known_issues.json`.
+    pub fn screen(&self, texts: &Texts) -> Screen {
         let chapter = match &self.chapter {
-            Some(chapter) => fill(Text::Chapter.get(lang), chapter),
-            None => Text::NoChapter.get(lang).to_string(),
+            Some(chapter) => texts.tr1("Chapter: {}", chapter),
+            None => texts.tr("Chapter: not known yet (no save)"),
         };
         let summary = match &self.known {
             Some(issue) => {
-                let mut summary = fill(Text::Known.get(lang), &issue.summary);
+                let mut summary = texts.tr1("This is a known problem: {}", &issue.summary);
                 if let Some(version) = &issue.fixed_in {
                     summary.push(' ');
-                    summary.push_str(&fill(Text::FixedIn.get(lang), version));
+                    summary
+                        .push_str(&texts.tr1("Fixed in version {}; update the launcher.", version));
                 }
                 summary
             }
-            None => Text::Unknown.get(lang).to_string(),
+            None => texts.tr("This crash is new to us. Report it and we can look into it."),
         };
         Screen {
-            heading: Text::Heading.get(lang).to_string(),
+            heading: texts.tr("The game stopped"),
             game: self.game.name().to_string(),
             chapter,
             summary,
-            detail: fill(Text::Detail.get(lang), &self.crash),
+            detail: texts.tr1("What the game said: {}", &self.crash),
             buttons: self
                 .buttons()
                 .into_iter()
-                .map(|button| self.label(button, lang))
+                .map(|button| self.label(button, texts))
                 .collect(),
         }
     }
 
-    fn label(&self, button: Button, lang: Lang) -> String {
+    fn label(&self, button: Button, texts: &Texts) -> String {
         match button {
             Button::PlayWithFix => {
                 let key = self
@@ -227,12 +228,12 @@ impl AfterCrash {
                     .as_ref()
                     .and_then(|issue| issue.toggle.as_ref())
                     .map_or("", |toggle| toggle.key.as_str());
-                fill(Text::PlayWithFix.get(lang), &fix_name(key))
+                texts.tr1("Turn on {} and play again", &fix_name(key))
             }
-            Button::PlayAgain => Text::PlayAgain.get(lang).to_string(),
-            Button::OpenIssue => Text::OpenIssue.get(lang).to_string(),
-            Button::Report => Text::Report.get(lang).to_string(),
-            Button::Back => Text::Back.get(lang).to_string(),
+            Button::PlayAgain => texts.tr("Play again"),
+            Button::OpenIssue => texts.tr("Open the issue page"),
+            Button::Report => texts.tr("Report it"),
+            Button::Back => texts.tr("Back"),
         }
     }
 
@@ -247,17 +248,23 @@ impl AfterCrash {
 
     /// Do what `button` does. The fix is saved before the game starts again; a failure stays
     /// on the screen with a note.
-    pub fn press(&self, button: Button, ctx: &Context, host: &mut dyn Host, lang: Lang) -> Pressed {
+    pub fn press(
+        &self,
+        button: Button,
+        ctx: &Context,
+        host: &mut dyn Host,
+        texts: &Texts,
+    ) -> Pressed {
         match button {
             Button::PlayWithFix => {
                 if let Some(toggle) = self.known.as_ref().and_then(|i| i.toggle.as_ref()) {
                     if let Err(error) = host.set_setting(&toggle.key, &toggle.value) {
-                        return Pressed::Stay(fill(Text::SaveFailed.get(lang), &error));
+                        return Pressed::Stay(texts.tr1("Could not save the setting: {}", &error));
                     }
                 }
-                self.play(host, lang)
+                self.play(host, texts)
             }
-            Button::PlayAgain => self.play(host, lang),
+            Button::PlayAgain => self.play(host, texts),
             Button::OpenIssue => {
                 if let Some(issue) = &self.known {
                     host.open_url(&issue.issue);
@@ -273,16 +280,18 @@ impl AfterCrash {
                     &ctx.redact,
                 ));
                 host.open_url(&logs::bug_form_url(&run));
-                Pressed::Stay(Text::Copied.get(lang).to_string())
+                Pressed::Stay(
+                    texts.tr("The log is copied. Paste it into the Log field of the form."),
+                )
             }
             Button::Back => Pressed::Home,
         }
     }
 
-    fn play(&self, host: &mut dyn Host, lang: Lang) -> Pressed {
+    fn play(&self, host: &mut dyn Host, texts: &Texts) -> Pressed {
         match host.play(self.game) {
             Ok(()) => Pressed::Playing,
-            Err(error) => Pressed::Stay(fill(Text::StartFailed.get(lang), &error)),
+            Err(error) => Pressed::Stay(texts.tr1("Could not start the game: {}", &error)),
         }
     }
 }
