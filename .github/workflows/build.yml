@@ -191,7 +191,11 @@ jobs:
             --smoke-result dist/vulkan-smoke.txt --dependencies "$RUNNER_TEMP/ci-dependencies.json"
           mkdir -p "$RUNNER_TEMP/dependencies"
           cp "$RUNNER_TEMP/ci-dependencies.json" "$RUNNER_TEMP/dependencies/"
+      # Only a release build of main needs its uploads (the release job downloads them). Elsewhere
+      # (pull requests, other branches) a refused upload, such as the account's artifact storage
+      # quota being full (#241), must not turn a build that passed red.
       - uses: actions/upload-artifact@v4
+        continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:
           name: uncharted-linux
           retention-days: 3
@@ -202,6 +206,7 @@ jobs:
             dist/SHA256SUMS
             dist/vulkan-smoke.txt
       - uses: actions/upload-artifact@v4
+        continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:
           name: linux-dependencies
           retention-days: 3
@@ -251,6 +256,7 @@ jobs:
           test -s licenses/rust-crates.txt
           test ! -e "Play Uncharted.exe"
       - uses: actions/upload-artifact@v4
+        continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:
           name: uncharted-windows
           retention-days: 3
@@ -275,6 +281,7 @@ jobs:
           plutil -lint "$app/Contents/Info.plist"
           codesign --verify --deep "$app"
       - uses: actions/upload-artifact@v4
+        continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:
           name: uncharted-macos
           retention-days: 3

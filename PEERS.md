@@ -80,6 +80,7 @@ stay in the historical survey below.
 
 ### Imported peer fixes
 
+- **#390, DLSS frame generation on the switch to ultrawide:** the drakolordx7 community build, mirrored at [miroslavdanutalexandru-alt/uncharted_pc](https://github.com/miroslavdanutalexandru-alt/uncharted_pc): [ff6781a7](https://github.com/miroslavdanutalexandru-alt/uncharted_pc/commit/ff6781a728240e9d6d06a106ee410daf721a57b0) skips frames whose depth and motion are larger than the output, and [c80c9d8b](https://github.com/miroslavdanutalexandru-alt/uncharted_pc/commit/c80c9d8b10737bc4750aee800a9c62c617c6f381) waits for the GPU before the hudless frame is resized. GPL-2.0. Imported 2026-11-17 (only these two hunks; the peer's DLSS SDK bump and CI changes are left out).
 - **#389, U1 shadow_mutex self-deadlock:** [Supermedo/uncharted_pc#841](https://github.com/Supermedo/uncharted_pc/pull/841) at [f83ab16a](https://github.com/Supermedo/uncharted_pc/commit/f83ab16a659b0c6c064d0fa5807b9142c6e8b31a) (open, unmerged; GPL-2.0). Imported 2026-11-16 with a review of the PR here: the shadow reads go through the backing view; the Linux backend gets the matching symbol.
 
 ## Earlier survey and adopted-work history
