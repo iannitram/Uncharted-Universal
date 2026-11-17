@@ -23,7 +23,7 @@ fn catalogue(language: Language) -> Option<&'static str> {
 }
 
 /// The texts of one language. A text with no translation shows in English.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Texts {
     language: Language,
     table: HashMap<String, String>,

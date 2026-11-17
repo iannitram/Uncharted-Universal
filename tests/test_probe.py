@@ -167,6 +167,19 @@ class LoaderTests(unittest.TestCase):
         self.assertEqual(r.returncode,20,r.stderr)
         self.assertIn('_init_env=0',r.stdout)
 
+    def test_null_binding_handler_call_sites_are_guarded(self):
+        # The shader-binding call site of #391 at image offset 0: the 17-byte head, then the
+        # 1.02 tail (mov rdx,r15; call rcx) or the 1.00 tail (lea rdx,[rbp-0x60]; call rcx).
+        # The tail starts at 0x11, where the call to the guard thunk is written.
+        head = bytes.fromhex('f6c1017408488b17488b4c11ff0fb67002')
+        for name, tail in (('1.02', bytes.fromhex('4c89faffd1')), ('1.00', bytes.fromhex('488d55a0ffd1'))):
+            with self.subTest(build=name):
+                r = self.run_image(package(head + tail))
+                self.assertIn('Shader bindings: null handler guard at 0x11', r.stdout, r.stdout + r.stderr)
+                self.assertNotIn('call site not found', r.stdout)
+        r = self.run_image(package(b'\xc3'))
+        self.assertIn('Shader bindings: null handler call site not found', r.stdout, r.stdout + r.stderr)
+
     def test_unknown_capabilities_rejected(self):
         r = self.run_image(package(b'\xc3',capabilities=2))
         self.assertEqual(r.returncode,1)
