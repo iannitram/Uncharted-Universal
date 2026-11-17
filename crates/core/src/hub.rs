@@ -47,7 +47,7 @@ pub use service::{
 };
 
 /// The mDNS service a hub announces.
-pub const SERVICE: &str = "_uncharted-universal._tcp.local.";
+pub const SERVICE: &str = "_uncharted._tcp.local.";
 const MAX_CONTROL_FRAME: usize = 1024 * 1024;
 const DATA_CHUNK: usize = 64 * 1024;
 const MAX_GAME_FILES: usize = 10_000;
@@ -1905,6 +1905,16 @@ mod tests {
     use super::*;
     use std::net::{Ipv4Addr, Ipv6Addr, TcpListener};
     use std::sync::mpsc::{self, Receiver, Sender};
+
+    #[test]
+    fn service_name_fits_rfc_6763() {
+        // RFC 6763 section 7.2: the service name (without the leading underscore) is at most 15 bytes.
+        let name = SERVICE
+            .strip_prefix('_')
+            .and_then(|s| s.split("._tcp.local.").next())
+            .expect("SERVICE is _<name>._tcp.local.");
+        assert!(name.len() <= 15, "{name:?} is {} bytes", name.len());
+    }
 
     struct MemoryTransport {
         tx: Sender<Vec<u8>>,
