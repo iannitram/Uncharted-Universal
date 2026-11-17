@@ -452,7 +452,7 @@ void PipelineCache::SaveDriverCache() {
     std::scoped_lock lock{driver_cache_mutex};
     driver_cache_dirty.store(0);
     vk::Result result;
-    std::vector<char> data;
+    std::vector<uint8_t> data;
     {
         std::unique_lock cache_use{PipelineCacheUse()};
         auto read = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
