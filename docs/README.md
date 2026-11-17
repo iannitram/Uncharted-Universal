@@ -18,7 +18,7 @@ are in [`ru/`](ru/), at the same paths.
 
 ## Plans
 
-- [../ROADMAP.md](../ROADMAP.md): Universal implementation stages (1.0: Windows and Linux/SteamOS; Mac, iOS and Android are 1.x).
+- [../ROADMAP.md](../ROADMAP.md): Universal implementation stages (1.0: Windows and Linux/SteamOS, plus the Mac and iPhone/iPad apps with save-relay and a controller since the owner's rulings of 2026-11-17; Android is 1.x).
 - [continue-screen.md](continue-screen.md): the Continue screen brief (roadmap 2.01) that the Slint launcher's first page is built from.
 - [ROADMAP.md](ROADMAP.md): historical Linux-fork goals and phases, retained from upstream.
 - [history/BLOODBORNE_ROADMAP_2026-09-30.md](history/BLOODBORNE_ROADMAP_2026-09-30.md): the
