@@ -436,6 +436,7 @@ PipelineCache::~PipelineCache() {
 
 size_t PipelineCache::DriverCacheSize() {
     size_t size = 0;
+    std::unique_lock cache_use{PipelineCacheUse()};
     if (pipeline_cache && instance.GetDevice().getPipelineCacheData(*pipeline_cache, &size,
                                                                    nullptr) != vk::Result::eSuccess) {
         return 0;
@@ -450,7 +451,29 @@ void PipelineCache::SaveDriverCache() {
     }
     std::scoped_lock lock{driver_cache_mutex};
     driver_cache_dirty.store(0);
-    auto [result, data] = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+    vk::Result result;
+    std::vector<uint8_t> data;
+    const auto wait_start = std::chrono::steady_clock::now();
+    auto read_start = wait_start;
+    {
+        std::unique_lock cache_use{PipelineCacheUse()};
+        read_start = std::chrono::steady_clock::now();
+        auto read = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
+        result = read.result;
+        data = std::move(read.value);
+    }
+    // The first saves: how long pipeline creation was held, and how long the save waited for the
+    // creations under way (from the peer's f1a466fd).
+    static int timed = 0;
+    if (timed < 3) {
+        ++timed;
+        const auto done = std::chrono::steady_clock::now();
+        std::printf("Pipeline cache: the driver's cache data (%zu KiB) read in %.1f ms with "
+                    "pipeline creation held (%.1f ms waiting for the creations under way)\n",
+                    data.size() / 1024,
+                    std::chrono::duration<double, std::milli>(done - read_start).count(),
+                    std::chrono::duration<double, std::milli>(read_start - wait_start).count());
+    }
     if (result != vk::Result::eSuccess || data.empty()) {
         return;
     }
@@ -464,6 +487,11 @@ void PipelineCache::SaveDriverCache() {
     }
     std::error_code ec;
     std::filesystem::rename(temp, driver_cache_path, ec);
+}
+
+std::shared_mutex& PipelineCacheUse() {
+    static std::shared_mutex use;
+    return use;
 }
 
 void PipelineCache::DriverCacheSaver(std::stop_token stop) {

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shader_recompiler/ir/passes/ir_passes.h"
+#include "shader_recompiler/frontend/control_flow_graph.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -37,8 +38,15 @@ static std::string ShaderBinaryName(u64 pgm_hash, size_t perm_idx) {
     const char* clamp = !Shader::Optimization::EffectLoopClamp(pgm_hash) ? ""
                         : pgm_hash == 0x689d1af9                       ? "_lc2"
                                                                        : "_lc1";
-    return fmt::format("{:#018x}_{}{}{}", pgm_hash, perm_idx,
-                       Shader::Optimization::MultiwaveLdsBarriers(pgm_hash) ? "_lds4" : "", clamp);
+    auto name = fmt::format("{:#018x}_{}{}{}", pgm_hash, perm_idx,
+                            Shader::Optimization::MultiwaveLdsBarriers(pgm_hash) ? "_lds4" : "",
+                            clamp);
+    // Keep the suffix specific to the one known affected translation. With the switch off,
+    // the legacy cache name is returned byte-for-byte.
+    if (pgm_hash == 0xf8fa9165 && Shader::Gcn::ScopeSplitBarrier()) {
+        name += "_bs1";
+    }
+    return name;
 }
 } // namespace Serialization
 
