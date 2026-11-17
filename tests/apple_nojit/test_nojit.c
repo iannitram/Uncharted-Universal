@@ -29,13 +29,15 @@
 #define F_ZF 0x40ull
 #define F_OF 0x800ull
 
+#define NCASES 80
 typedef struct {
     const char *family, *name;
-    uint8_t code[8];
+    uint8_t code[40];
     size_t len;
     nojit_state in, exp;
     uint64_t flag_mask;
     int fault; /* -1 none, else expected vector */
+    uint16_t gpr_skip, xmm_skip; /* registers not compared (caller-saved after a host call) */
 } tcase;
 
 static void u32x4(uint8_t *x, uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
@@ -43,9 +45,18 @@ static void u32x4(uint8_t *x, uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
     memcpy(x, v, 16);
 }
 
+static size_t build_more(tcase *t);
+static int same_regs(const nojit_state *o, const tcase *c) {
+    for (int i = 0; i < 16; i++)
+        if (!(c->gpr_skip >> i & 1) && o->gpr[i] != c->exp.gpr[i]) return 0;
+    for (int i = 0; i < 16; i++)
+        if (!(c->xmm_skip >> i & 1) && memcmp(o->xmm[i], c->exp.xmm[i], 16)) return 0;
+    return 1;
+}
+
 static size_t build(tcase *t) {
     size_t n = 0;
-    memset(t, 0, sizeof t[0] * 8);
+    memset(t, 0, sizeof t[0] * NCASES);
     /* add rax,rbx: -1 + 1 = 0; CF PF AF ZF set */
     t[n] = (tcase){"integer-flags", "add64_carry", {0x48, 0x01, 0xD8}, 3};
     t[n].in.gpr[0] = ~0ull; t[n].in.gpr[3] = 1;
@@ -77,12 +88,13 @@ static size_t build(tcase *t) {
     t[n] = (tcase){"sse-integer", "pxor_zero", {0x66, 0x0F, 0xEF, 0xC0}, 4};
     u32x4(t[n].in.xmm[0], 5, 6, 7, 8); t[n].exp = t[n].in; memset(t[n].exp.xmm[0], 0, 16);
     t[n].fault = -1; n++;
-    return n;
+    return n + build_more(t + n);
 }
 
-/* Families the planned AOT library needs but this file does not author yet. */
-static const char *NOT_AUTHORED[] = {"x87", "avx-avx2", "atomics-ordering", "string-ops",
-    "unaligned-memory", "host-call-callback", "tls", "sse-float", "bmi-lzcnt-movbe"};
+#include "cases_more.inc"
+
+/* Every family of the feasibility synthetic plan has cases; nothing is left unauthored. */
+static const char *NOT_AUTHORED[] = {NULL};
 
 int main(int argc, char **argv) {
     int require = 0;
@@ -90,7 +102,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--require-supported")) require = 1; else path = argv[i];
     }
-    static tcase t[8];
+    static tcase t[NCASES];
     size_t n = build(t);
     int pass = 0, fail = 0, unsup = 0;
     FILE *f = path ? fopen(path, "w") : stdout;
@@ -110,9 +122,13 @@ int main(int argc, char **argv) {
             int ok;
             if (t[i].fault >= 0) ok = (r == NOJIT_FAULT && vec == t[i].fault);
             else ok = (r == NOJIT_OK &&
-                       !memcmp(out.gpr, t[i].exp.gpr, sizeof out.gpr) &&
-                       !memcmp(out.xmm, t[i].exp.xmm, sizeof out.xmm) &&
+                       same_regs(&out, &t[i]) &&
+                       !memcmp(out.mem, t[i].exp.mem, sizeof out.mem) &&
                        (out.rflags & t[i].flag_mask) == (t[i].exp.rflags & t[i].flag_mask));
+            if (!ok && getenv("NOJIT_DEBUG")) { fprintf(stderr, "FAIL %s r=%d vec=%d\n", t[i].name, r, vec);
+                for (int g = 0; g < 16; g++) if (out.gpr[g] != t[i].exp.gpr[g]) fprintf(stderr, " gpr%d %llx exp %llx\n", g, (unsigned long long)out.gpr[g], (unsigned long long)t[i].exp.gpr[g]);
+                for (int g = 0; g < 256; g++) if (out.mem[g] != t[i].exp.mem[g]) fprintf(stderr, " mem%d %x exp %x\n", g, out.mem[g], t[i].exp.mem[g]);
+                fprintf(stderr, " flags %llx\n", (unsigned long long)out.rflags); }
             res = ok ? "pass" : "fail"; if (ok) pass++; else fail++;
         }
         fprintf(f, "    {\"family\": \"%s\", \"case\": \"%s\", \"result\": \"%s\"}%s\n",
@@ -120,7 +136,7 @@ int main(int argc, char **argv) {
     }
     fprintf(f, "  ],\n  \"pass\": %d, \"fail\": %d, \"unsupported\": %d,\n  \"not_authored\": [",
             pass, fail, unsup);
-    for (size_t i = 0; i < sizeof NOT_AUTHORED / sizeof *NOT_AUTHORED; i++)
+    for (size_t i = 0; i + 1 < sizeof NOT_AUTHORED / sizeof *NOT_AUTHORED; i++)
         fprintf(f, "%s\"%s\"", i ? ", " : "", NOT_AUTHORED[i]);
     fprintf(f, "]\n}\n");
     if (path) fclose(f);

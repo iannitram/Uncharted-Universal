@@ -19,6 +19,12 @@ void *runtime_low_map(size_t size, int prot) {
     return p == MAP_FAILED ? NULL : p;
 }
 
+/* Host functions the guest calls out to (host-call-callback family). */
+static uintptr_t guest_dbl; /* guest code: lea rax,[rdi+rdi]; ret */
+static uint64_t host_mix(uint64_t a, uint64_t b, uint64_t c) { return a * b + c; }
+static double host_half(double x) { return x * 0.5; }
+static uint64_t host_cb(uint64_t x) { return bbcpu_call(guest_dbl, 1, &x) + 1; }
+
 #define OFF_FLAGS 128
 #define OFF_XMM 136
 #define CODE_SIZE 0x4000
@@ -60,15 +66,35 @@ static size_t assemble(uint8_t *b, const uint8_t *code, size_t len) {
     return n;
 }
 
-static void child(const uint8_t *code, size_t len, const nojit_state *in, int out_fd) {
+static void child(const uint8_t *code_in, size_t len, const nojit_state *in, int out_fd) {
     uint8_t *mem = mmap(NULL, CODE_SIZE, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
     if (mem == MAP_FAILED || len > 256) _exit(40);
+    uint8_t code[256];
+    memcpy(code, code_in, len);
+    const void *hosts[] = {NULL, (void *)host_mix, (void *)host_half, (void *)host_cb};
+    for (size_t i = 0; i + 8 <= len; i++) {
+        uint64_t v; memcpy(&v, code + i, 8);
+        if ((v >> 8) == (0x484F535400000000ull >> 8) && (v & 0xFF) >= 1 && (v & 0xFF) <= 3) {
+            const void *h = hosts[v & 0xFF];
+            memcpy(code + i, &h, 8);
+        }
+    }
     assemble(mem, code, len);
+    static const uint8_t dbl[] = {0x48, 0x8D, 0x04, 0x3F, 0xC3};
+    memcpy(mem + 0x2000, dbl, sizeof dbl);
+    guest_dbl = (uintptr_t)mem + 0x2000;
     bbcpu_add_guest_code((uintptr_t)mem, CODE_SIZE);
     static nojit_state in_copy, out_state;
     in_copy = *in;
+    uint64_t real = (uint64_t)(uintptr_t)in_copy.mem;
+    for (int i = 0; i < 16; i++)
+        if (in_copy.gpr[i] - NOJIT_MEM <= sizeof in_copy.mem) in_copy.gpr[i] = in_copy.gpr[i] - NOJIT_MEM + real;
+    bbcpu_set_thread_pointer((uintptr_t)in_copy.mem);
     const uint64_t args[2] = {(uint64_t)(uintptr_t)&in_copy, (uint64_t)(uintptr_t)&out_state};
     bbcpu_call((uintptr_t)mem, 2, args);
+    memcpy(out_state.mem, in_copy.mem, sizeof out_state.mem);
+    for (int i = 0; i < 16; i++)
+        if (out_state.gpr[i] - real <= sizeof in_copy.mem) out_state.gpr[i] = out_state.gpr[i] - real + NOJIT_MEM;
     if (write(out_fd, &out_state, sizeof out_state) != (ssize_t)sizeof out_state) _exit(41);
     _exit(0);
 }
