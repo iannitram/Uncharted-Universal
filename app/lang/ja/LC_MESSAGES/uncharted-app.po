@@ -123,3 +123,51 @@ msgstr "iOS アプリの構成"
 
 msgid "Mac packaging"
 msgstr "Mac 向けパッケージング"
+
+msgid "Raw mouse aiming and cover camera (Uncharted 1 and 2)"
+msgstr "マウス直接入力のエイムとカバー時カメラ（Uncharted 1・2）"
+
+msgid "Aim sensitivity (raw mouse)"
+msgstr "エイム感度（マウス直接入力）"
+
+msgid "The game stopped"
+msgstr "ゲームが停止しました"
+
+msgid "Chapter: {}"
+msgstr "チャプター: {}"
+
+msgid "Chapter: not known yet (no save)"
+msgstr "チャプター: 不明（セーブなし）"
+
+msgid "This is a known problem: {}"
+msgstr "既知の問題です: {}"
+
+msgid "Fixed in version {}; update the launcher."
+msgstr "バージョン {} で修正済みです。ランチャーを更新してください。"
+
+msgid "This crash is new to us. Report it and we can look into it."
+msgstr "これは未知のクラッシュです。報告していただければ調査します。"
+
+msgid "What the game said: {}"
+msgstr "ゲームのメッセージ: {}"
+
+msgid "Turn on {} and play again"
+msgstr "{} をオンにしてもう一度プレイ"
+
+msgid "Play again"
+msgstr "もう一度プレイ"
+
+msgid "Open the issue page"
+msgstr "問題のページを開く"
+
+msgid "Report it"
+msgstr "報告する"
+
+msgid "The log is copied. Paste it into the Log field of the form."
+msgstr "ログをコピーしました。フォームの Log 欄に貼り付けてください。"
+
+msgid "Could not save the setting: {}"
+msgstr "設定を保存できませんでした: {}"
+
+msgid "Could not start the game: {}"
+msgstr "ゲームを開始できませんでした: {}"
