@@ -15,7 +15,7 @@ Adopt bloodborne-native's route (bloodborne-runtime, -mac, -ios; GPL-2.0 per the
 
 The architecture decision above is a target, not a feasibility finding. This issue has completed source review and written a synthetic test plan only. The CPU and Metal synthetic probes below were **not executed**, so #211 remains partial and the Apple feasibility gate is not complete. This review does **not** establish Uncharted support or justify starting a title-specific port. Status for all three games and both Apple targets is **no-go for implementation or compatibility claims; go only to execute the bounded synthetic and owner-run evaluation below**. There is no public evidence in this review that distinguishes U1, U2 or U3's CPU coverage, system-call needs, memory use, or graphics behavior on Apple. The unknowns must be resolved independently for each title; success on one is not transferable to another.
 
-**Execution limitation:** this review ran in a Linux environment without Xcode or an Apple device. No synthetic CPU interpreter, translator, or Metal test was run. The cited peer tests and probes were inspected as source references only.
+**Execution limitation:** this review ran in a Linux environment without Xcode or an Apple device. No synthetic CPU interpreter, translator, or Metal test was run. Update: bbcpu's own synthetic CPU tests were later run on macOS arm64; see [docs/apple/feasibility-211.md](../apple/feasibility-211.md). The Metal probe and iOS targets remain unexecuted. The cited peer tests and probes were inspected as source references only.
 
 | Game | macOS Apple silicon | iPhone / iPad | Evidence and condition to reconsider |
 |---|---|---|---|
