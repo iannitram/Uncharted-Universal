@@ -789,20 +789,8 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }
     std::array<u16, AmdGpu::RegDirty::NumBlocks> blocks;
     u32 num_blocks = 0;
-#ifdef __GLIBCXX__
-    for (size_t block = dirty.blocks._Find_first(); block < dirty.blocks.size();
-         block = dirty.blocks._Find_next(block)) {
-        blocks[num_blocks++] = static_cast<u16>(block);
-    }
-#else
-    if (dirty.blocks.any()) {
-        for (size_t block = 0; block < dirty.blocks.size(); ++block) {
-            if (dirty.blocks.test(block)) {
-                blocks[num_blocks++] = static_cast<u16>(block);
-            }
-        }
-    }
-#endif
+    // RegDirty::ForEachBlock walks marked bits with countr_zero instead of scanning all blocks.
+    dirty.ForEachBlock([&](u32 block) { blocks[num_blocks++] = static_cast<u16>(block); });
     const auto stages =
         pipeline ? pipeline->GetStages() : std::span<const Shader::Info* const>{};
     // Constants: copied here into the ring, the recording thread only binds them.
@@ -1163,6 +1151,7 @@ bool Rasterizer::FilterDrawPasses() const {
 
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
+    MaybeSubmitEarly();
     BbStats::draws.fetch_add(1, std::memory_order_relaxed);
 
     // bbport: with the draw pipeline this thread only selects the pipeline and hands the draw
@@ -1367,6 +1356,12 @@ const char* LiveShaderDebugFile() {
 LiveShaderDebug& LiveDebug() {
     static LiveShaderDebug state;
     const char* path = LiveShaderDebugFile();
+    // Called for every draw (SkipShader): the clock is read once every 256 calls of a thread
+    // (U1 chapter 2: QueryPerformanceCounter per draw was 1.6% of the draw recording thread).
+    static thread_local u32 calls = 0;
+    if (!path || (++calls & 255) != 1) {
+        return state;
+    }
     const s64 now = std::chrono::steady_clock::now().time_since_epoch().count();
     if (!path || now < state.next_read_ns.load(std::memory_order_relaxed) ||
         !state.read_mutex.try_lock()) {
@@ -1910,6 +1905,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
                               u32 max_count, VAddr count_address, u16 vertex_sgpr_offset,
                               u16 instance_sgpr_offset) {
     RENDERER_TRACE;
+    MaybeSubmitEarly();
     // bbport: like direct draws, handed to the recording thread after the pipeline selection
     // (else the GPU thread waited here for a whole frame of queued draws).
     const bool pipelined = UseDrawPipe() && FilterDrawPasses() &&
@@ -2578,7 +2574,47 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     scheduler.KickRecording();
 }
 
+void Rasterizer::MaybeSubmitEarly() {
+    // bbport (from the Bloodborne port, 5571243 and 453c6c5): the GPU thread submitted a frame's
+    // work once, at its end, so the GPU began only after the whole frame was recorded, and the
+    // read backs of Uncharted 2's fixes waited for all of it. Now what is recorded goes at least
+    // every millisecond and 48 draws. Off on AMD, where it was slower in Bloodborne (RX 9070 XT:
+    // 106 -> 90 FPS); BB_EARLY_SUBMIT=force turns it on there too, 0 off everywhere. On by
+    // default: U3 Cartagena square (RTX 5080) 94.7 -> 102.4 FPS median, slowest 5 s 59.7 -> 94.3;
+    // U2 on an RTX 4070 Laptop 56.3 -> 67.9 (mato215).
+    static const bool enabled = [this] {
+        const char* env = std::getenv("BB_EARLY_SUBMIT");
+        const bool force = env && std::strcmp(env, "force") == 0;
+        if (env && env[0] == '0') {
+            std::printf("Early submit: off (BB_EARLY_SUBMIT=0)\n");
+            return false;
+        }
+        if (instance.GetVendorID() == 0x1002 && !force) {
+            std::printf("Early submit: off on AMD (slower there; BB_EARLY_SUBMIT=force turns it on)\n");
+            return false;
+        }
+        std::printf("Early submit: on\n");
+        return true;
+    }();
+    if (!enabled) {
+        return;
+    }
+    // At least a millisecond of recording and a few draws per part: each submission waits for
+    // the recording thread, so many small ones would cost more than the GPU gains.
+    constexpr u32 MinDraws = 48;
+    constexpr auto MinTime = std::chrono::microseconds(1000);
+    if (++draws_since_submit < MinDraws) {
+        return;
+    }
+    if (std::chrono::steady_clock::now() - last_submit < MinTime) {
+        return;
+    }
+    Flush();
+}
+
 u64 Rasterizer::Flush() {
+    draws_since_submit = 0;
+    last_submit = std::chrono::steady_clock::now();
     DrainDrawPipe();
     const u64 current_tick = scheduler.CurrentTick();
     SubmitInfo info{};
@@ -3095,7 +3131,16 @@ void Rasterizer::ResetBindings(bool is_compute) {
     for (auto& image_id : bound_images) {
         texture_cache.GetImage(image_id).binding = {};
     }
+    // bbport (UntrackedStreamReads): the stream buffer is written by the host only, at a new
+    // offset every time, and never by the GPU; its reads need no barrier tracking (U1 chapter 2:
+    // the read inserts were ~7% of the draw recording thread).
+    const VideoCore::Buffer* stream =
+        BbToggle::Disabled(BbToggle::UntrackedStreamReads) ? nullptr
+                                                           : &buffer_cache.GetStreamBuffer();
     for (const auto [buffer, offset, size, is_written] : bound_buffers) {
+        if (buffer == stream && !is_written) {
+            continue;
+        }
         const auto dst_stage = is_compute ? vk::PipelineStageFlagBits2::eComputeShader
                                           : vk::PipelineStageFlagBits2::eAllGraphics;
         const auto write_flag =
@@ -3740,10 +3785,12 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         }
 
         const Shader::MipStorageFallbackMode mip_fallback_mode = image_desc.mip_fallback_mode;
-        // Same as image_desc.NumBindings(stage), without fetching the T# again.
+        // Same as image_desc.NumBindings(stage), without fetching the T# again. Levels reversed (a
+        // broken T#): 1, not the ~4e9 the unsigned difference gives (BilalReloaded's port 0.8.3, via
+        // El Dorado 778cc70c; like layout_count above).
         const u32 num_bindings =
             mip_fallback_mode == Shader::MipStorageFallbackMode::DynamicIndex
-                ? static_cast<u32>(tsharp.last_level - tsharp.base_level + 1)
+                ? Shader::ImageResource::MipBindingCount(tsharp)
                 : 1u;
         const bool proxy_candidate = sample_proxies && num_bindings == 1 &&
                                      !image_desc.needs_native && !image_desc.is_written &&
