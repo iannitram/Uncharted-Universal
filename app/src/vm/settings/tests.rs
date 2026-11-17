@@ -286,6 +286,33 @@ fn a_profile_change_fits_the_values_to_it() {
 }
 
 #[test]
+fn raw_mouse_settings_survive_display_changes_and_obey_the_limits() {
+    let stored = Stored {
+        mouse: input_settings::Settings::new(true, 2.37),
+        ..Stored::default()
+    };
+    let mut vm = SettingsVm::new(stored.clone(), desktop(), None);
+    assert_eq!(vm.stored().mouse, stored.mouse);
+    vm.click(0, 1); // A display card must keep the input values.
+    vm.click(2, 1); // So must a device profile change.
+    assert_eq!(vm.stored().mouse, stored.mouse);
+    vm.click(8, 0);
+    assert!(!vm.stored().mouse.raw);
+    vm.handle(Input::Activate);
+    assert!(vm.stored().mouse.raw);
+    for _ in 0..300 {
+        vm.click(9, 0);
+    }
+    assert_eq!(vm.stored().mouse.sensitivity(), "0.10");
+    assert_eq!(vm.click(9, 0), SettingsCommand::None);
+    for _ in 0..300 {
+        vm.handle(Input::Move(Nav::Right));
+    }
+    assert_eq!(vm.stored().mouse.sensitivity(), "3.00");
+    assert_eq!(vm.handle(Input::Move(Nav::Right)), SettingsCommand::None);
+}
+
+#[test]
 fn tune_runs_once_and_takes_the_result() {
     let mut vm = SettingsVm::new(Stored::default(), desktop(), None);
     assert!(vm
@@ -353,7 +380,8 @@ fn back_and_tab() {
     vm.handle(Input::Tab { back: true });
     vm.handle(Input::Tab { back: true });
     vm.handle(Input::Tab { back: true });
-    assert_eq!(vm.focus(), Grid::at(7, 0));
+    // Last row: raw aim sensitivity.
+    assert_eq!(vm.focus(), Grid::at(9, 0));
     // LB and RB do nothing here.
     assert_eq!(vm.handle(Input::NextGame), SettingsCommand::None);
 }

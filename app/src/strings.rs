@@ -1,6 +1,6 @@
 //! The app's texts in the seven languages of the Python launcher (`LANGUAGES` in
-//! `launcher/uncharted_i18n.py`), English first. Only the after-crash screen's texts live here
-//! so far. Piece 2.09 put the other pages' texts in the gettext catalogues (`app/lang/`); these
+//! `launcher/uncharted_i18n.py`), English first. The after-crash screen and raw mouse settings
+//! live here. Piece 2.09 put the other pages' texts in the gettext catalogues (`app/lang/`); these
 //! move there too in a follow-up, and until then follow the chosen interface language through
 //! [`Lang::of`]. `{}` in a text is filled with [`fill`].
 
@@ -57,7 +57,7 @@ impl Lang {
     }
 }
 
-/// One text of the after-crash screen.
+/// One text of the after-crash screen or raw mouse settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Text {
     Heading,
@@ -75,12 +75,14 @@ pub enum Text {
     Copied,
     SaveFailed,
     StartFailed,
+    RawMouse,
+    AimSensitivity,
 }
 
 impl Text {
     /// Every text, for the tests.
     #[cfg(test)]
-    pub const ALL: [Text; 15] = [
+    pub const ALL: [Text; 17] = [
         Text::Heading,
         Text::Chapter,
         Text::NoChapter,
@@ -96,11 +98,31 @@ impl Text {
         Text::Copied,
         Text::SaveFailed,
         Text::StartFailed,
+        Text::RawMouse,
+        Text::AimSensitivity,
     ];
 
     /// The text in `lang`: English, Spanish, Portuguese, French, German, Italian, Japanese.
     pub fn get(self, lang: Lang) -> &'static str {
         let all: [&'static str; 7] = match self {
+            Text::RawMouse => [
+                "Raw mouse aiming and cover camera (Uncharted 1 and 2)",
+                "Apuntado y cámara de cobertura con ratón directo (Uncharted 1 y 2)",
+                "Mira e câmera de cobertura com mouse direto (Uncharted 1 e 2)",
+                "Visée et caméra à couvert à la souris directe (Uncharted 1 et 2)",
+                "Zielen und Deckungskamera mit direkter Maus (Uncharted 1 und 2)",
+                "Mira e telecamera in copertura con mouse diretto (Uncharted 1 e 2)",
+                "マウス直接入力のエイムとカバー時カメラ（Uncharted 1・2）",
+            ],
+            Text::AimSensitivity => [
+                "Aim sensitivity (raw mouse)",
+                "Sensibilidad al apuntar (ratón directo)",
+                "Sensibilidade da mira (mouse direto)",
+                "Sensibilité de visée (souris directe)",
+                "Zielempfindlichkeit (direkte Maus)",
+                "Sensibilità della mira (mouse diretto)",
+                "エイム感度（マウス直接入力）",
+            ],
             Text::Heading => [
                 "The game stopped",
                 "El juego se detuvo",

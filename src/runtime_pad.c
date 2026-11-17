@@ -332,6 +332,7 @@ static pthread_mutex_t camera_lock=PTHREAD_MUTEX_INITIALIZER;
  * gets all of it (the follow camera does not read the joypad's right stick values, the other
  * cameras do not use the follow camera's direction). */
 static float camera_dx[2], camera_dy[2];
+static uint64_t camera_sample; /* input sample owning the queued motion; protected by camera_lock */
 /* Raw mouse (input.ini mouse_raw=1, Uncharted 1 and 2 US 1.02; from Umar-Qayyum-dev's pull request
  * #561). Without it the mouse reaches the aiming camera and the cover camera only as a right stick
  * value, held to the stick's top speed (about 46 degrees/s while aiming). With it:
@@ -353,16 +354,17 @@ static int mouse_debug(void) {
     if (on<0) on=getenv("BB_MOUSE_DEBUG")!=NULL;
     return on;
 }
-static int camera_take(int queue, float *dx, float *dy) {
+static uint64_t camera_take(int queue, float *dx, float *dy) {
     pthread_mutex_lock(&camera_lock);
     *dx=camera_dx[queue]; *dy=camera_dy[queue];
     camera_dx[queue]=camera_dy[queue]=0;
+    const uint64_t sample=camera_sample;
     pthread_mutex_unlock(&camera_lock);
     if (camera_test_rate<0.0f) {
         const char *test=getenv("BB_MOUSE_CAMERA_TEST");
         camera_test_rate=test ? (float)atof(test) : 0.0f;
     }
-    return 1;
+    return sample;
 }
 /* The follow camera's collision/position update runs once a frame with the camera object (U1
  * 1.00 and 1.02; U2 and U3 have the same function, in code compiled differently in each build, so the
@@ -416,18 +418,39 @@ static FollowState *follow_state(uint64_t camera, uint64_t now) {
     *slot=(FollowState){.camera=camera,.last_us=now};
     return slot;
 }
-/* Raw mouse: every camera updated in the same frame gets the frame's mouse motion (the follow
- * cameras of a blend, and the cover camera blending with them), so they turn together. A new frame
- * starts when the camera that took the motion comes again, or after 50 ms (1.5 frames at 30 FPS). */
+/* Raw mouse: drain new motion on every callback, and remember what each blending camera has
+ * received. Ownership can change between frames; waiting for the first camera to return leaves
+ * fresh motion queued and replays its old share. A camera joining a blend without fresh input
+ * gets this input sample's batch once, never a stale batch from an earlier sample. An idle gap
+ * or a new aim press starts with no remembered motion. */
 static void frame_motion(uint64_t camera, uint64_t now, float *dx, float *dy) {
-    static uint64_t frame_take_us, frame_camera;
-    static float frame_dx, frame_dy;
-    if (camera==frame_camera || now-frame_take_us>50000) {
-        camera_take(0,&frame_dx,&frame_dy);
-        frame_take_us=now;
-        frame_camera=camera;
+    static uint64_t last_us, session_press, last_sample;
+    static float total_x, total_y, batch_x, batch_y;
+    static struct { uint64_t camera, last_us; float x, y; int used; } given[4];
+    if (!last_us || now-last_us>50000 || session_press!=aim_press_us) {
+        total_x=total_y=batch_x=batch_y=0.0f;
+        memset(given,0,sizeof(given));
+        session_press=aim_press_us;
     }
-    *dx=frame_dx; *dy=frame_dy;
+    last_us=now;
+    float fresh_x, fresh_y;
+    const uint64_t sample=camera_take(0,&fresh_x,&fresh_y);
+    if (sample!=last_sample) { batch_x=batch_y=0.0f; last_sample=sample; }
+    total_x+=fresh_x; total_y+=fresh_y;
+    const int fresh=fresh_x!=0.0f || fresh_y!=0.0f;
+    if (fresh) { batch_x=fresh_x; batch_y=fresh_y; }
+    int slot=0;
+    for (int i=0;i<4;++i) {
+        if (given[i].used && given[i].camera==camera) { slot=i; break; }
+        if (given[i].last_us<given[slot].last_us) slot=i;
+    }
+    if (given[slot].used && given[slot].camera==camera) {
+        *dx=total_x-given[slot].x; *dy=total_y-given[slot].y;
+    } else {
+        *dx=fresh ? fresh_x : batch_x; *dy=fresh ? fresh_y : batch_y;
+    }
+    given[slot].camera=camera; given[slot].last_us=now; given[slot].used=1;
+    given[slot].x=total_x; given[slot].y=total_y;
 }
 static volatile float follow_correction;  /* degrees the direction is short of the wanted heading */
 static volatile float follow_push;        /* the right stick while the direction turns (-0.3, 0, 0.3) */
@@ -692,8 +715,6 @@ static void raw_aim(const char *game, uint64_t controller, const RuntimeGuestReg
     static uint64_t session_press;
     static float turned_yaw, turned_pitch; /* the mouse's turns in this aim press (degrees) */
     static struct { uint64_t controller, last_us; float yaw, pitch; } given[4];
-    static float last_dir[3];
-    static int have_last;
     if (session_press!=aim_press_us) {
         session_press=aim_press_us;
         turned_yaw=turned_pitch=0.0f;
@@ -705,15 +726,10 @@ static void raw_aim(const char *game, uint64_t controller, const RuntimeGuestReg
         if (given[i].controller==controller) { slot=i; break; }
         if (given[i].last_us<given[slot].last_us) slot=i;
     }
-    /* A new controller that starts where the last one ended (U1 swaps aiming cameras while aiming)
-     * copied the turns already; one that starts elsewhere (after a roll: the game's own direction)
-     * gets them. */
+    /* Controller identity, not direction proximity, determines which turns were already given. */
     if (given[slot].controller!=controller) {
         given[slot].controller=controller;
         given[slot].yaw=given[slot].pitch=0.0f;
-        if (have_last && dir[0]*last_dir[0]+dir[1]*last_dir[1]+dir[2]*last_dir[2]>0.9986f) { /* within 3 degrees */
-            given[slot].yaw=turned_yaw; given[slot].pitch=turned_pitch;
-        }
     }
     given[slot].last_us=now;
     if (dx!=0.0f || dy!=0.0f) {
@@ -725,7 +741,6 @@ static void raw_aim(const char *game, uint64_t controller, const RuntimeGuestReg
     if ((yaw==0.0f && pitch==0.0f) || aim_turn(dir,yaw,pitch)) {
         given[slot].yaw=turned_yaw; given[slot].pitch=turned_pitch;
     }
-    last_dir[0]=dir[0]; last_dir[1]=dir[1]; last_dir[2]=dir[2]; have_last=1;
 }
 static void __attribute__((ms_abi)) u1_aim_controller(uint64_t output, uint64_t controller, uint64_t image, uint64_t r14,
                                                       const RuntimeGuestRegs *regs) {
@@ -1509,6 +1524,7 @@ static void sample_host(PadData *d) {
     const int joypad=sticks_hook_us && now-sticks_hook_us<100000;
     const int cover=cover_hook_us && now-cover_hook_us<100000;   /* raw mouse only */
     const int raw_aiming=raw_aim_armed(now);                     /* raw mouse only */
+    ++camera_sample;
     for (int q=0;q<2;++q) {
         if (captured && (following || joypad || cover)) { camera_dx[q]+=mdx; camera_dy[q]+=mdy; }
         else { camera_dx[q]=camera_dy[q]=0; }

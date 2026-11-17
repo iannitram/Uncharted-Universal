@@ -7,10 +7,10 @@
 // everything while `mode` is 1. About (2.09) is drawn over the Continue screen while `page` is 3,
 // and Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; the after-crash
 // screen (2.07, area 9) while it is 5. Their texts are `@tr(...)`, translated by the catalogues
-// in lang/ (src/lang.rs), except the after-crash screen's, which come from src/strings.rs. The
+// in lang/ (src/lang.rs), except the after-crash screen and raw mouse settings, from src/strings.rs. The
 // Continue screen's texts are English until they are in the catalogues.
 
-import { AboutSlint, LineEdit, ScrollView } from "std-widgets.slint";
+import { AboutSlint, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
 
 export struct PatchRow {
     name: string,
@@ -81,6 +81,8 @@ export struct ChoiceData {
     value: string,
     can-prev: bool,
     can-next: bool,
+    checkbox: bool,
+    checked: bool,
 }
 
 global Theme {
@@ -1101,14 +1103,27 @@ export component AppWindow inherits Window {
                                 padding-left: root.unit * 0.6;
                                 padding-right: root.unit * 0.6;
                                 spacing: root.unit * 0.6;
+                                if choice.checkbox: CheckBox {
+                                    checked: choice.checked;
+                                    accessible-label: choice.label;
+                                    toggled => {
+                                        root.page-clicked(r + 2, self.checked ? 1 : 0);
+                                        keys.focus();
+                                    }
+                                }
                                 Text {
                                     text: choice.label;
                                     color: Theme.text;
                                     font-size: root.unit;
                                     vertical-alignment: center;
                                     horizontal-stretch: 1;
+                                    wrap: word-wrap;
+                                    TouchArea {
+                                        enabled: choice.checkbox;
+                                        clicked => { root.page-clicked(r + 2, choice.checked ? 0 : 1); }
+                                    }
                                 }
-                                Text {
+                                if !choice.checkbox: Text {
                                     text: "<";
                                     color: choice.can-prev ? Theme.text : Theme.edge;
                                     font-size: root.unit * 1.2;
@@ -1119,7 +1134,7 @@ export component AppWindow inherits Window {
                                         }
                                     }
                                 }
-                                Text {
+                                if !choice.checkbox: Text {
                                     text: choice.value;
                                     color: Theme.text;
                                     font-size: root.unit;
@@ -1128,7 +1143,7 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                     min-width: root.unit * 12;
                                 }
-                                Text {
+                                if !choice.checkbox: Text {
                                     text: ">";
                                     color: choice.can-next ? Theme.text : Theme.edge;
                                     font-size: root.unit * 1.2;

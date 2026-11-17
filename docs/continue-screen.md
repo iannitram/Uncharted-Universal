@@ -6,6 +6,17 @@ Roadmap 2.01 (#288), for Must M10. Status: **draft, waiting for the owner's 'app
 
 It is the first thing the player sees on every start: the Steam shortcut (M13) opens the launcher, and the launcher opens here. From Game Mode, **A starts the game in one press** (the M10 check). It is full screen in Game Mode (the AMD handheld and the Strix Halo tablet) and a window on the desktop (at least 640 x 400, the 2.03 scaffold's minimum); mouse and keyboard work everywhere a controller does. First run (2.05) comes before it until setup is done, and the after-crash screen (2.07) comes before it after a crash. Saves, Settings, Fleet and About (2.06, 2.08, 2.09) are one button away.
 
+The Settings page includes **Raw mouse aiming and cover camera (Uncharted 1 and 2)**, a
+checkbox that defaults to off, and **Aim sensitivity (raw mouse)**, from 0.10 to 3.00
+(default 1.00). A/Space toggles the focused checkbox; Left/Right or the sensitivity row's
+arrows change sensitivity in steps of 0.01. Both controls also accept mouse clicks. Changes
+save immediately to `<data>/input.ini` as `mouse_raw=0|1` and
+`mouse_aim_sensitivity=<x.xx>`, creating the file if needed and preserving all other keys,
+lines and comments written by the Python launcher. Opening Settings reads the file again.
+The runtime reads these values when the game starts; raw aiming and cover require U1/U2
+US 1.02. These two labels follow the selected interface language in English, Spanish,
+Portuguese, French, German, Italian and Japanese.
+
 ## Layout, all states
 
 ```

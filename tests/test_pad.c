@@ -52,6 +52,97 @@ static void inject(const char *path, const char *tokens) {
     usleep(25000);
 }
 
+static void test_aim_controller_handoff(void) {
+    uint64_t frame[13]={0};
+    const RuntimeGuestRegs *regs=(const RuntimeGuestRegs *)frame;
+    const uint64_t image=0x10000;
+    frame[12]=image+0xc4c57;
+    float a[3]={0,0,-1}, b[3]={0,0,-1};
+    input.mouse_raw=1;
+    input.mouse_sensitivity=input.mouse_aim_sensitivity=1.0f;
+    aim_held=1; aim_press_us=100;
+    frame[9]=(uint64_t)(uintptr_t)a;
+    aim_dx=10; aim_dy=0;
+    raw_aim("U1",0x1000,regs,image,0xc4c57);
+    frame[9]=(uint64_t)(uintptr_t)b;
+    raw_aim("U1",0x2000,regs,image,0xc4c57);
+    assert(SDL_fabsf(heading_of(a)+1.5f)<0.01f);
+    assert(SDL_fabsf(heading_of(b)+1.5f)<0.01f);
+    /* Repeated calls get no duplicate turn; later motion reaches both controllers once. */
+    raw_aim("U1",0x2000,regs,image,0xc4c57);
+    assert(SDL_fabsf(heading_of(b)+1.5f)<0.01f);
+    aim_dx=10;
+    raw_aim("U1",0x2000,regs,image,0xc4c57);
+    frame[9]=(uint64_t)(uintptr_t)a;
+    raw_aim("U1",0x1000,regs,image,0xc4c57);
+    assert(SDL_fabsf(heading_of(a)+3.0f)<0.01f);
+    assert(SDL_fabsf(heading_of(b)+3.0f)<0.01f);
+}
+
+static void test_aim_next_press(void) {
+    uint64_t frame[13]={0};
+    const RuntimeGuestRegs *regs=(const RuntimeGuestRegs *)frame;
+    const uint64_t image=0x10000;
+    frame[12]=image+0xc4c57;
+    float a[3]={0,0,-1}, b[3]={0,0,-1};
+    frame[9]=(uint64_t)(uintptr_t)a;
+    aim_held=0;
+    raw_aim("U1",0x1000,regs,image,0xc4c57);
+    aim_held=1; ++aim_press_us;
+    raw_aim("U1",0x1000,regs,image,0xc4c57);
+    frame[9]=(uint64_t)(uintptr_t)b;
+    raw_aim("U1",0x3000,regs,image,0xc4c57);
+    assert(SDL_fabsf(heading_of(a))<0.01f && SDL_fabsf(heading_of(b))<0.01f);
+    aim_dx=4;
+    raw_aim("U1",0x3000,regs,image,0xc4c57);
+    frame[9]=(uint64_t)(uintptr_t)a;
+    raw_aim("U1",0x1000,regs,image,0xc4c57);
+    assert(SDL_fabsf(heading_of(a)+0.6f)<0.01f);
+    assert(SDL_fabsf(heading_of(b)+0.6f)<0.01f);
+    aim_held=0;
+}
+
+static void test_frame_owner_handoff(void) {
+    float dx,dy;
+    camera_dx[0]=10; camera_dy[0]=0;
+    frame_motion(0x1000,1000000,&dx,&dy);
+    assert(dx==10 && dy==0 && camera_dx[0]==0);
+    camera_dx[0]=20;
+    frame_motion(0x2000,1016667,&dx,&dy);
+    assert(dx==20 && dy==0 && camera_dx[0]==0);
+    camera_dx[0]+=30;
+    frame_motion(0x2000,1033334,&dx,&dy);
+    assert(dx==30 && dy==0 && camera_dx[0]==0);
+    frame_motion(0x2000,1033335,&dx,&dy);
+    assert(dx==0 && dy==0);
+    /* The other half of a blend still receives each turn once when it returns. */
+    frame_motion(0x1000,1033336,&dx,&dy);
+    assert(dx==50 && dy==0);
+    frame_motion(0x1000,1033337,&dx,&dy);
+    assert(dx==0 && dy==0);
+    ++camera_sample; /* next frame's input sample has no motion */
+    frame_motion(0x4000,1050001,&dx,&dy);
+    assert(dx==0 && dy==0 && camera_dx[0]==0); /* no stale share for a new owner */
+}
+
+static void test_frame_next_press(void) {
+    float dx,dy;
+    camera_dx[0]=8;
+    frame_motion(0x4000,1050002,&dx,&dy);
+    assert(dx==8 && dy==0);
+    aim_held=1; ++aim_press_us;
+    frame_motion(0x3000,1050003,&dx,&dy);
+    assert(dx==0 && dy==0 && camera_dx[0]==0);
+    camera_dx[0]=4; camera_dy[0]=-2;
+    frame_motion(0x3000,1066670,&dx,&dy);
+    assert(dx==4 && dy==-2 && camera_dx[0]==0 && camera_dy[0]==0);
+    frame_motion(0x2000,1066671,&dx,&dy);
+    assert(dx==4 && dy==-2); /* a camera joining this blend */
+    frame_motion(0x2000,1066672,&dx,&dy);
+    assert(dx==0 && dy==0);
+    aim_held=0;
+}
+
 int main(void) {
     char path[]="bbport-pad-test-XXXXXX";
     int fd=mkstemp(path);
@@ -199,6 +290,10 @@ int main(void) {
     assert(wheel==0); /* one step, once */
     /* Raw mouse (#393). */
     {
+        test_aim_controller_handoff();
+        test_aim_next_press();
+        test_frame_owner_handoff();
+        test_frame_next_press();
         input.mouse_sensitivity=1.0f; input.mouse_aim_sensitivity=1.0f;
         aim_held=0;
         const size_t camera_size=0xa000;
@@ -294,4 +389,5 @@ int main(void) {
     unlink(path);
     unlink(config);
     puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch, vibration controls, overlay capture, second gamepad, mirrored keys and wheel, raw mouse");
+    return 0;
 }

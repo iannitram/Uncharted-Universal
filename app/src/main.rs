@@ -9,7 +9,7 @@
 //!
 //! The view models are `screen.rs` and `vm/` (tested without a window); this file draws their
 //! views into the Slint window and carries out their commands, the files through `pages_io.rs`
-//! and `settings_store.rs`. Continue and Play run
+//! and `settings_store.rs` (display) or `input_settings.rs` (raw mouse in `input.ini`). Continue and Play run
 //! `uncharted-universal play <game>` (the command line, roadmap 2.02) beside this program and
 //! wait for it: that command pulls the save, starts the game and pushes the save. Its output
 //! goes to `<logs>/last_run.log`; when the run crashed, the after-crash screen (2.07,
@@ -38,6 +38,7 @@ mod card;
 mod firstrun;
 mod focus;
 mod input;
+mod input_settings;
 mod lang;
 mod load;
 mod pages_io;
@@ -501,7 +502,7 @@ fn apply_saves(window: &AppWindow, view: &SavesView) {
 }
 
 /// Draw the Settings page.
-fn apply_settings(window: &AppWindow, view: &SettingsView) {
+fn apply_settings(window: &AppWindow, view: &SettingsView, lang: strings::Lang) {
     window.set_tune_cards(model(
         view.cards
             .iter()
@@ -516,10 +517,19 @@ fn apply_settings(window: &AppWindow, view: &SettingsView) {
         view.choices
             .iter()
             .map(|choice| ChoiceData {
-                label: choice.label.as_str().into(),
+                label: match choice.label.as_str() {
+                    "Raw mouse aiming and cover camera (Uncharted 1 and 2)" => {
+                        strings::Text::RawMouse.get(lang)
+                    }
+                    "Aim sensitivity (raw mouse)" => strings::Text::AimSensitivity.get(lang),
+                    label => label,
+                }
+                .into(),
                 value: choice.value.as_str().into(),
                 can_prev: choice.can_prev,
                 can_next: choice.can_next,
+                checkbox: choice.label == vm::settings::Choice::RawMouse.label(),
+                checked: choice.value == "1",
             })
             .collect(),
     ));
@@ -601,7 +611,11 @@ impl Ui {
         match &*shown {
             Shown::Continue => {}
             Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
-            Shown::Settings(vm) => apply_settings(&window, &vm.view()),
+            Shown::Settings(vm) => apply_settings(
+                &window,
+                &vm.view(),
+                strings::Lang::of(self.lang.borrow().language()),
+            ),
         }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
@@ -1208,10 +1222,22 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             },
             Cmd::Screen(Command::Open(Page::Settings)) => {
-                let stored = config
+                let mut stored = config
                     .as_deref()
                     .map(settings_store::load)
                     .unwrap_or_default();
+                let mouse = ui
+                    .folders
+                    .as_ref()
+                    .map(|folders| input_settings::load(&folders.dirs.data));
+                let mouse_error = match mouse {
+                    Some(Ok(mouse)) => {
+                        stored.mouse = mouse;
+                        None
+                    }
+                    Some(Err(err)) => Some(format!("Could not read input.ini: {err}")),
+                    None => None,
+                };
                 let tune = config
                     .as_deref()
                     .and_then(pages_io::load_cache)
@@ -1222,7 +1248,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         )
                         .ok()
                     });
-                ui.show(Shown::Settings(SettingsVm::new(stored, detected, tune)));
+                let mut vm = SettingsVm::new(stored, detected, tune);
+                if let Some(err) = mouse_error {
+                    vm.set_status(&err);
+                }
+                ui.show(Shown::Settings(vm));
             }
             Cmd::Screen(Command::Open(page)) => {
                 ui.screen.borrow_mut().set_status(&page_status(page));
@@ -1305,9 +1335,14 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             Cmd::Settings(SettingsCommand::Save(stored)) => {
                 let saved = match &config {
-                    Some(config) => {
-                        settings_store::save(config, &stored).map_err(|e| e.to_string())
-                    }
+                    Some(config) => settings_store::save(config, &stored)
+                        .and_then(|()| {
+                            let folders = ui.folders.as_ref().ok_or_else(|| {
+                                std::io::Error::other("no input settings folder on this device")
+                            })?;
+                            input_settings::save(&folders.dirs.data, stored.mouse)
+                        })
+                        .map_err(|e| e.to_string()),
                     None => Err("no settings folder on this device".to_owned()),
                 };
                 if let Err(err) = saved {
@@ -1621,7 +1656,7 @@ mod tests {
         assert_eq!(cards[1].title, "Balanced 60");
         assert!(cards[1].in_use);
         let choices: Vec<_> = window.get_choices().iter().collect();
-        assert_eq!(choices.len(), 6);
+        assert_eq!(choices.len(), 8);
         assert_eq!(
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
@@ -1633,6 +1668,17 @@ mod tests {
             commands.borrow().last(),
             Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "120"
         ));
+        // The raw mouse checkbox and sensitivity share mouse, keyboard and controller handling.
+        assert!(choices[6].checkbox && !choices[6].checked);
+        assert_eq!(choices[7].value, "1.00");
+        window.invoke_page_clicked(8, 1);
+        assert!(window.get_choices().row_data(6).unwrap().checked);
+        window.invoke_page_clicked(9, 1);
+        assert_eq!(window.get_choices().row_data(7).unwrap().value, "1.01");
+        assert!(
+            matches!(commands.borrow().last(), Some(Cmd::Settings(SettingsCommand::Save(stored)))
+            if stored.mouse.raw && stored.mouse.sensitivity() == "1.01")
+        );
         window.invoke_page_clicked(1, 0);
         assert_eq!(
             commands.borrow().last(),
