@@ -78,6 +78,10 @@ is needed. The separate Windows port is reference-only unless it matches an
 open bug's cause and a bounded C++ change. Older peer work and star/fork counts
 stay in the historical survey below.
 
+### Imported peer fixes
+
+- **#389, U1 shadow_mutex self-deadlock:** [Supermedo/uncharted_pc#841](https://github.com/Supermedo/uncharted_pc/pull/841) at [f83ab16a](https://github.com/Supermedo/uncharted_pc/commit/f83ab16a659b0c6c064d0fa5807b9142c6e8b31a) (open, unmerged; GPL-2.0). Imported 2026-11-16 with a review of the PR here: the shadow reads go through the backing view; the Linux backend gets the matching symbol.
+
 ## Earlier survey and adopted-work history
 
 The following notes retain the 2026-10-28 survey and the 2026-10-31 additions.

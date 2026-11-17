@@ -688,6 +688,34 @@ pub unsafe extern "C" fn runtime_memory_write_backing(
     })
 }
 
+/// Reads through the backing view (past guest and GPU page protection, so no fault); 0 when
+/// part of the range has no backing (the part before it is read).
+///
+/// # Safety
+/// `data` is writable for `size` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn runtime_memory_read_backing(
+    address: usize,
+    data: *mut c_void,
+    size: u64,
+) -> c_int {
+    let data = data.cast::<u8>();
+    memory().read(|s| {
+        let read = s.for_each_backing(address as u64, size, |phys, offset, n| {
+            // SAFETY: the target is the caller's `size` bytes; the source is backing of a mapped
+            // region (a mapped region implies the pool exists), inside the memfd view.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    s.host().backing(phys) as *const u8,
+                    data.add(offset as usize),
+                    n as usize,
+                )
+            };
+        });
+        c_int::from(read)
+    })
+}
+
 /// Mapped length from `address`, up to `size`, across adjacent mappings.
 #[no_mangle]
 pub extern "C" fn runtime_memory_clamp(address: usize, size: u64) -> u64 {
@@ -855,6 +883,17 @@ mod tests {
                 ((end - 8) as *const u64).read_volatile(),
                 0x5a5a_5a5a_5a5a_5a5a
             );
+            // The read-back matches the write, and a range that runs past the backing reads 0.
+            let mut back = [0u8; 8];
+            assert_eq!(
+                runtime_memory_read_backing((end - 8) as usize, back.as_mut_ptr().cast(), 8),
+                1
+            );
+            assert_eq!(back, tail);
+            assert_eq!(
+                runtime_memory_read_backing((end - 4) as usize, back.as_mut_ptr().cast(), 8),
+                0
+            );
             assert_eq!(
                 runtime_memory_write_backing((end - 4) as usize, tail.as_ptr().cast(), 8),
                 0
@@ -880,6 +919,11 @@ mod tests {
                 1
             );
             assert_eq!(((end - 8) as *const u64).read_volatile(), 0);
+            assert_eq!(
+                runtime_memory_read_backing((end - 8) as usize, back.as_mut_ptr().cast(), 8),
+                1
+            );
+            assert_eq!(back, [0u8; 8]);
             assert_eq!(direct_release(first as u64, 256 << 20), 0);
             assert_eq!(direct_release(second as u64, 64 << 20), 0);
         }
