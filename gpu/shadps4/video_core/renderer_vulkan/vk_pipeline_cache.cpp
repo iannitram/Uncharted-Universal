@@ -468,9 +468,8 @@ void PipelineCache::SaveDriverCache() {
     if (timed < 3) {
         ++timed;
         const auto done = std::chrono::steady_clock::now();
-        std::printf("Pipeline cache: the driver's cache data (%zu KiB) read in %.1f ms with pipeline "
-                    "creation held (%.1f ms waiting for the creations under way)
-",
+        std::printf("Pipeline cache: the driver's cache data (%zu KiB) read in %.1f ms with "
+                    "pipeline creation held (%.1f ms waiting for the creations under way)\n",
                     data.size() / 1024,
                     std::chrono::duration<double, std::milli>(done - read_start).count(),
                     std::chrono::duration<double, std::milli>(read_start - wait_start).count());
