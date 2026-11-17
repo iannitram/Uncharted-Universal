@@ -453,11 +453,27 @@ void PipelineCache::SaveDriverCache() {
     driver_cache_dirty.store(0);
     vk::Result result;
     std::vector<uint8_t> data;
+    const auto wait_start = std::chrono::steady_clock::now();
+    auto read_start = wait_start;
     {
         std::unique_lock cache_use{PipelineCacheUse()};
+        read_start = std::chrono::steady_clock::now();
         auto read = instance.GetDevice().getPipelineCacheData(*pipeline_cache);
         result = read.result;
         data = std::move(read.value);
+    }
+    // The first saves: how long pipeline creation was held, and how long the save waited for the
+    // creations under way (from the peer's f1a466fd).
+    static int timed = 0;
+    if (timed < 3) {
+        ++timed;
+        const auto done = std::chrono::steady_clock::now();
+        std::printf("Pipeline cache: the driver's cache data (%zu KiB) read in %.1f ms with pipeline "
+                    "creation held (%.1f ms waiting for the creations under way)
+",
+                    data.size() / 1024,
+                    std::chrono::duration<double, std::milli>(done - read_start).count(),
+                    std::chrono::duration<double, std::milli>(read_start - wait_start).count());
     }
     if (result != vk::Result::eSuccess || data.empty()) {
         return;
