@@ -51,16 +51,25 @@ Established from source and synthetic tests alone: the bbcpu interpreter and tra
 1. **Coverage** (per title, owner-run): fraction of executed functions the AOT path covers, and whether the interpreter can serve the remainder at playable speed. Unsupported-instruction behaviour must be a clean refusal, not silent wrong results.
 2. **ABI**: bbcpu and the renderer are C/C++/ObjC. They must sit behind a narrow C ABI called from our Rust runtime (SPEC M20); the generated-library entry points, host-call bridge, TLS, callbacks and thread model must be expressible without per-title patches in the shared layer. Bloodborne-specific fixed addresses (guest ranges, the `0x7020000000` mapping) must become configuration.
 3. **Memory**: iOS per-app limits and no-copy GPU mapping measured per device class with `os_proc_available_memory`, in boot, load, sustained play, memory pressure and suspend/resume. Do not reuse any Bloodborne figure.
-4. **Licence**: see allowlist. Linking GPL code into the runtime makes the distributed Apple build GPL-governed; the owner must confirm that is acceptable before any adoption. App Store distribution of GPL code is a separate legal question to be settled before choosing a route; this document gives no conclusion on it.
+4. **Licence**: see allowlist. Linking GPL code into the runtime makes the distributed Apple build GPL-governed. **Resolved 2026-11-16 (owner, recorded in #396):** asked whether the Apple build may be GPL-governed, the owner answered "Yes, GPL is fine (Recommended)": "may adopt the allowlisted GPL-2.0 files (never bbnet20's GPL-3.0 code), with SPDX lines and notices kept." App Store distribution of GPL code is a separate legal question to be settled before choosing a route; this document gives no conclusion on it.
 5. **Signing** (verify against current Apple documentation and measured behaviour): macOS Hardened Runtime needs `com.apple.security.cs.allow-jit` for any runtime translator; iOS provides no JIT for ordinary apps, so the shipped path must be AOT library plus interpreter, with the library an ordinary build-time app input. Install is by the owner's own provisioning (Xcode signing over a cable). Expiry, entitlements for extra memory and any distribution route are open.
 
-## Legal allowlist (candidates only; nothing adopted)
+## Legal allowlist (what tests link; nothing vendored)
 
 Eligible after a per-file review and a recorded revision: bbcpu `src/cpu/*` (root GPL-2.0; confirm the intended "or later" terms with the author before mixing with GPL-2.0-or-later files), bbcpu generic tests and `tools/cpu` scripts, `tools/recomp/*.sh` and `bbrecomp.c` as recipes (without the annotations they consume), `bloodborne-ios` `metal_test.m` pattern, and renderer files marked `SPDX-License-Identifier: GPL-2.0-or-later` under `gpu/shadps4`, `gpu/shim`, `gpu/layer`, `gpu/cp`, and `gpu/bbnet` (all files listed by SPDX; vendored shadPS4 core is GPL-2.0-or-later).
 
 Per-component licences found in the runtime `gpu/` tree, each to be re-checked file by file before use: `gpu/shadps4` (GPL-2.0 text), `gpu/third_party/sirit`, `half`, `httplib`, fonts (Cinzel, DejaVu, Inter each with its own licence file), `gpu/dlss_bridge` (MIT), `gpu/fsr4_metal` (mixed MIT and GPL-2.0-or-later headers). Submodules `fsr-vulkan`, `imgui` and `LibAtrac9` are empty in the checkout and unreviewed; their licences must be enumerated from their own revisions.
 
 **Excluded:** `gpu/bbnet20` (carries `LICENSE.GPL-3.0` and some GPL-3.0-or-later files, plus vendored content), and the dlss bridge and any proprietary-SDK-linked piece unless separately cleared. **Never copy:** `annotations/` (name tables for a specific title), offset/signature tables, generated C, patches, or any game-derived data. Keep only authored synthetic fixtures.
+
+Linked by the #212 test binary (built from a checkout or clone at the pinned revision, nothing copied into this repo; the SPDX lines and licence texts stay with those checkouts, and vendoring with notices is #396):
+
+| Component | Revision | Licence | Use |
+| --- | --- | --- | --- |
+| bbcpu `src/cpu/*.c`, `hostcall.S`, `bbcpu.h` | `3f9b6c1a11d5a443ee2e556a0d1f3aec4a73f0ca` | GPL-2.0 (root `LICENSE`) | interpreter linked into `tests/apple_nojit` |
+| Zydis (with bundled Zycore) | tag `v4.1.1` | MIT | x86 decoder bbcpu needs |
+
+The harness files in `tests/apple_nojit/` are authored here and include no bbcpu code; the test binary as a whole is GPL-2.0 when linked. The bbnet20 GPL-3.0 component is not used.
 
 ## Synthetic no-JIT coverage plan (for #212)
 
