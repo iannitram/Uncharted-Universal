@@ -67,8 +67,5 @@ fn artwork_file_names() {
 #[cfg(feature = "hub")]
 #[test]
 fn the_hub_module_exists_with_the_feature() {
-    assert_eq!(
-        uncharted_core::hub::SERVICE,
-        "_uncharted-universal._tcp.local."
-    );
+    assert_eq!(uncharted_core::hub::SERVICE, "_uncharted._tcp.local.");
 }

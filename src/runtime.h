@@ -19,7 +19,10 @@ typedef bb_jmp_buf sigjmp_buf;
  * (runtime_file_configure, _mount, _unmount, _translate, _open, _close, _read, _pread, _write,
  * _lseek, _stat, _fstat, _getdents, _user_dir, _resolve, _report: crates/runtime/src/file.rs, 3.09)
  * and the mutex, semaphore and rwlock resolvers and reports (runtime_mutex_resolve,
- * runtime_sema_report, runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). */
+ * runtime_sema_report, runtime_sema_waiters, ...: crates/runtime/src/sync.rs, 3.03). The kernel
+ * and services modules (runtime_kernel_resolve, runtime_guest_errno, the process clock,
+ * runtime_thread_keys_cleanup, runtime_services_resolve: crates/runtime/src/kernel.rs and
+ * services.rs, 3.11) are Rust as well. */
 #include "../crates/runtime/include/uncharted_runtime.h"
 /* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
 extern __thread sigjmp_buf *runtime_fault_recover;
@@ -40,13 +43,9 @@ void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uin
 void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
-uintptr_t runtime_kernel_resolve(const char *name);
-uintptr_t runtime_services_resolve(const char *name);
-void runtime_thread_keys_cleanup(void);
 /* The PS4's floating-point state for guest code on this thread (MXCSR, x87 control word). */
 void runtime_set_guest_fpu(void);
-/* Guest-visible errno values are FreeBSD's. */
-int32_t runtime_guest_errno(int host_errno);
+/* Guest-visible errno values are FreeBSD's; runtime_guest_errno is Rust (kernel.rs). */
 void *runtime_low_map(size_t size, int prot);
 /* Render resolution: guest-visible scratch memory for the GPU library (bbport_movie.cpp). */
 void *runtime_map_guest_memory(uint64_t size);

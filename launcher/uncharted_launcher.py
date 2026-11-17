@@ -45,15 +45,14 @@ NAME = 'Uncharted'
 AUTHOR = 'SuperMedo'
 # This build; GitHub release tags are v<VERSION> (their digits are compared).
 VERSION = '0.3.14'
-RELEASES_API = 'https://api.github.com/repos/Supermedo/uncharted_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/Supermedo/uncharted_pc/releases/latest'
-if not WINDOWS:  # Linux fork: its own releases (the Linux builds), tagged v<upstream>-linux.<n>
+# This repo publishes our releases on every platform (owner ruling: "Our repo, all OSes").
+RELEASES_API = 'https://api.github.com/repos/iannitram/Uncharted-Universal/releases/latest'
+RELEASES_PAGE = 'https://github.com/iannitram/Uncharted-Universal/releases/latest'
+if not WINDOWS:  # Linux fork: its Linux builds are tagged v<upstream>-linux.<n>
     try:
         VERSION = (PORT_DIR / 'LINUX_BUILD').read_text().strip() or VERSION
     except OSError:
         pass
-    RELEASES_API = 'https://api.github.com/repos/spacepepperoni/uncharted_Linux/releases/latest'
-    RELEASES_PAGE = 'https://github.com/spacepepperoni/uncharted_Linux/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'uncharted-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'art', 'bbport.ini', 'input.ini', 'last_run.log')

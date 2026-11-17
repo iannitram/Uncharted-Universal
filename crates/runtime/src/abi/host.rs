@@ -80,8 +80,6 @@ mod loader {
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
-        pub fn runtime_kernel_resolve(name: *const c_char) -> usize;
-        pub fn runtime_services_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
@@ -109,7 +107,9 @@ use crate::sync::ffi as sync;
 pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     use crate::content::ffi::runtime_content_resolve;
     use crate::file::ffi::runtime_file_resolve;
+    use crate::kernel::ffi::runtime_kernel_resolve;
     use crate::rtc::ffi::runtime_rtc_resolve;
+    use crate::services::ffi::runtime_services_resolve;
     use crate::time::ffi::runtime_time_resolve;
     use loader::*;
     let resolvers: [unsafe extern "C" fn(*const c_char) -> usize; 18] = [
@@ -152,6 +152,8 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| crate::time::resolve(name))
         .or_else(|| ask(sync::runtime_sema_resolve))
         .or_else(|| ask(sync::runtime_rwlock_resolve))
+        .or_else(|| crate::kernel::resolve(name))
+        .or_else(|| crate::services::resolve(name))
         .or_else(|| crate::rtc::resolve(name))
         .or_else(|| crate::audio::resolve(name))
         .or_else(|| crate::file::resolve(name))
@@ -205,12 +207,18 @@ pub(crate) fn quit(code: c_int) -> ! {
 #[cfg(not(uncharted_loader))]
 pub(crate) fn quit(code: c_int) -> ! {
     extern "C" {
-        fn fflush(stream: *mut File) -> c_int;
         fn _exit(code: c_int) -> !;
     }
-    // SAFETY: flushing every C stream and ending the process take no Rust state.
-    unsafe {
-        fflush(std::ptr::null_mut());
-        _exit(code)
+    flush();
+    // SAFETY: ending the process takes no Rust state.
+    unsafe { _exit(code) }
+}
+
+/// `fflush(NULL)`: every C output stream.
+pub(crate) fn flush() {
+    extern "C" {
+        fn fflush(stream: *mut File) -> c_int;
     }
+    // SAFETY: a null stream flushes every C stream; no Rust state is involved.
+    unsafe { fflush(std::ptr::null_mut()) };
 }

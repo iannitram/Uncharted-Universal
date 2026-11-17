@@ -41,6 +41,7 @@ extern "C" {
 // crates/runtime memory on Linux, runtime_memory.c on Windows
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
+int runtime_memory_read_backing(uintptr_t address, void* data, uint64_t size);
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size);
 int runtime_memory_region(uintptr_t address, uintptr_t* start, uintptr_t* end, int* mapped);
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
@@ -145,6 +146,9 @@ bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
         rasterizer->GetTextureCache().NoteBackingWrite(reinterpret_cast<VAddr>(address), size);
     }
     return written;
+}
+bool MemoryManager::TryReadBacking(const void* address, void* data, u64 size) {
+    return runtime_memory_read_backing(reinterpret_cast<uintptr_t>(address), data, size) != 0;
 }
 void AddressSpace::Protect(VAddr virtual_addr, u64 size, MemoryPermission perms) {
     BbStats::Timer timer{BbStats::t_protect};

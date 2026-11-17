@@ -186,7 +186,7 @@ done
 # with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only
 # libbbgpu.so asks for (memory's): --undefined makes the linker take them from the archive.
 rust=(out/rust/release/libuncharted_runtime.a)
-for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2; do
+for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing runtime_memory_read_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2; do
     rust+=(-Wl,--undefined="$symbol")
 done
 rust+=(-lgcc_s -lutil -lrt -lpthread -lm -ldl)
