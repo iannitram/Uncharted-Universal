@@ -14,6 +14,14 @@
 #define NOJIT_BUILD 0
 #endif
 
+#include <stdlib.h>
+#ifndef BBCPU_REVISION
+#define BBCPU_REVISION "unknown"
+#endif
+#ifndef NOJIT_TARGET
+#define NOJIT_TARGET "unknown"
+#endif
+
 #define FLAGS_ARITH 0x8D5ull /* CF PF AF ZF SF OF */
 #define F_CF 1ull
 #define F_PF 4ull
@@ -87,8 +95,11 @@ int main(int argc, char **argv) {
     int pass = 0, fail = 0, unsup = 0;
     FILE *f = path ? fopen(path, "w") : stdout;
     if (!f) { perror("report"); return 2; }
-    fprintf(f, "{\n  \"backend\": \"%s\",\n  \"no_jit_build\": %d,\n  \"cases\": [\n",
-            nojit_backend_name(), NOJIT_BUILD);
+    const char *bj = getenv("BB_JIT");
+    fprintf(f, "{\n  \"backend\": \"%s\",\n  \"bbcpu_revision\": \"%s\",\n"
+               "  \"target\": \"%s\",\n  \"no_jit_build\": %d,\n  \"bb_jit_env\": \"%s\",\n"
+               "  \"cases\": [\n",
+            nojit_backend_name(), BBCPU_REVISION, NOJIT_TARGET, NOJIT_BUILD, bj ? bj : "");
     for (size_t i = 0; i < n; i++) {
         nojit_state out; memset(&out, 0, sizeof out);
         int vec = -1;

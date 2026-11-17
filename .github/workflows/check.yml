@@ -168,12 +168,12 @@ jobs:
       - run: cargo check --target aarch64-apple-ios -p uncharted_runtime
 
   apple-nojit-synthetic:
-    # Harness and report only (#212): no interpreter backend is linked yet, so every case is
-    # reported unsupported. Not proof of interpreter coverage.
+    # #212: synthetic cases through bbcpu's interpreter (BB_JIT=0) on the macOS arm64 runner; a
+    # wrong result fails the job. The iOS Simulator run is local-only (see tests/apple_nojit/RESULTS.md).
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: false
-      - run: sh tests/apple_nojit/run.sh nojit-report.json
+      - run: sh tests/apple_nojit/run.sh host nojit-report.json
       - run: cat nojit-report.json
