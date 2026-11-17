@@ -266,6 +266,8 @@ TRANSLATIONS = {
         '{}: name for slot {}': '{}: nombre de la ranura {}',
         '{}: delete the saves in slot {}? This cannot be undone.': '{}: ¿eliminar las partidas guardadas de la ranura {}? No se puede deshacer.',
         'Could not change the save slots: {}': 'No se pudieron cambiar las ranuras de guardado: {}',
+        'Write performance details to the log': 'Escribir detalles de rendimiento en el registro',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': 'Cada 5 segundos, el registro incluye los FPS, el fotograma más lento y la carga de la GPU del port. Actívalo antes de informar de FPS bajos y envía el registro junto con el lugar donde ocurrió.',
     },
     'pt': {
         '\n— the game exited (code {}) —\n': '\n— o jogo terminou (código {}) —\n',
@@ -507,6 +509,8 @@ TRANSLATIONS = {
         '{}: name for slot {}': '{}: nome do slot {}',
         '{}: delete the saves in slot {}? This cannot be undone.': '{}: excluir os salvamentos do slot {}? Isso não pode ser desfeito.',
         'Could not change the save slots: {}': 'Não foi possível alterar os slots de salvamento: {}',
+        'Write performance details to the log': 'Registar detalhes de desempenho',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': 'A cada 5 segundos, o registo inclui os FPS, o fotograma mais lento e a carga da GPU da adaptação. Ative esta opção antes de comunicar FPS baixos e envie o registo com o local onde aconteceu.',
     },
     'fr': {
         '\n— the game exited (code {}) —\n': '\n— le jeu s’est terminé (code {}) —\n',
@@ -748,6 +752,8 @@ TRANSLATIONS = {
         '{}: name for slot {}': '{} : nom de l’emplacement {}',
         '{}: delete the saves in slot {}? This cannot be undone.': '{} : supprimer les sauvegardes de l’emplacement {} ? Cette action est irréversible.',
         'Could not change the save slots: {}': 'Impossible de modifier les emplacements de sauvegarde : {}',
+        'Write performance details to the log': 'Écrire les détails de performances dans le journal',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': "Toutes les 5 secondes, le journal indique les FPS, la frame la plus lente et la charge GPU du portage. Activez cette option avant de signaler des FPS faibles et envoyez le journal avec le lieu où cela s'est produit.",
     },
 }
 

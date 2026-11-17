@@ -197,6 +197,8 @@ EXTRA_TRANSLATIONS = {
         '{}: name for slot {}': '{}: Name für Speicherplatz {}',
         '{}: delete the saves in slot {}? This cannot be undone.': '{}: Spielstände in Speicherplatz {} löschen? Das kann nicht rückgängig gemacht werden.',
         'Could not change the save slots: {}': 'Speicherplätze konnten nicht geändert werden: {}',
+        'Write performance details to the log': 'Leistungsdetails ins Protokoll schreiben',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': 'Alle 5 Sekunden protokolliert die Datei die FPS, das langsamste Bild und die GPU-Auslastung des Ports. Vor einer Meldung zu niedrigen FPS aktivieren und das Protokoll mit dem Ort des Problems mitsenden.',
     },
     'it': {
         'AMD RCAS after FSR 1 (only while the image is enlarged).': "AMD RCAS dopo FSR 1 (solo quando l'immagine viene ingrandita).",
@@ -393,6 +395,8 @@ EXTRA_TRANSLATIONS = {
         '{}: name for slot {}': '{}: nome dello slot {}',
         '{}: delete the saves in slot {}? This cannot be undone.': "{}: eliminare i salvataggi dello slot {}? L'operazione non può essere annullata.",
         'Could not change the save slots: {}': 'Impossibile modificare gli slot di salvataggio: {}',
+        'Write performance details to the log': 'Scrivi i dettagli delle prestazioni nel registro',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': 'Ogni 5 secondi il registro riporta gli FPS, il fotogramma più lento e il carico GPU della conversione. Attivalo prima di segnalare FPS bassi e invia il registro indicando dove si è verificato il problema.',
     },
     'ja': {
         'AMD RCAS after FSR 1 (only while the image is enlarged).': 'FSR 1 適用後の AMD RCAS（画像を拡大する場合のみ）。',
@@ -589,5 +593,7 @@ EXTRA_TRANSLATIONS = {
         '{}: name for slot {}': '{}：スロット {} の名前',
         '{}: delete the saves in slot {}? This cannot be undone.': '{}：スロット {} のセーブデータを削除しますか？元に戻すことはできません。',
         'Could not change the save slots: {}': 'セーブスロットを変更できませんでした：{}',
+        'Write performance details to the log': 'パフォーマンス情報をログに記録',
+        'Every 5 seconds the log gets the frame rate, the slowest frame and how busy the GPU side of the port was. Turn it on before you report low FPS and send the log with where it happened.': '5秒ごとに、FPS、最も遅いフレーム、移植版のGPU負荷をログに記録します。低FPSを報告する前に有効にし、発生場所とともにログを送ってください。',
     },
 }
