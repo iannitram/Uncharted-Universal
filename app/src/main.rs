@@ -46,7 +46,6 @@ mod play;
 mod screen;
 mod settings_file;
 mod settings_store;
-mod strings;
 mod vm;
 mod work;
 
@@ -65,7 +64,6 @@ use std::process::{Child, Stdio};
 use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use strings::{fill, Text};
 use uncharted_core::games::Game;
 use uncharted_core::language::{self, Language};
 use uncharted_core::launch::Keep;
@@ -502,7 +500,7 @@ fn apply_saves(window: &AppWindow, view: &SavesView) {
 }
 
 /// Draw the Settings page.
-fn apply_settings(window: &AppWindow, view: &SettingsView, lang: strings::Lang) {
+fn apply_settings(window: &AppWindow, view: &SettingsView, texts: &Texts) {
     window.set_tune_cards(model(
         view.cards
             .iter()
@@ -519,10 +517,10 @@ fn apply_settings(window: &AppWindow, view: &SettingsView, lang: strings::Lang) 
             .map(|choice| ChoiceData {
                 label: match choice.label.as_str() {
                     "Raw mouse aiming and cover camera (Uncharted 1 and 2)" => {
-                        strings::Text::RawMouse.get(lang)
+                        texts.tr("Raw mouse aiming and cover camera (Uncharted 1 and 2)")
                     }
-                    "Aim sensitivity (raw mouse)" => strings::Text::AimSensitivity.get(lang),
-                    label => label,
+                    "Aim sensitivity (raw mouse)" => texts.tr("Aim sensitivity (raw mouse)"),
+                    label => label.to_string(),
                 }
                 .into(),
                 value: choice.value.as_str().into(),
@@ -611,11 +609,7 @@ impl Ui {
         match &*shown {
             Shown::Continue => {}
             Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
-            Shown::Settings(vm) => apply_settings(
-                &window,
-                &vm.view(),
-                strings::Lang::of(self.lang.borrow().language()),
-            ),
+            Shown::Settings(vm) => apply_settings(&window, &vm.view(), &self.lang.borrow().texts),
         }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
@@ -632,7 +626,7 @@ impl Ui {
         window.set_about_focus(about.as_ref().map_or(0, |a| a.focused() as i32));
         window.set_fleet_focus(fleet.fleet().focused() as i32);
         if let Some(crash) = crash.as_ref() {
-            let texts = crash.run.screen(self.crash_lang());
+            let texts = crash.run.screen(&self.crash_lang());
             window.set_crash_heading(texts.heading.into());
             window.set_crash_game(texts.game.into());
             window.set_crash_chapter(texts.chapter.into());
@@ -683,8 +677,8 @@ impl Ui {
     }
 
     /// The after-crash texts' language: the interface language.
-    fn crash_lang(&self) -> strings::Lang {
-        strings::Lang::of(self.lang.borrow().language())
+    fn crash_lang(&self) -> Texts {
+        self.lang.borrow().texts.clone()
     }
 
     /// The after-run step for `game`: the after-crash screen when it crashed. `true` when the
@@ -723,7 +717,7 @@ impl Ui {
             window: &window,
             folders,
         };
-        match run.press(button, &folders.context(), &mut host, self.crash_lang()) {
+        match run.press(button, &folders.context(), &mut host, &self.crash_lang()) {
             Pressed::Stay(note) => {
                 window.set_crash_note(note.as_str().into());
                 if let Some(crash) = self.crash.borrow_mut().as_mut() {
@@ -780,7 +774,9 @@ impl Ui {
                 Some(child)
             }
             Err(error) => {
-                let note = fill(Text::StartFailed.get(self.crash_lang()), &error.to_string());
+                let note = self
+                    .crash_lang()
+                    .tr1("Could not start the game: {}", &error.to_string());
                 if let Some(crash) = self.crash.borrow_mut().as_mut() {
                     crash.note = note;
                 }
@@ -1471,7 +1467,6 @@ mod tests {
     use super::*;
     use i_slint_backend_testing::ElementHandle;
     use slint::Model;
-    use strings::Text;
 
     fn shows(window: &AppWindow, label: &str) -> bool {
         !ElementHandle::find_by_accessible_label(window, label)
@@ -1884,16 +1879,16 @@ mod tests {
             note: String::new(),
         });
         ui.redraw();
-        let heading = Text::Heading.get(strings::Lang::Es);
+        let heading = Texts::new(Language::Spanish).tr("The game stopped");
         assert_eq!(window.get_page(), CRASH_PAGE);
         assert_eq!(window.get_crash_heading(), heading);
-        assert!(shows(&window, heading));
+        assert!(shows(&window, &heading));
         assert_eq!(window.get_crash_buttons().row_count(), 3);
         window.invoke_input(1);
         assert_eq!(window.get_crash_focus(), 1);
         window.invoke_input(7);
         assert_eq!(window.get_page(), ABOUT_PAGE);
-        assert!(!shows(&window, heading));
+        assert!(!shows(&window, &heading));
 
         // Every language switches without an error.
         for _ in 0..6 {

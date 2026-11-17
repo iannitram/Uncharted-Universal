@@ -7,7 +7,7 @@
 // everything while `mode` is 1. About (2.09) is drawn over the Continue screen while `page` is 3,
 // and Fleet (2.08, area 8, its rows from src/vm/fleet.rs) while `page` is 4; the after-crash
 // screen (2.07, area 9) while it is 5. Their texts are `@tr(...)`, translated by the catalogues
-// in lang/ (src/lang.rs), except the after-crash screen and raw mouse settings, from src/strings.rs. The
+// in lang/ (src/lang.rs). The
 // Continue screen's texts are English until they are in the catalogues.
 
 import { AboutSlint, CheckBox, LineEdit, ScrollView } from "std-widgets.slint";
@@ -339,7 +339,7 @@ component MenuButton inherits Rectangle {
 
 // The after-crash screen (roadmap 2.07): the game, the chapter, a plain sentence, what the
 // game said, and the buttons src/vm/after_crash.rs chose. Its texts come from Rust
-// (src/strings.rs) in the interface language.
+// (app/lang/) in the interface language.
 component AfterCrashPage inherits Rectangle {
     in property <string> heading;
     in property <string> game;
@@ -581,7 +581,7 @@ export component AppWindow inherits Window {
     // `Screen::click`: 0 action, 1 page, 2 game, 3 save row, 4 conflict side, 5 confirm, 6 cancel.
     callback clicked(int, int);
 
-    // The after-crash screen's texts (src/strings.rs), in the interface language; its buttons
+    // The after-crash screen's texts (app/lang/), in the interface language; its buttons
     // click as area 9.
     in property <string> crash-heading;
     in property <string> crash-game;
