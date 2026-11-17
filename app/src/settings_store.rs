@@ -41,6 +41,7 @@ pub fn load(config: &Path) -> Stored {
         anti_aliasing: get("anti_aliasing"),
         upscale_preset: get("upscale_preset"),
         frame_generation: get("frame_generation"),
+        ..Stored::default()
     }
 }
 
@@ -93,6 +94,7 @@ mod tests {
             anti_aliasing: "fsr3".into(),
             upscale_preset: "balanced".into(),
             frame_generation: "off".into(),
+            ..Stored::default()
         };
         save(&temp.0, &stored).unwrap();
         assert_eq!(load(&temp.0), stored);

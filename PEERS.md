@@ -102,11 +102,13 @@ Historical source-license check (2026-10-31): `bc160201983/Uncharted-The-Nathan-
 
 Measured 2026-10-28 against Supermedo `main` (109 forks, all pushed within 60 days; spacepepperoni's own 6 forks have nothing of note).
 
+Imported (#393): raw 1:1 mouse aiming, cover camera and per-camera follow state, from Supermedo/uncharted_pc PR #818 (abhy85, head 7c4af2b58ef5), a rebase of PR #561 (Umar-Qayyum-dev); GPL-2.0, with our changes listed in the CHANGELOG.
+
 | # | Fork | Ahead / behind | What its own work touches |
 |---|---|---|---|
 | 1 | [drakolordx7/uncharted_pc](https://github.com/drakolordx7/uncharted_pc) (`community`) | 413 / 113 | The big community build: VRAM budget for small cards, FSR 3 leak fix, 45 FPS limit, save slots, walk speed. Much of it reached us through spacepepperoni. |
 | 2 | [Pepin208/uncharted_pc_linux](https://github.com/Pepin208/uncharted_pc_linux) | 22 / 0 | Linux AppImage; shadPS4 texture-cache back-ports (#4818, #5118); GPU checkpoint diagnostics; launcher sends the heap sizes with `BB_GAME_RES` |
-| 3 | [AdilDevStuff/uncharted_pc_linux](https://github.com/AdilDevStuff/uncharted_pc_linux) | 28 / 0 | Raw mouse look; CI AppImage/deb/rpm; aim-blur and auto-exposure dark-screen fix |
+| 3 | [AdilDevStuff/uncharted_pc_linux](https://github.com/AdilDevStuff/uncharted_pc_linux) | 28 / 0 | Raw mouse look (read-only prior art for #393: GPL-3, not copied); CI AppImage/deb/rpm; aim-blur and auto-exposure dark-screen fix |
 | 4 | [revvv991/uncharted-android](https://github.com/revvv991/uncharted-android) | 10 / 0 | Android on Adreno: ideas for low-power GPUs |
 | 5 | [Mevlock/uncharted_pc-dev](https://github.com/Mevlock/uncharted_pc-dev) (`dev`) | 406 / 70 | Performance builds: move-action pool 64 → 256, buffer-arena probation, FPS counter RAM/VRAM line, jitter fix for U3 blue dots |
 | 6 | [Cosmo/uncharted_xbox](https://github.com/Cosmo/uncharted_xbox) | 22 / 70 | Xbox/UWP port; nothing to take |

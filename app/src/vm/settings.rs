@@ -4,6 +4,7 @@
 //! frame generation. A card sets all five values at once; a choice row changes one. Every change
 //! is saved straight away ([`SettingsCommand::Save`]), and [`run_settings`] turns the saved
 //! values into what `core::run_env::build_env` starts the game with.
+//! The raw mouse checkbox and aim sensitivity instead use `input_settings` and `<data>/input.ini`.
 //!
 //! What a choice row offers comes from the hardware report (`tune::upscalers`, `tune::choices`)
 //! and the device profile ([`profile_allows`]: the AMD handheld keeps Steam Deck mode's rules,
@@ -12,6 +13,7 @@
 //! and hands the result to [`SettingsVm::tuned`].
 
 use crate::focus::{Grid, Nav};
+use crate::input_settings;
 use crate::screen::Input;
 use serde_json::Value;
 use uncharted_core::profile::{self, DeviceProfile};
@@ -39,8 +41,9 @@ pub const PRESETS: [(&str, &str); 5] = [
     ("ultra", "Ultra performance (3x)"),
 ];
 
-/// The settings the page keeps (`<config>/settings.json`, `settings_store.rs`). An empty value
-/// is not set yet: [`SettingsVm::new`] fills it with the device's default.
+/// The settings the page keeps (display values in `<config>/settings.json`, `settings_store.rs`;
+/// mouse values in `<data>/input.ini`, `input_settings.rs`). An empty display value is not set
+/// yet: [`SettingsVm::new`] fills it with the device's default.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stored {
     /// "auto" (detected) or a built-in profile id (`core::profile`).
@@ -55,6 +58,8 @@ pub struct Stored {
     pub upscale_preset: String,
     /// off, fsr3, dlss: `BB_FRAME_GEN`.
     pub frame_generation: String,
+    /// The two raw mouse values live in `<data>/input.ini`, alongside Python's bindings.
+    pub mouse: input_settings::Settings,
 }
 
 impl Stored {
@@ -67,6 +72,7 @@ impl Stored {
             anti_aliasing: card.anti_aliasing.clone(),
             upscale_preset: card.upscale_preset.clone(),
             frame_generation: card.frame_generation.clone(),
+            mouse: self.mouse,
         }
     }
 
@@ -74,7 +80,7 @@ impl Stored {
         self.with_card(card) == *self
     }
 
-    fn get(&self, choice: Choice) -> &str {
+    fn get(&self, choice: Choice) -> String {
         match choice {
             Choice::Profile => &self.device_profile,
             Choice::FrameRate => &self.frame_rate,
@@ -82,10 +88,25 @@ impl Stored {
             Choice::Upscaler => &self.anti_aliasing,
             Choice::Quality => &self.upscale_preset,
             Choice::FrameGeneration => &self.frame_generation,
+            Choice::RawMouse => return u8::from(self.mouse.raw).to_string(),
+            Choice::AimSensitivity => return self.mouse.sensitivity(),
         }
+        .clone()
     }
 
     fn set(&mut self, choice: Choice, value: String) {
+        match choice {
+            Choice::RawMouse => {
+                self.mouse.raw = value == "1";
+                return;
+            }
+            Choice::AimSensitivity => {
+                self.mouse =
+                    input_settings::Settings::new(self.mouse.raw, value.parse().unwrap_or(1.0));
+                return;
+            }
+            _ => {}
+        }
         *match choice {
             Choice::Profile => &mut self.device_profile,
             Choice::FrameRate => &mut self.frame_rate,
@@ -93,6 +114,7 @@ impl Stored {
             Choice::Upscaler => &mut self.anti_aliasing,
             Choice::Quality => &mut self.upscale_preset,
             Choice::FrameGeneration => &mut self.frame_generation,
+            Choice::RawMouse | Choice::AimSensitivity => unreachable!(),
         } = value;
     }
 }
@@ -239,16 +261,20 @@ pub enum Choice {
     Upscaler,
     Quality,
     FrameGeneration,
+    RawMouse,
+    AimSensitivity,
 }
 
 impl Choice {
-    pub const ALL: [Choice; 6] = [
+    pub const ALL: [Choice; 8] = [
         Choice::Profile,
         Choice::FrameRate,
         Choice::Resolution,
         Choice::Upscaler,
         Choice::Quality,
         Choice::FrameGeneration,
+        Choice::RawMouse,
+        Choice::AimSensitivity,
     ];
 
     pub fn label(self) -> &'static str {
@@ -259,6 +285,8 @@ impl Choice {
             Choice::Upscaler => "Upscaler",
             Choice::Quality => "Quality",
             Choice::FrameGeneration => "Frame generation",
+            Choice::RawMouse => "Raw mouse aiming and cover camera (Uncharted 1 and 2)",
+            Choice::AimSensitivity => "Aim sensitivity (raw mouse)",
         }
     }
 
@@ -271,6 +299,8 @@ impl Choice {
             Choice::Upscaler => "anti_aliasing",
             Choice::Quality => "upscale_preset",
             Choice::FrameGeneration => "frame_generation",
+            Choice::RawMouse => "mouse_raw",
+            Choice::AimSensitivity => "mouse_aim_sensitivity",
         }
     }
 }
@@ -462,6 +492,13 @@ impl SettingsVm {
                     .collect(),
                 frame_generation_label,
             ),
+            Choice::RawMouse => vec![("0".into(), "0".into()), ("1".into(), "1".into())],
+            Choice::AimSensitivity => (10..=300)
+                .map(|n| {
+                    let value = format!("{:.2}", f64::from(n) / 100.0);
+                    (value.clone(), value)
+                })
+                .collect(),
         }
     }
 
@@ -476,7 +513,7 @@ impl SettingsVm {
         for choice in &Choice::ALL[1..] {
             let options = self.options(*choice);
             let value = self.stored.get(*choice);
-            if options.iter().any(|(v, _)| v == value) {
+            if options.iter().any(|(v, _)| *v == value) {
                 continue;
             }
             let fallback = match choice {
@@ -535,7 +572,7 @@ impl SettingsVm {
         }
         let here = options
             .iter()
-            .position(|(v, _)| v == self.stored.get(choice))
+            .position(|(v, _)| *v == self.stored.get(choice))
             .unwrap_or(0) as isize;
         let len = options.len() as isize;
         let next = if wrap {
@@ -662,7 +699,7 @@ impl SettingsVm {
             .map(|choice| {
                 let options = self.options(*choice);
                 let value = self.stored.get(*choice);
-                let at = options.iter().position(|(v, _)| v == value);
+                let at = options.iter().position(|(v, _)| *v == value);
                 ChoiceView {
                     label: choice.label().to_owned(),
                     value: at.map_or_else(|| value.to_owned(), |i| options[i].1.clone()),

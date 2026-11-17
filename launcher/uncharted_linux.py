@@ -501,7 +501,8 @@ ROW_HINTS = {'Frame rate': None,
                         'Ultra Performance 3x',
              'Sharpness': 'For every upscaler, FSR 1 included (AMD RCAS)', 'Sharpening': None,
              'Anti-aliasing': None,
-             'Frame generation': None, 'Multiplier': None, 'Mouse sensitivity': None}
+             'Frame generation': None, 'Multiplier': None, 'Mouse sensitivity': None,
+             'Aim sensitivity (raw mouse)': None}
 
 
 def unsaved_changes(saved, current):

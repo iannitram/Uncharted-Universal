@@ -1015,6 +1015,7 @@ static void install_game_callbacks(Segment *segments, uint64_t ns, uint64_t imag
         f[0]=0xe9; memcpy(f+1,&to,4); memset(f+5,0x90,c->moved-5);
         used+=(k+15)&~(size_t)15;
         installed[i]=1;
+        if (strstr(c->name,"(raw mouse)")) runtime_raw_mouse_hooks=1; /* runtime_pad.c: US 1.02 only */
         printf("Callbacks: %s at %#" PRIx64 "\n",c->name,offset);
     }
     /* Names start with the game ("U2 ..."): a callback missing from a game whose other callbacks
@@ -1028,7 +1029,8 @@ static void install_game_callbacks(Segment *segments, uint64_t ns, uint64_t imag
             if (installed[j] && !strncmp(callbacks[j].name,callbacks[i].name,game+1)) group=1;
         }
         any|=ok;
-        if (!seen && !ok && group) printf("Callbacks: %s not found\n",callbacks[i].name);
+        /* the raw mouse hooks exist in US 1.02 only: on other builds their absence is expected */
+        if (!seen && !ok && group && !strstr(callbacks[i].name,"(raw mouse)")) printf("Callbacks: %s not found\n",callbacks[i].name);
     }
     if (!any) printf("Callbacks: none of the known camera and pad code was found (unknown build?)\n");
 }
