@@ -80,6 +80,7 @@ stay in the historical survey below.
 
 ### Imported peer fixes
 
+- **#391, null shader-binding handlers (U1 jungle crash):** [soni424/uncharted_pc@77b59626](https://github.com/soni424/uncharted_pc/commit/77b59626362685eebaf88b8d1561d37a3d1ef956) found the call through a null handler and guarded the 1.02 call site; the [miroslavdanutalexandru-alt/uncharted_pc](https://github.com/miroslavdanutalexandru-alt/uncharted_pc) fork merged it ([65cadf6c](https://github.com/miroslavdanutalexandru-alt/uncharted_pc/commit/65cadf6c985dd964e689efdd25c0e719b99a292c)) and added the 1.00 call site ([79a82575](https://github.com/miroslavdanutalexandru-alt/uncharted_pc/commit/79a82575943e196344d5780d4051b4e967cb9937)). Both GPL-2.0. Imported 2026-11-17 as `patch_null_binding_handler` in `src/probe.c`, with a `BB_NULL_BINDING_GUARD=0` opt-out.
 - **#389, U1 shadow_mutex self-deadlock:** [Supermedo/uncharted_pc#841](https://github.com/Supermedo/uncharted_pc/pull/841) at [f83ab16a](https://github.com/Supermedo/uncharted_pc/commit/f83ab16a659b0c6c064d0fa5807b9142c6e8b31a) (open, unmerged; GPL-2.0). Imported 2026-11-16 with a review of the PR here: the shadow reads go through the backing view; the Linux backend gets the matching symbol.
 
 ## Earlier survey and adopted-work history

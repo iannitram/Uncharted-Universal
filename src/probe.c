@@ -1355,6 +1355,50 @@ static void patch_job_lock_wait(uint64_t image_size) {
     printf("Job wait: workers with a render context open wait for a job counter in place for up to %u ms before suspending their job (0x%" PRIx64 ")\n",
            job_lock_wait_ms,(uint64_t)at);
 }
+
+/* The shader resource binding loop (U1 0x63e260) calls a handler per bound input through a
+ * pointer-to-member table indexed by the input's type; only a few types have handlers and the rest
+ * are null. An input of an unhandled type (a zeroed entry) called address 0 and stopped the game in
+ * the jungle chapters. The call now skips a null handler. Same code in all three games:
+ *   test cl,1; je +8; mov rdx,[rdi]; mov rcx,[rcx+rdx-1]; movzx esi,byte [rax+2]; <set rdx>; call rcx
+ * where <set rdx> is `mov rdx, r15` (1.02, 3 bytes) or `lea rdx,[rbp-0x60]` (1.00, 4 bytes).
+ * Found by soni424 (github.com/soni424/uncharted_pc, commit 77b59626); the 1.00 variant is from
+ * the miroslavdanutalexandru-alt/uncharted_pc fork (commits 65cadf6c and 79a82575). Both GPL-2.0.
+ * BB_NULL_BINDING_GUARD=0 leaves the call as it was. */
+static void patch_null_binding_handler(uint64_t image_size) {
+    const char *env=getenv("BB_NULL_BINDING_GUARD");
+    if (env && env[0]=='0') { printf("Shader bindings: null handler guard off (BB_NULL_BINDING_GUARD=0)\n"); return; }
+    static const unsigned char head[]={0xf6,0xc1,0x01,0x74,0x08,0x48,0x8b,0x17,0x48,0x8b,0x4c,0x11,0xff,
+                                       0x0f,0xb6,0x70,0x02};      /* 17 bytes, common to both */
+    struct Variant { unsigned char tail[6]; unsigned tail_len; unsigned char guard[16]; unsigned guard_len; };
+    static const struct Variant variants[]={
+        /* 1.02: mov rdx, r15; call rcx -> call thunk (thunk: mov rdx, r15; test rcx, rcx; je ret;
+         * jmp rcx (returns to the game's call site); ret) */
+        {{0x4c,0x89,0xfa,0xff,0xd1},5,{0x4c,0x89,0xfa,0x48,0x85,0xc9,0x74,0x02,0xff,0xe1,0xc3},11},
+        /* 1.00: lea rdx,[rbp-0x60]; call rcx -> call thunk + nop */
+        {{0x48,0x8d,0x55,0xa0,0xff,0xd1},6,{0x48,0x8d,0x55,0xa0,0x48,0x85,0xc9,0x74,0x02,0xff,0xe1,0xc3},12},
+    };
+    unsigned char *thunk=NULL;
+    int patched=0;
+    for (uint64_t at=0;at+sizeof(head)+6<=image_size;++at) {
+        if (image[at]!=0xf6 || memcmp(image+at,head,sizeof(head))) continue;
+        for (size_t v=0;v<sizeof(variants)/sizeof(variants[0]);++v) {
+            const struct Variant *var=&variants[v];
+            if (memcmp(image+at+sizeof(head),var->tail,var->tail_len)) continue;
+            if (!thunk && !(thunk=near_image_memory(4096))) { printf("Shader bindings: no thunk memory\n"); return; }
+            if (16*(patched+1)>4096) return;
+            unsigned char *t=thunk+16*patched, *f=image+at+sizeof(head);
+            memcpy(t,var->guard,var->guard_len);
+            int32_t to=(int32_t)((int64_t)(uintptr_t)t-(int64_t)(uintptr_t)(f+5));
+            f[0]=0xe8; memcpy(f+1,&to,4);                        /* call thunk */
+            if (var->tail_len>5) f[5]=0x90;
+            printf("Shader bindings: null handler guard at %#" PRIx64 "\n",(uint64_t)(f-image));
+            ++patched;
+            break;
+        }
+    }
+    if (!patched) printf("Shader bindings: null handler call site not found\n");
+}
 /* Naughty Dog's job manager (all three games): the six NdJobWorkerThreads spin on their queues
  * with `pause` unless the manager's sleep flag (byte +0x59, set by its own SetSleepMode) is on.
  * With it on, an idle worker waits on the manager's condition variable after 1000 spins (10 ms
@@ -1800,6 +1844,7 @@ int main(int argc, char **argv) {
         patch_collection_skip(image_end);
         patch_eop_tick_wait(image_end);
         patch_job_sleep(image_end);
+        patch_null_binding_handler(image_end);
         patch_job_lock_wait(image_end);
         patch_u1_sticky(image_end);
         runtime_display_patch(image, image_end);
