@@ -63,7 +63,7 @@ Once your game folder has been specified: Play, Add to Steam (recommended for St
 - Render resolution above 1080p (up to 3200x1800) and ultrawide aspect ratios: the games draw a real larger or wider picture, set in the launcher.
 - Anti-aliasing with TAA, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (DLAA).
 - Frame generation: AMD FSR 3 (any GPU) or NVIDIA DLSS (RTX 40 2x, RTX 50 up to 4x).
-- Keyboard, mouse and controller together, all remappable. Mouse look in U3.
+- Keyboard, mouse and controller together, all remappable. Mouse look in U3; opt-in raw 1:1 mouse aiming and cover camera in U1 and U2 (US 1.02).
 - Stereo, 5.1 or 7.1 sound: the games are told the real speaker layout (it follows the output device, or pick it in the launcher).
 - Trophies: the games' own trophy lists in the launcher, and a notice in the game when you earn one.
 - Button prompts for keyboard and mouse, Xbox or PlayStation controllers; controller vibration settings.

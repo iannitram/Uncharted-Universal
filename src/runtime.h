@@ -116,4 +116,5 @@ typedef struct {
     const unsigned char *patch;
 } RuntimeGuestCallback;
 const RuntimeGuestCallback *runtime_guest_callbacks(size_t *count);
+extern int runtime_raw_mouse_hooks; /* set by probe.c when a "(raw mouse)" hook was installed */
 #endif

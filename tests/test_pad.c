@@ -197,6 +197,92 @@ int main(void) {
     assert(wheel==-1);
     wheel=0; k=keys; filter_mirrored_input(gamepad,t+4070000,&k,&mouse,&wheel);
     assert(wheel==0); /* one step, once */
+    /* Raw mouse (#393). */
+    {
+        input.mouse_sensitivity=1.0f; input.mouse_aim_sensitivity=1.0f;
+        aim_held=0;
+        const size_t camera_size=0xa000;
+        float *camera=calloc(1,camera_size);
+        assert(camera);
+        float *dir=(float *)((char *)camera+0x9ec0);
+        const uint64_t id=(uint64_t)(uintptr_t)camera;
+        const RuntimeGuestRegs *no_regs=NULL;
+        int states_for_camera;
+        /* mouse_raw=0: the old single state (slot 0), the turn is the plain mouse turn */
+        memset(follow_states,0,sizeof(follow_states));
+        input.mouse_raw=0; runtime_raw_mouse_hooks=1;
+        dir[0]=0.0f; dir[1]=0.0f; dir[2]=-1.0f;
+        const float h0=heading_of(dir);
+        camera_dx[0]=100.0f;
+        u2_follow_camera(id,0,0,0,no_regs);
+        assert(SDL_fabsf(wrap_degrees(h0-heading_of(dir))-15.0f)<0.05f);
+        for (int i=0;i<4;++i) assert(follow_states[i].camera==0 && follow_states[i].shown_us==0);
+        /* the build 100 wrapper never takes the raw path, even with mouse_raw=1 */
+        input.mouse_raw=1;
+        u2_follow_camera_100(id,0,0,0,no_regs);
+        for (int i=0;i<4;++i) assert(follow_states[i].camera==0);
+        /* raw path off where no raw hook was installed (U1 1.00 matches the same follow pattern) */
+        runtime_raw_mouse_hooks=0;
+        u2_follow_camera(id,0,0,0,no_regs);
+        for (int i=0;i<4;++i) assert(follow_states[i].camera==0);
+        /* the build 102 entry with mouse_raw=1 keeps a state of its own */
+        runtime_raw_mouse_hooks=1;
+        u2_follow_camera(id,0,0,0,no_regs);
+        states_for_camera=0;
+        for (int i=0;i<4;++i) states_for_camera+=follow_states[i].camera==id;
+        assert(states_for_camera==1);
+        free(camera);
+        /* follow_state slot reuse: the least recently used slot goes first */
+        memset(follow_states,0,sizeof(follow_states));
+        FollowState *first=follow_state(10,100), *second=follow_state(11,200);
+        follow_state(12,300); follow_state(13,400);
+        assert(first!=second && follow_state(10,500)==first);
+        FollowState *fifth=follow_state(14,600);
+        assert(fifth==second && fifth->camera==14);
+        assert(follow_state(10,700)==first);
+        /* raw aim: a wrong return address leaves the direction alone, the right one turns it */
+        uint64_t frame[13]={0};
+        const RuntimeGuestRegs *regs=(const RuntimeGuestRegs *)frame;
+        float aim[3]={0.0f,0.0f,-1.0f};
+        frame[9]=(uint64_t)(uintptr_t)aim; /* rcx */
+        const uint64_t image=0x10000;
+        input.mouse_raw=1;
+        aim_held=1; aim_press_us=now_us();
+        frame[12]=image+0x1234;
+        aim_dx=100.0f; aim_dy=0.0f;
+        raw_aim("U1",0,regs,image,0xc4c57);
+        assert(aim[0]==0.0f && aim[1]==0.0f && aim[2]==-1.0f && aim_dx==100.0f);
+        frame[12]=image+0xc4c57;
+        raw_aim("U1",0,regs,image,0xc4c57);
+        assert(SDL_fabsf(wrap_degrees(heading_of(aim)+15.0f))<0.05f && aim_dx==0.0f);
+        /* off: no turn */
+        input.mouse_raw=0;
+        aim_dx=100.0f;
+        const float before=aim[0];
+        raw_aim("U1",0,regs,image,0xc4c57);
+        assert(aim[0]==before);
+        input.mouse_raw=1;
+        /* armed only when the hook ran in this press, and within the last second */
+        aim_held=1; aim_press_us=5000000;
+        aim_direct_us=4900000;
+        assert(!raw_aim_armed(5500000));  /* the hook ran in the press before */
+        aim_direct_us=5000010;
+        assert(raw_aim_armed(5500000));
+        assert(!raw_aim_armed(6100000));  /* a second since */
+        aim_held=0;
+        assert(!raw_aim_armed(5500000));
+        /* injected mouse reaches the aim motion while raw aim is armed */
+        aim_dx=aim_dy=0.0f;
+        inject(path,"l2");
+        assert(pad_read_state(1,&data)==0 && aim_held);
+        aim_direct_us=now_us();
+        inject(path,"l2 mx=1000");
+        assert(pad_read_state(1,&data)==0);
+        assert(aim_dx>1.0f);
+        inject(path,"");
+        assert(pad_read_state(1,&data)==0 && !aim_held);
+        input.mouse_raw=0;
+    }
     SDL_CloseJoystick(second_joystick);
     SDL_CloseJoystick(joystick);
     for (int i=0;i<gamepad_count;++i) SDL_CloseGamepad(gamepads[i]);
@@ -207,5 +293,5 @@ int main(void) {
     SDL_Quit();
     unlink(path);
     unlink(config);
-    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch, vibration controls, overlay capture, second gamepad, mirrored keys and wheel");
+    puts("PASS: pad ABI, debug camera chord, left/right clicks, SDL touch, vibration controls, overlay capture, second gamepad, mirrored keys and wheel, raw mouse");
 }
