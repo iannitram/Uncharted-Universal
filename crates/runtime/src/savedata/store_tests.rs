@@ -4,7 +4,7 @@
 
 use super::store::*;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 struct TempDir(PathBuf);
 
@@ -260,7 +260,7 @@ fn closing_a_saved_game_directory_commits_where_json_in_its_folder() {
     let commit = closed.commit.unwrap();
     assert_eq!(commit.game, "u2");
     let folder = dir.0.join("Uncharted 2");
-    assert_eq!(commit.saves, folder.to_str().unwrap());
+    assert_eq!(Path::new(&commit.saves), folder.as_path());
     commit.publish().unwrap();
     let got: serde_json::Value =
         serde_json::from_slice(&fs::read(folder.join("where.json")).unwrap()).unwrap();
