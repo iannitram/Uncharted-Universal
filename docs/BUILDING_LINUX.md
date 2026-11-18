@@ -28,7 +28,7 @@ How the port (`bb-probe` and `gpu/libbbgpu.so`) was built from source and run on
 | SDL3 | not stated (pkg-config `sdl3`) | 3.2.18 | system |
 | FFmpeg (libavformat, libavcodec, libavutil, libswscale, libswresample) | the build links `libavcodec.so.61`, `libavutil.so.59`, `libswresample.so.5`, `libswscale.so.8`: FFmpeg 7.x | 7.1.1 | system |
 | Vulkan loader | Vulkan 1.3 device (README) | 1.4.321.0 | system |
-| Vulkan headers | newer than some distributions ship (`build.sh` comment) | v1.4.344 | **bundled** (`third_party/Vulkan-Headers`) |
+| Vulkan headers | 1.4.344 (`BB_VULKAN_HEADERS_MIN` in `gpu/CMakeLists.txt`, checked at configure time); newer than some distributions ship (`build.sh` comment) | v1.4.344; 1.4.365 failed on a GCC `vk::Extent2D` assignment before the explicit-construction source fix, and a 1.4.365 build after that fix is not yet reproduced | **bundled** (`third_party/Vulkan-Headers`) |
 | VulkanMemoryAllocator | not stated | header 3.3.0 (Z13); 3.2.1 also builds (Legion Go) | system package, or only the header `vk_mem_alloc.h` (see 4) |
 | Boost | not stated | 1.88.0 | system |
 | fmt | links `libfmt.so.11`: fmt 11 | 11.2.0 | system |
