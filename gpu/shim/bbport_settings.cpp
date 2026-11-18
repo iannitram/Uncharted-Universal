@@ -305,7 +305,7 @@ bool FsrDeviceValidated(const char* device) {
     // Device names as the driver reports them (VkPhysicalDeviceProperties::deviceName). Driver
     // ids can't tell these apart: RADV is one id for every AMD GPU. Each entry was measured clean
     // with FSR 3.1 on (U3, the London pub): PHOENIX (Ryzen Z1 Extreme, Legion Go) once FSR-Vulkan
-    // patch 0003 keeps FSR out of protected memory; STRIX_HALO (Radeon 8060S, Z13). 2026-10-19.
+    // patch 0004 keeps FSR out of protected memory; STRIX_HALO (Radeon 8060S, Z13). 2026-10-19.
     static constexpr const char* validated[] = {"(RADV PHOENIX)", "(RADV STRIX_HALO)"};
     if (!device) return false;
     const std::string_view name{device};
