@@ -270,6 +270,35 @@ uint64_t runtime_tsc_frequency(void);
 void runtime_thread_keys_cleanup(void);
 #endif
 
+// errno for a Win32 error code (see [`errno_from_win32`]).
+int compat_errno_from_win32(uint32_t error);
+
+// Seconds east of UTC at `seconds` (see [`utc_offset`]).
+int64_t compat_utc_offset(int64_t seconds);
+
+// Cryptographic random bytes: 0 on success, -1 on failure.
+//
+// # Safety
+// `buffer` must be valid for writes of `size` bytes, or `size` must be 0.
+int compat_random(void *buffer, uintptr_t size);
+
+// Sleeps for `ns` nanoseconds (see [`sleep_ns`]).
+void compat_sleep_ns(uint64_t ns);
+
+// Removes the tree at a NUL-terminated UTF-8 `path`: 0 when it is gone or never existed, -1
+// otherwise (see [`remove_tree`]).
+//
+// # Safety
+// `path` must be null or point to a NUL-terminated string that stays valid during the call.
+int compat_remove_tree(const char *path);
+
+// User (`who` == 0: process; otherwise the calling thread) and kernel CPU time in microseconds,
+// written to `user_us` and `kernel_us`. 0 on success, -1 on failure.
+//
+// # Safety
+// `user_us` and `kernel_us` must each be null or valid for one `int64_t` write.
+int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
+
 #if defined(__x86_64__)
 // The address of the guest `sceRtc*` function behind the scoped import `name`, or 0 (the C
 // `runtime_rtc_resolve`, now in `crates/runtime/src/rtc.rs`).
