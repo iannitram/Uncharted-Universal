@@ -5044,6 +5044,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "uncharted_recomp"
+version = "0.0.0"
+
+[[package]]
 name = "uncharted_runtime"
 version = "0.0.0"
 dependencies = [

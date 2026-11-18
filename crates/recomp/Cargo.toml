@@ -1,0 +1,16 @@
+[package]
+name = "uncharted_recomp"
+description = "AOT recompiler build step: guest functions to a C library per title (piece 8.03)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "uncharted_recomp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "uncharted-recomp"
+path = "src/main.rs"
