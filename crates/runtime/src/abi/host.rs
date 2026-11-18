@@ -2,7 +2,7 @@
 //! so messages go through it in order, with the C runtime's line endings), the C memory
 //! primitives the guest asked for, `exit`, and, in the loader build (`cfg(uncharted_loader)`),
 //! the C modules' resolvers and reports and `runtime_quit`. The modules already in Rust
-//! ([`crate::sync`], [`crate::content`], [`crate::time`], [`crate::rtc`], [`crate::audio`] and
+//! ([`crate::sync`], [`crate::content`], [`crate::time`], [`crate::rtc`], [`crate::audio`], [`crate::ajm`] and
 //! [`crate::file`]) keep their place in the chain and the reports. Without the loader the chain
 //! holds only those, and quitting flushes stdio and ends the process at once, as
 //! `tests/test_runtime.c`'s `runtime_quit` did.
@@ -80,7 +80,6 @@ mod loader {
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
-        pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
@@ -89,7 +88,6 @@ mod loader {
         pub fn runtime_thread_report();
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
-        pub fn runtime_ajm_report();
         pub fn runtime_pad_report();
         pub fn runtime_savedata_report();
         pub fn runtime_fiber_report();
@@ -124,7 +122,8 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         // Rust since 3.05 (`crate::trophy`).
         crate::trophy::runtime_trophy_resolve,
         runtime_services_resolve,
-        runtime_ajm_resolve,
+        // Rust since 3.08 (`crate::ajm`).
+        crate::ajm::runtime_ajm_resolve,
         crate::audio::runtime_audio_resolve,
         runtime_pad_resolve,
         runtime_rtc_resolve,
@@ -154,6 +153,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| ask(sync::runtime_rwlock_resolve))
         .or_else(|| crate::kernel::resolve(name))
         .or_else(|| crate::services::resolve(name))
+        .or_else(|| crate::ajm::resolve(name))
         .or_else(|| crate::rtc::resolve(name))
         .or_else(|| crate::audio::resolve(name))
         .or_else(|| crate::file::resolve(name))
@@ -172,7 +172,7 @@ pub(super) fn report_modules() {
         sync::runtime_sema_report,
         runtime_content_report,
         runtime_memory_report,
-        runtime_ajm_report,
+        crate::ajm::runtime_ajm_report,
         crate::audio::runtime_audio_report,
         runtime_pad_report,
         runtime_savedata_report,
@@ -192,6 +192,7 @@ pub(super) fn report_modules() {
     sync::runtime_rwlock_report();
     sync::runtime_sema_report();
     crate::content::ffi::runtime_content_report();
+    crate::ajm::runtime_ajm_report();
     crate::audio::runtime_audio_report();
     crate::file::report();
 }
