@@ -251,10 +251,10 @@ fn synthetic_leaf_runs_from_a_thunk_with_rsp_lowered() {
 
     let target = IMAGE_AT + GUARDED + 64;
     let run = || {
+        // SAFETY: the target is a u32 slot in the test image (cleared before the page is guarded).
+        unsafe { *(target as usize as *mut u32) = 0 };
         fault::guard(IMAGE_AT + GUARDED);
         let faults = FAULTS.load(Ordering::Relaxed);
-        // SAFETY: the target is a u32 slot in the test image.
-        unsafe { *(target as usize as *mut u32) = 0 };
         let result = call_leaf(IMAGE_AT + CODE, target, 0, 7, 0);
         assert_eq!(
             FAULTS.load(Ordering::Relaxed),
