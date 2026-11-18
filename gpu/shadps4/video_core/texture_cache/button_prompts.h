@@ -29,7 +29,8 @@ bool Candidate(u32 width, u32 height, Format format);
 enum class Style : u8 { Original, Keyboard, Xbox };
 
 /// Input thread: the device the player used last: 0 keyboard and mouse, 1 a PlayStation
-/// controller, 2 an Xbox or other controller.
+/// controller, 2 an Xbox or other controller, 3 a Nintendo controller (Switch Pro or
+/// Joy-Con; its own pictures arrive in #439, so it shows the Xbox ones until then).
 void SetDevice(int device);
 
 /// The style shown now (BB_BUTTON_PROMPTS can force one), and a count of the switches between

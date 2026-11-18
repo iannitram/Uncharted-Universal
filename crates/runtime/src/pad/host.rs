@@ -26,6 +26,14 @@ pub mod axis {
 /// An SDL joystick instance id.
 pub type PadId = u32;
 
+/// The device values [`Host::prompts_controller`] takes: 0 keyboard, 1 PlayStation, 2 Xbox,
+/// 3 Nintendo (Switch Pro and Joy-Con). The GPU side shows Nintendo as Xbox until #439 adds
+/// its pictures, but keeps the family so the launcher can tell them apart.
+pub const PROMPTS_KEYBOARD: i32 = 0;
+pub const PROMPTS_PLAYSTATION: i32 = 1;
+pub const PROMPTS_XBOX: i32 = 2;
+pub const PROMPTS_NINTENDO: i32 = 3;
+
 /// One finger of the pad's touch surface (0..1 on both axes).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Finger {
@@ -68,11 +76,12 @@ pub trait Host: Send {
     /// The fingers of the first touch surface; empty for a pad without one.
     fn fingers(&self, id: PadId) -> Vec<Finger>;
     fn has_rumble(&self, id: PadId) -> bool;
-    fn rumble(&mut self, id: PadId, low: u16, high: u16, ms: u32);
+    /// Starts both motors; false when SDL refused (the pad is gone or has no rumble).
+    fn rumble(&mut self, id: PadId, low: u16, high: u16, ms: u32) -> bool;
     fn set_led(&mut self, id: PadId, r: u8, g: u8, b: u8);
     /// The button pictures for this pad: 1 PlayStation (DualShock, DualSense: the game's own),
-    /// 2 Xbox (everything else; the buttons are named by position, so a Switch pad is shown as
-    /// the Xbox layout).
+    /// 2 Xbox, 3 Nintendo (Switch Pro and Joy-Con; shown as the Xbox layout until #439), by
+    /// position (the bottom face button is the game's Cross on every pad).
     fn prompts_device(&self, id: PadId) -> i32;
     /// Turns the gyroscope and accelerometer on or off.
     fn sensors(&mut self, id: PadId, enable: bool);
@@ -178,10 +187,12 @@ impl Host for Nothing {
     fn has_rumble(&self, _: PadId) -> bool {
         false
     }
-    fn rumble(&mut self, _: PadId, _: u16, _: u16, _: u32) {}
+    fn rumble(&mut self, _: PadId, _: u16, _: u16, _: u32) -> bool {
+        false
+    }
     fn set_led(&mut self, _: PadId, _: u8, _: u8, _: u8) {}
     fn prompts_device(&self, _: PadId) -> i32 {
-        2
+        PROMPTS_XBOX
     }
     fn sensors(&mut self, _: PadId, _: bool) {}
     fn gyro(&self, _: PadId) -> Option<[f32; 3]> {
@@ -223,7 +234,9 @@ impl Host for Nothing {
 
 #[cfg(uncharted_loader)]
 mod sdl {
-    use super::{Finger, Host, MouseSample, PadId};
+    use super::{
+        Finger, Host, MouseSample, PadId, PROMPTS_NINTENDO, PROMPTS_PLAYSTATION, PROMPTS_XBOX,
+    };
     use sdl3_sys::error::SDL_GetError;
     use sdl3_sys::gamepad::*;
     use sdl3_sys::hints::{SDL_SetHint, SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS};
@@ -434,11 +447,10 @@ mod sdl {
             })
         }
 
-        fn rumble(&mut self, id: PadId, low: u16, high: u16, ms: u32) {
-            if let Some(pad) = self.get(id) {
-                // SAFETY: a live gamepad.
-                unsafe { SDL_RumbleGamepad(pad, low, high, ms) };
-            }
+        fn rumble(&mut self, id: PadId, low: u16, high: u16, ms: u32) -> bool {
+            // SAFETY: a live gamepad.
+            self.get(id)
+                .is_some_and(|pad| unsafe { SDL_RumbleGamepad(pad, low, high, ms) })
         }
 
         fn set_led(&mut self, id: PadId, r: u8, g: u8, b: u8) {
@@ -450,7 +462,7 @@ mod sdl {
 
         fn prompts_device(&self, id: PadId) -> i32 {
             let Some(pad) = self.get(id) else {
-                return 2;
+                return PROMPTS_XBOX;
             };
             // SAFETY: a live gamepad.
             let kind = unsafe { SDL_GetGamepadType(pad) };
@@ -458,14 +470,21 @@ mod sdl {
                 || kind == SDL_GAMEPAD_TYPE_PS4
                 || kind == SDL_GAMEPAD_TYPE_PS5
             {
-                return 1;
+                return PROMPTS_PLAYSTATION;
+            }
+            if kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO
+                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
+                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT
+                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR
+            {
+                return PROMPTS_NINTENDO;
             }
             // SAFETY: as above.
             let label = unsafe { SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_SOUTH) };
             if label == SDL_GAMEPAD_BUTTON_LABEL_CROSS {
-                1
+                PROMPTS_PLAYSTATION
             } else {
-                2
+                PROMPTS_XBOX
             }
         }
 

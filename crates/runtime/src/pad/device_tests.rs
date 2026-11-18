@@ -10,7 +10,6 @@ use crate::benchmark_run::BenchmarkPad;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-#[derive(Default)]
 struct FakePad {
     name: String,
     buttons: u32,
@@ -19,6 +18,22 @@ struct FakePad {
     gyro: Option<[f32; 3]>,
     accel: Option<[f32; 3]>,
     sensors: bool,
+    prompts: i32,
+}
+
+impl Default for FakePad {
+    fn default() -> FakePad {
+        FakePad {
+            name: String::new(),
+            buttons: 0,
+            axes: [0; 6],
+            fingers: Vec::new(),
+            gyro: None,
+            accel: None,
+            sensors: false,
+            prompts: PROMPTS_PLAYSTATION,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -26,11 +41,13 @@ struct Fake {
     pads: BTreeMap<u32, FakePad>,
     open: Vec<u32>,
     rumbles: Vec<(u32, u16, u16)>,
+    rumble_fails: bool,
     overlay: bool,
     benchmark: Option<BenchmarkPad>,
     keys: Option<Vec<bool>>,
     prompts: Vec<i32>,
     leds: Vec<(u8, u8, u8)>,
+    mouse: MouseSample,
 }
 
 #[derive(Clone, Default)]
@@ -55,6 +72,15 @@ impl FakeHost {
         let mut state = self.state();
         let pad = state.pads.get_mut(&id).unwrap();
         pad.buttons = (pad.buttons & !(1 << button)) | (u32::from(down) << button);
+    }
+
+    fn attach_family(&self, id: u32, name: &str, prompts: i32) {
+        self.attach(id, name);
+        self.state().pads.get_mut(&id).unwrap().prompts = prompts;
+    }
+
+    fn set_axis(&self, id: u32, axis: i32, value: i16) {
+        self.state().pads.get_mut(&id).unwrap().axes[axis as usize] = value;
     }
 }
 
@@ -83,13 +109,33 @@ const KEYS: [(&str, i32); 23] = [
     ("J", 13),
     ("L", 15),
 ];
-const BUTTONS: [(&str, i32); 6] = [
+const BUTTONS: [(&str, i32); 26] = [
     ("a", 0),
-    ("leftshoulder", 9),
-    ("dpup", 11),
-    ("touchpad", 20),
+    ("b", 1),
+    ("x", 2),
+    ("y", 3),
+    ("back", 4),
+    ("guide", 5),
     ("start", 6),
     ("leftstick", 7),
+    ("rightstick", 8),
+    ("leftshoulder", 9),
+    ("rightshoulder", 10),
+    ("dpup", 11),
+    ("dpdown", 12),
+    ("dpleft", 13),
+    ("dpright", 14),
+    ("misc1", 15),
+    ("paddle1", 16),
+    ("paddle2", 17),
+    ("paddle3", 18),
+    ("paddle4", 19),
+    ("touchpad", 20),
+    ("misc2", 21),
+    ("misc3", 22),
+    ("misc4", 23),
+    ("misc5", 24),
+    ("misc6", 25),
 ];
 
 impl Host for FakeHost {
@@ -145,14 +191,19 @@ impl Host for FakeHost {
     fn has_rumble(&self, id: PadId) -> bool {
         self.connected(id)
     }
-    fn rumble(&mut self, id: PadId, low: u16, high: u16, _ms: u32) {
-        self.state().rumbles.push((id, low, high));
+    fn rumble(&mut self, id: PadId, low: u16, high: u16, _ms: u32) -> bool {
+        let mut state = self.state();
+        state.rumbles.push((id, low, high));
+        !state.rumble_fails
     }
     fn set_led(&mut self, _id: PadId, r: u8, g: u8, b: u8) {
         self.state().leds.push((r, g, b));
     }
-    fn prompts_device(&self, _id: PadId) -> i32 {
-        1
+    fn prompts_device(&self, id: PadId) -> i32 {
+        self.state()
+            .pads
+            .get(&id)
+            .map_or(PROMPTS_XBOX, |p| p.prompts)
     }
     fn sensors(&mut self, id: PadId, enable: bool) {
         if let Some(pad) = self.state().pads.get_mut(&id) {
@@ -205,7 +256,7 @@ impl Host for FakeHost {
     }
     fn mouse_configure(&mut self, _look: bool) {}
     fn mouse_sample(&mut self) -> MouseSample {
-        MouseSample::default()
+        self.state().mouse
     }
     fn overlay_captures_input(&self) -> bool {
         self.state().overlay
@@ -552,6 +603,166 @@ fn prompts_follow_the_device_in_use() {
 }
 
 #[test]
+fn prompts_report_the_controller_family_and_follow_switches() {
+    let mut rig = rig("prompt-families", "", false);
+    rig.host.attach_family(1, "family pad", PROMPTS_PLAYSTATION);
+    rig.read();
+    for prompts in [
+        PROMPTS_PLAYSTATION,
+        PROMPTS_NINTENDO,
+        PROMPTS_XBOX,
+        PROMPTS_PLAYSTATION,
+    ] {
+        rig.host.state().pads.get_mut(&1).unwrap().prompts = prompts;
+        rig.host.press(1, BUTTON_SOUTH, true);
+        assert_ne!(rig.read().buttons & button::CROSS, 0);
+        assert_eq!(
+            rig.host.state().prompts.last().copied(),
+            Some(prompts),
+            "family {prompts}"
+        );
+        rig.host.press(1, BUTTON_SOUTH, false);
+        rig.read();
+    }
+    assert_eq!(
+        rig.host.state().prompts,
+        [
+            PROMPTS_PLAYSTATION,
+            PROMPTS_NINTENDO,
+            PROMPTS_XBOX,
+            PROMPTS_PLAYSTATION
+        ]
+    );
+}
+
+fn family_rig(key: &str, name: &str, prompts: i32) -> Rig {
+    let rig = rig(key, "", false);
+    rig.host.attach_family(1, name, prompts);
+    rig
+}
+
+/// Every game input over one controller family: the face buttons by position (the bottom one is
+/// the game's Cross), both shoulders, both stick clicks, both triggers, both sticks, the d-pad,
+/// OPTIONS and the touchpad, plus the buttons the game does not use.
+fn assert_every_input_maps_by_position(key: &str, name: &str, prompts: i32) {
+    let mut rig = family_rig(key, name, prompts);
+    let id = 1;
+    rig.read();
+    const BUTTON_ACTIONS: [(i32, u32); 14] = [
+        (0, button::CROSS),
+        (1, button::CIRCLE),
+        (2, button::SQUARE),
+        (3, button::TRIANGLE),
+        (9, button::L1),
+        (10, button::R1),
+        (7, button::L3),
+        (8, button::R3),
+        (6, button::OPTIONS),
+        (4, button::TOUCHPAD),
+        (11, button::UP),
+        (12, button::DOWN),
+        (13, button::LEFT),
+        (14, button::RIGHT),
+    ];
+    for (sdl, game) in BUTTON_ACTIONS {
+        rig.host.press(id, sdl, true);
+        let data = rig.read();
+        assert_ne!(data.buttons & game, 0, "{name}: SDL button {sdl}");
+        rig.host.press(id, sdl, false);
+        rig.read();
+    }
+    for sdl in [5, 15, 16, 17, 18, 19, 21, 22, 23, 24, 25] {
+        rig.host.press(id, sdl, true);
+        assert_eq!(rig.read().buttons, 0, "{name}: unused SDL button {sdl}");
+        rig.host.press(id, sdl, false);
+        rig.read();
+    }
+    // The physical touchpad click, next to the touchpad action on BACK.
+    rig.host.press(id, BUTTON_TOUCHPAD, true);
+    assert_ne!(
+        rig.read().buttons & button::TOUCHPAD,
+        0,
+        "{name}: touchpad click"
+    );
+    rig.host.press(id, BUTTON_TOUCHPAD, false);
+    rig.read();
+    // Both triggers.
+    rig.host.set_axis(id, axis::LEFT_TRIGGER, i16::MAX);
+    let data = rig.read();
+    assert_ne!(data.buttons & button::L2, 0, "{name}: left trigger");
+    assert_eq!(data.l2, 255, "{name}: left trigger value");
+    rig.host.set_axis(id, axis::LEFT_TRIGGER, 0);
+    rig.read();
+    rig.host.set_axis(id, axis::RIGHT_TRIGGER, i16::MAX);
+    let data = rig.read();
+    assert_ne!(data.buttons & button::R2, 0, "{name}: right trigger");
+    assert_eq!(data.r2, 255, "{name}: right trigger value");
+    rig.host.set_axis(id, axis::RIGHT_TRIGGER, 0);
+    rig.read();
+    // Both sticks, each end of both axes.
+    type AxisField = fn(&PadData) -> u8;
+    let sticks: [(i32, AxisField); 4] = [
+        (axis::LEFT_X, |d| d.left_x),
+        (axis::LEFT_Y, |d| d.left_y),
+        (axis::RIGHT_X, |d| d.right_x),
+        (axis::RIGHT_Y, |d| d.right_y),
+    ];
+    for (a, value) in sticks {
+        rig.host.set_axis(id, a, i16::MIN);
+        assert_eq!(value(&rig.read()), 0, "{name}: stick axis {a} low");
+        rig.host.set_axis(id, a, i16::MAX);
+        assert_eq!(value(&rig.read()), 255, "{name}: stick axis {a} high");
+        rig.host.set_axis(id, a, 0);
+        rig.read();
+    }
+    // The bottom face button is the game's Cross on every pad, and the family reaches the prompts.
+    rig.host.press(id, BUTTON_SOUTH, true);
+    assert_ne!(rig.read().buttons & button::CROSS, 0, "{name}: bottom face");
+    assert_eq!(
+        rig.host.state().prompts.last().copied(),
+        Some(prompts),
+        "{name}: prompt family"
+    );
+    rig.host.press(id, BUTTON_SOUTH, false);
+    rig.read();
+}
+
+#[test]
+fn xbox_pad_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("xbox", "Xbox Series Controller", PROMPTS_XBOX);
+}
+
+#[test]
+fn dualshock4_pad_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("ds4", "DualShock 4", PROMPTS_PLAYSTATION);
+}
+
+#[test]
+fn dualsense_pad_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("dualsense", "DualSense", PROMPTS_PLAYSTATION);
+}
+
+#[test]
+fn switch_pro_pad_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("switch-pro", "Switch Pro Controller", PROMPTS_NINTENDO);
+}
+
+#[test]
+fn joycon_pair_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("joycon-pair", "Joy-Con (L/R)", PROMPTS_NINTENDO);
+}
+
+#[test]
+fn joycon_single_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("joycon-single", "Joy-Con (L)", PROMPTS_NINTENDO);
+}
+
+#[test]
+fn generic_sdl3_pad_maps_every_input_by_position() {
+    assert_every_input_maps_by_position("generic", "Generic Gamepad", PROMPTS_XBOX);
+}
+
+#[test]
 fn controller_tool_reports_and_rumbles() {
     let host = FakeHost::default();
     let mut boxed = host.clone();
@@ -561,6 +772,66 @@ fn controller_tool_reports_and_rumbles() {
     assert_eq!(super::tool(&mut boxed, true, 50), 0);
     assert_eq!(host.state().rumbles, [(1, 32768, 32768), (1, 0, 0)]);
     assert!(host.state().open.is_empty());
+}
+
+#[test]
+fn controller_tool_reports_a_refused_rumble_start() {
+    let host = FakeHost::default();
+    let mut boxed = host.clone();
+    host.attach(1, "tool pad");
+    host.state().rumble_fails = true;
+    let (code, lines) = super::tool_lines(&mut boxed, true, 100);
+    assert_eq!(code, 0);
+    assert_eq!(lines.last().map(String::as_str), Some("tested=0"));
+    assert_eq!(host.state().rumbles, [(1, 65535, 65535), (1, 0, 0)]);
+}
+
+#[test]
+fn benchmark_replaces_the_whole_read() {
+    let mut rig = rig("benchmark-whole", "", false);
+    rig.host.attach(3, "motion pad");
+    {
+        let mut state = rig.host.state();
+        let pad = state.pads.get_mut(&3).unwrap();
+        pad.fingers = vec![Finger {
+            down: true,
+            x: 0.5,
+            y: 0.5,
+        }];
+        pad.gyro = Some([1.0, 2.0, 3.0]);
+        pad.accel = Some([9.80665, 0.0, 0.0]);
+        state.mouse = MouseSample {
+            captured: true,
+            dx: 50.0,
+            dy: -25.0,
+            buttons: 1,
+            wheel: 1,
+        };
+    }
+    rig.pad.set_motion(true);
+    rig.read(); // the player's pad, touch, motion and mouse reach the camera queues
+    let sample_before = rig.camera.lock().unwrap().sample;
+    rig.host.state().benchmark = Some(BenchmarkPad {
+        buttons: button::CROSS,
+        left_x: 10,
+        left_y: 20,
+        right_x: 30,
+        right_y: 40,
+    });
+    let data = rig.read();
+    assert_eq!(data.buttons, button::CROSS);
+    assert_eq!(
+        (data.left_x, data.left_y, data.right_x, data.right_y),
+        (10, 20, 30, 40)
+    );
+    assert_eq!((data.l2, data.r2), (0, 0));
+    assert_eq!(data.touch_count, 0);
+    assert_eq!(data.touches, [PadTouch::default(); 2]);
+    assert_eq!(data.angular_velocity, [0.0; 3]);
+    assert_eq!(data.acceleration, [0.0; 3]);
+    assert_eq!(data.orientation, [0.0, 0.0, 0.0, 1.0]);
+    // No host sample was taken, so no mouse motion entered the camera queues.
+    assert_eq!(rig.camera.lock().unwrap().sample, sample_before);
 }
 
 #[test]

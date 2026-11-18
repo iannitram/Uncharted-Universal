@@ -960,8 +960,32 @@ impl Pad {
         d.r2 = s.r2;
     }
 
+    /// `BB_BENCHMARK`: the scripted menu and camera path are the only input
+    /// (`benchmark_run.rs`). It replaces the whole read: no host pad, keyboard or mouse sample,
+    /// so touches, motion and the mouse camera queues get nothing from the player.
+    fn benchmark_sample(&mut self, d: &mut PadData, benchmark: crate::benchmark_run::BenchmarkPad) {
+        *d = PadData::neutral();
+        d.connected = 1;
+        d.connected_count = self.connected_count.max(1);
+        d.timestamp = now_us();
+        d.buttons = benchmark.buttons;
+        d.left_x = benchmark.left_x;
+        d.left_y = benchmark.left_y;
+        d.right_x = benchmark.right_x;
+        d.right_y = benchmark.right_y;
+        d.l2 = 0;
+        d.r2 = 0;
+        self.camera().aim_held = false;
+    }
+
     /// One whole read (`sample`).
     pub fn sample(&mut self, d: &mut PadData) {
+        if let Some(benchmark) = self.host.benchmark_pad() {
+            // The bindings and camera settings still load; no host pad, keyboard or mouse is read.
+            self.load_input();
+            self.benchmark_sample(d, benchmark);
+            return;
+        }
         self.sample_host(d);
         if self.host.overlay_captures_input() {
             // After the menu or the text dialog closes, buttons still held (the Cross that
@@ -990,18 +1014,6 @@ impl Pad {
         }
         self.mouse_inject_us = inject_now;
         self.replay_sample(d);
-        // BB_BENCHMARK: the scripted menu and camera path are the only input (benchmark_run.rs).
-        if let Some(benchmark) = self.host.benchmark_pad() {
-            d.buttons = benchmark.buttons;
-            d.left_x = benchmark.left_x;
-            d.left_y = benchmark.left_y;
-            d.right_x = benchmark.right_x;
-            d.right_y = benchmark.right_y;
-            d.l2 = 0;
-            d.r2 = 0;
-            self.camera().aim_held = false;
-            return;
-        }
         d.buttons |= self.injected.buttons;
         {
             let held = d.buttons & button::L2 != 0;

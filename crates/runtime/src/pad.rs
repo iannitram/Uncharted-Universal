@@ -153,11 +153,20 @@ pub fn report_line() -> String {
 /// game starts (no Vulkan or guest memory): what controller is there, and a rumble test.
 /// Prints `connected=`, `name=`, `rumble=` and `tested=`; 1 when detection fails.
 pub fn tool(host: &mut dyn host::Host, test: bool, strength: i32) -> i32 {
+    let (code, lines) = tool_lines(host, test, strength);
+    for line in lines {
+        note(&line);
+    }
+    code
+}
+
+/// [`tool`]'s work, with its lines kept apart so a test can read `tested=`.
+fn tool_lines(host: &mut dyn host::Host, test: bool, strength: i32) -> (i32, Vec<String>) {
     let already_ready = host.pads_ready();
     if !already_ready {
         if let Err(error) = host.init_pads() {
             eprintln!("Controller detection failed: {error}");
-            return 1;
+            return (1, Vec::new());
         }
     }
     let quit = |host: &mut dyn host::Host| {
@@ -167,34 +176,36 @@ pub fn tool(host: &mut dyn host::Host, test: bool, strength: i32) -> i32 {
     };
     let id = host.pads().first().copied().filter(|&id| host.open(id));
     let Some(id) = id else {
-        note("connected=0\nrumble=0");
         quit(host);
-        return 0;
+        return (0, vec!["connected=0".into(), "rumble=0".into()]);
     };
     let name = host.name(id);
     let rumble = host.has_rumble(id);
-    note("connected=1");
-    note(&format!(
-        "name={}",
-        if name.is_empty() {
-            "Game controller"
-        } else {
-            &name
-        }
-    ));
-    note(&format!("rumble={}", i32::from(rumble)));
+    let mut lines = vec![
+        "connected=1".to_string(),
+        format!(
+            "name={}",
+            if name.is_empty() {
+                "Game controller"
+            } else {
+                &name
+            }
+        ),
+        format!("rumble={}", i32::from(rumble)),
+    ];
     if test {
         let amount = ((65535 * strength.clamp(0, 100) as u32 + 50) / 100) as u16;
-        if rumble {
-            host.rumble(id, amount, amount, 500);
+        // The capability alone is not enough: the start of the motors is SDL's answer.
+        let started = rumble && host.rumble(id, amount, amount, 500);
+        if started {
             host.delay_ms(500);
         }
         host.rumble(id, 0, 0, 0);
-        note(&format!("tested={}", i32::from(rumble)));
+        lines.push(format!("tested={}", i32::from(started)));
     }
     host.close(id);
     quit(host);
-    0
+    (0, lines)
 }
 
 /// `--controller-watch SECONDS`, for controller reports and tests: the gamepads SDL lists and,
