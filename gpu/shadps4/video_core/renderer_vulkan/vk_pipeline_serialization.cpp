@@ -547,13 +547,18 @@ void PipelineCache::WarmUpThread() {
             if (it == by_hash.end() || !it->second->ready) {
                 return;
             }
-            // bbport: a motion-vector key needs its vertex stage stored with motion output. The
-            // shader metadata is stored once per program, not per permutation, so a motion key
-            // can match plain shaders; those are left to be built at first use.
-            if (entry.gkey.motion_vectors &&
-                it->second->owner->info.hw_stage == Shader::HwStage::Vertex &&
-                !it->second->spec.runtime_info.hw.vs.motion_vectors) {
-                return;
+            // bbport: a motion-vector key needs its stages stored with motion output. The shader
+            // metadata is stored once per program, not per permutation, so a motion key can
+            // match plain shaders; those are left to be built at first use.
+            if (entry.gkey.motion_vectors) {
+                const auto hw_stage = it->second->owner->info.hw_stage;
+                const auto& stage_rt = it->second->spec.runtime_info;
+                if (hw_stage == Shader::HwStage::Vertex && !stage_rt.hw.vs.motion_vectors) {
+                    return;
+                }
+                if (hw_stage == Shader::HwStage::Fragment && !stage_rt.hw.fs.motion_vectors) {
+                    return;
+                }
             }
             infos[stage] = it->second->owner->info_template.get();
             program_infos[stage] = &it->second->owner->info;
