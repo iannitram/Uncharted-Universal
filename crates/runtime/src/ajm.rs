@@ -388,8 +388,10 @@ pub trait At9Decoder: Send {
 }
 
 /// No decoder: every ATRAC9 stream reports "not initialized". Builds without LibAtrac9.
+#[cfg(not(uncharted_loader))]
 struct NoAt9;
 
+#[cfg(not(uncharted_loader))]
 impl At9Decoder for NoAt9 {
     fn init(&mut self, _config: [u8; 4]) -> Option<CodecInfo> {
         None
