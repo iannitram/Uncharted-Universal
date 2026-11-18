@@ -82,7 +82,6 @@ mod loader {
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
         pub fn runtime_pad_resolve(name: *const c_char) -> usize;
-        pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
 
@@ -91,7 +90,6 @@ mod loader {
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
         pub fn runtime_pad_report();
-        pub fn runtime_savedata_report();
         pub fn runtime_fiber_report();
 
         pub fn runtime_quit(code: c_int) -> !;
@@ -128,7 +126,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         crate::audio::runtime_audio_resolve,
         runtime_pad_resolve,
         runtime_rtc_resolve,
-        runtime_savedata_resolve,
+        crate::savedata::runtime_savedata_resolve,
         runtime_file_resolve,
         runtime_fiber_resolve,
         bbgpu_resolve,
@@ -156,6 +154,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| crate::services::resolve(name))
         .or_else(|| crate::rtc::resolve(name))
         .or_else(|| crate::audio::resolve(name))
+        .or_else(|| ask(crate::savedata::runtime_savedata_resolve))
         .or_else(|| crate::file::resolve(name))
 }
 
@@ -175,7 +174,7 @@ pub(super) fn report_modules() {
         runtime_ajm_report,
         crate::audio::runtime_audio_report,
         runtime_pad_report,
-        runtime_savedata_report,
+        crate::savedata::runtime_savedata_report,
         runtime_file_report,
         runtime_fiber_report,
     ];
@@ -193,6 +192,7 @@ pub(super) fn report_modules() {
     sync::runtime_sema_report();
     crate::content::ffi::runtime_content_report();
     crate::audio::runtime_audio_report();
+    crate::savedata::runtime_savedata_report();
     crate::file::report();
 }
 

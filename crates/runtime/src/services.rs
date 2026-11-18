@@ -800,9 +800,8 @@ mod guest {
         param: [0; SAVE_PARAM_SIZE],
     });
 
-    /// The slot picker of `runtime_savedata.c` (loader build): `which` 0 first slot, 1 last,
-    /// 2 first, 3 last slot, 4 latest, 5 oldest... (see `save_list`).
-    #[cfg(uncharted_loader)]
+    /// The slot picker of [`crate::savedata`]: `which` 0 first slot, 1 last, 2 latest written,
+    /// 3 oldest, 4 the one named `focus`; -1 when there is none.
     fn savedata_pick(
         user: i32,
         title: *const c_char,
@@ -812,22 +811,10 @@ mod guest {
         focus: *const c_char,
         save: &mut SaveDialog,
     ) -> i32 {
-        extern "C" {
-            fn runtime_savedata_pick(
-                user: i32,
-                title: *const c_char,
-                names: *const [u8; 32],
-                count: u32,
-                which: i32,
-                focus: *const c_char,
-                out: *mut u8,
-                param_out: *mut c_void,
-            ) -> i32;
-        }
         // SAFETY: the guest's pointers passed through; `save.dir` and `save.param` are live
-        // buffers of the sizes the C function writes.
+        // buffers of the sizes the function writes (32 and 1328 bytes).
         unsafe {
-            runtime_savedata_pick(
+            crate::savedata::runtime_savedata_pick(
                 user,
                 title,
                 names,
@@ -838,20 +825,6 @@ mod guest {
                 save.param.as_mut_ptr().cast(),
             )
         }
-    }
-
-    /// Without the loader there is no save store to pick from: nothing to choose.
-    #[cfg(not(uncharted_loader))]
-    fn savedata_pick(
-        _user: i32,
-        _title: *const c_char,
-        _names: *const [u8; 32],
-        _count: u32,
-        _which: i32,
-        _focus: *const c_char,
-        _save: &mut SaveDialog,
-    ) -> i32 {
-        -1
     }
 
     /// List mode. SaveDialogItems {userId, pad, titleId* (8), dirName* (16), dirNameNum (24),
@@ -918,7 +891,7 @@ mod guest {
         ));
     }
 
-    /// `BB_SAVE_LOG=1`: the dialog's calls on stdout, for diagnosis (as in `runtime_savedata.c`).
+    /// `BB_SAVE_LOG=1`: the dialog's calls on stdout, for diagnosis (as in the deleted `runtime_savedata.c`).
     fn save_log() -> bool {
         static ON: OnceLock<bool> = OnceLock::new();
         *ON.get_or_init(|| flag(std::env::var_os("BB_SAVE_LOG")))
