@@ -279,6 +279,44 @@ void runtime_thread_keys_cleanup(void);
 uintptr_t runtime_rtc_resolve(const char *name);
 #endif
 
+// `runtime_savedata_configure`: the title id of the running game (its save folder name), then
+// the Bloodborne sound flag.
+//
+// # Safety
+// `title` is null or a NUL-terminated string valid for the call.
+void runtime_savedata_configure(const char *title);
+
+// The module's counters, one line on stdout (and the `where.json` failures, when there were any).
+void runtime_savedata_report(void);
+
+// A save is in progress while a directory is mounted for writing (the game writes its files
+// between mount and unmount). Waits up to `timeout_ms` for none: 0 nothing was in progress,
+// 1 it finished, -1 still in progress at the timeout.
+int runtime_savedata_wait_idle(unsigned int timeout_ms);
+
+// An existing slot of a save list: `which` 0 first, 1 last, 2 latest written, 3 oldest, 4 the
+// one named `focus`. 1 with the slot's name in `out` and its parameters in `param_out` (when
+// not null), or -1 when there is none.
+//
+// # Safety
+// `names` is null or `count` names of 32 bytes; `title` and `focus` are null or NUL-terminated
+// strings; `out` is 32 writable bytes and `param_out` null or 1328 writable bytes.
+int runtime_savedata_pick(int32_t user,
+                          const char *title,
+                          const uint8_t (*names)[32],
+                          uint32_t count,
+                          int which,
+                          const char *focus,
+                          uint8_t *out,
+                          void *param_out);
+
+// The address of the guest entry point for the import `name` (`NID#library#module`), 0 when it
+// is not one of this library's.
+//
+// # Safety
+// `name` is null or a NUL-terminated string valid for the call.
+uintptr_t runtime_savedata_resolve(const char *name);
+
 #if defined(__x86_64__)
 // The address of the guest service function (user, system, network, PSN, dialogs, PlayGo
 // and absent devices) behind the scoped import `name`, or 0 (the C
