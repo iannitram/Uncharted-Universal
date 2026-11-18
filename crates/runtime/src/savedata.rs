@@ -1,15 +1,29 @@
 //! Local save-location metadata (#168, SPEC.md M9). Only the three player-visible save
 //! strings cross this boundary; no guest buffers, icons, paths or binary metadata do.
 //!
-//! This starts roadmap 3.06 with the metadata commit. The guest savedata ABI, mounts and
-//! file VFS are not ported yet. Their successful save commit must call [`commit`]; this
-//! module is not wired into the legacy C runtime.
+//! Roadmap 3.06: this module is the deleted `src/runtime_savedata.c` and the `where.json` commit.
+//! [`store`] is the save store (mounts, the `BB_SAVEDATA_DIRS` folder mapping, parameters,
+//! SaveDataMemory, searches); [`guest`] holds the guest `sceSaveData*` calls and the exported C
+//! symbols (`runtime_savedata_configure/resolve/report/wait_idle/pick`). Closing (unmounting) a
+//! writable `SAVEDATA0N*` directory the game saved to calls [`commit`] with that game's saves
+//! folder and `u1`/`u2`/`u3`; a write failure is printed, counted and reported, not ignored.
+
+// The guest calls (and what only they use) exist on x86-64 hosts alone, as in `file`.
+#![cfg_attr(not(target_arch = "x86_64"), allow(dead_code))]
 
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+mod guest;
+pub(crate) mod store;
+
+pub use guest::{
+    runtime_savedata_configure, runtime_savedata_pick, runtime_savedata_report,
+    runtime_savedata_resolve, runtime_savedata_wait_idle,
+};
 
 /// The only save parameters allowed in `where.json` (not the whole guest Param struct).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -117,6 +131,9 @@ fn utc_timestamp(at: SystemTime) -> io::Result<String> {
         seconds % 60,
     ))
 }
+
+#[cfg(test)]
+mod store_tests;
 
 #[cfg(test)]
 mod tests {
