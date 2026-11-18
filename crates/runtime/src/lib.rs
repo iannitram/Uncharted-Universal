@@ -34,6 +34,8 @@
 //! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
 //! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
 //! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
+//! [`ajm`] is libSceAjm (piece 3.08, from the deleted `src/runtime_ajm.c`): decoder batches, ATRAC9
+//! through LibAtrac9 and MP3 through a pure-Rust decoder in place of FFmpeg.
 //! [`kernel`] and [`services`] (piece 3.11) are libkernel/libScePosix process services and the
 //! offline system services, from the deleted `src/runtime_kernel.c` and
 //! `src/runtime_services.c`; they export their resolvers and the process clock the GPU library
@@ -42,7 +44,7 @@
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
-//! `ajm`, `pad`, `fiber` and `thread`,
+//! `pad`, `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
@@ -50,6 +52,10 @@
 #![allow(unused_variables)]
 
 pub mod abi;
+// `cbindgen:ignore`: only the Rust loader side calls its resolver and report; its constants and
+// structs are Rust-only, not part of the C header.
+/// cbindgen:ignore
+pub mod ajm;
 pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
