@@ -81,7 +81,6 @@ mod loader {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         pub fn runtime_ajm_resolve(name: *const c_char) -> usize;
-        pub fn runtime_pad_resolve(name: *const c_char) -> usize;
         pub fn runtime_savedata_resolve(name: *const c_char) -> usize;
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
@@ -90,7 +89,6 @@ mod loader {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
         pub fn runtime_ajm_report();
-        pub fn runtime_pad_report();
         pub fn runtime_savedata_report();
         pub fn runtime_fiber_report();
 
@@ -126,7 +124,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         runtime_services_resolve,
         runtime_ajm_resolve,
         crate::audio::runtime_audio_resolve,
-        runtime_pad_resolve,
+        crate::pad::runtime_pad_resolve,
         runtime_rtc_resolve,
         runtime_savedata_resolve,
         runtime_file_resolve,
@@ -174,7 +172,7 @@ pub(super) fn report_modules() {
         runtime_memory_report,
         runtime_ajm_report,
         crate::audio::runtime_audio_report,
-        runtime_pad_report,
+        crate::pad::runtime_pad_report,
         runtime_savedata_report,
         runtime_file_report,
         runtime_fiber_report,

@@ -67,7 +67,7 @@ One file per PS4 library. Each provides `runtime_X_resolve()`, and usually
 | File | What it provides |
 |---|---|
 | `runtime_memory.c` | PS4 virtual memory: direct/physical pools, flexible memory, reservations, protect. On Windows, pagefile-backed sections via `VirtualAlloc2`/`MapViewOfFile3`. Guest addresses are kept below 1 TiB so GPU descriptors stay 40-bit. |
-| `runtime_pad.c` | Controller, keyboard and mouse over SDL3, remappable via `input.ini`. |
+| `crates/runtime/src/pad.rs` and `pad/` | libScePad (was `runtime_pad.c`, Rust since piece 3.10): SDL3 gamepads (selection, hot-plug, a second pad taking over), touchpad, gyro and accelerometer, rumble, keyboard and mouse remappable via `input.ini`, the mirrored-key filter, the mouse camera and aim hooks with the guest callback table, and the scripted `BB_BENCHMARK` path. The devices sit behind a `Host` trait, so the tests run over a fake one. |
 | `runtime_ajm.c` | Audio decode: ATRAC9 through vendored LibAtrac9, MP3 through FFmpeg. |
 | `runtime_services.c` | System services for an offline single-user console: user 1 logged in, no network, dialogs auto-complete. |
 | `crates/runtime/src/file.rs` | The guest VFS (was `runtime_file.c`, Rust since piece 3.09): `/app0` and `/hostapp` to the game root, `/temp0` and `/data` to the user directory. |
