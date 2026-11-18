@@ -42,6 +42,8 @@ static FAULT_RSP: AtomicU64 = AtomicU64::new(0);
 static FAULT_R8: AtomicU64 = AtomicU64::new(0);
 /// The page the handler makes writable.
 static WATCHED: AtomicU64 = AtomicU64::new(0);
+/// The fault tests share the handler's statics, so they run one at a time.
+static FAULT_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(target_os = "linux")]
 mod fault {
@@ -242,6 +244,7 @@ fn build_image(at: u64) -> (Image, [RedZoneSegment; 3]) {
 
 #[test]
 fn synthetic_leaf_runs_from_a_thunk_with_rsp_lowered() {
+    let _serial = FAULT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     fault::install();
     let (image, segments) = build_image(IMAGE_AT);
     // The thunk memory is reserved first, as the loader does right after mapping the image.
@@ -409,6 +412,7 @@ mod windows_frame {
 
     #[test]
     fn windows_exception_frame_keeps_the_data_below_a_lowered_rsp() {
+        let _serial = FAULT_TESTS.lock().unwrap_or_else(|e| e.into_inner());
         fault::install();
         // SAFETY: two committed pages; the second is the guarded one.
         let base = unsafe {
