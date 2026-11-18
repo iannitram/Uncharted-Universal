@@ -6,12 +6,3 @@ Exec=AppRun
 Icon=uncharted-linux
 Terminal=false
 Categories=Game;
-Actions=classic;report;
-
-[Desktop Action classic]
-Name=Classic launcher
-Exec=AppRun --classic
-
-[Desktop Action report]
-Name=Create bug report
-Exec=AppRun --report

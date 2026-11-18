@@ -24,10 +24,8 @@ perf.data
 /bloodborne_upscalers_*.md
 mods.json
 patches.json
-!launcher/bloodborne.png
-!launcher/uncharted.png
-# Official cover art: local only, never in the repository or a release
-launcher/art/
+!crates/core/data/collection-artwork/*.png
+!crates/core/data/icons/*.png
 
 # Decrypted game dumps: ~58 GB of user-owned game data, never commit these.
 # Matched on the EP9000- / CUSA- title folder names rather than a fixed path,

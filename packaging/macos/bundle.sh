@@ -15,7 +15,7 @@ set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 # shellcheck source=packaging/rust_faces.sh
 source packaging/rust_faces.sh
-version=${BUNDLE_VERSION:-$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)}
+version=${BUNDLE_VERSION:-$(cat VERSION 2>/dev/null || sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
 [[ -n $version ]] || { echo 'No version: set BUNDLE_VERSION' >&2; exit 1; }
 
 app="out/stage/Uncharted Universal.app"
@@ -31,8 +31,8 @@ if command -v sips >/dev/null && command -v iconutil >/dev/null; then
     rm -rf -- "$iconset"
     mkdir -p "$iconset"
     for size in 16 32 128 256 512; do
-        sips -z "$size" "$size" launcher/uncharted.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
-        sips -z $((size * 2)) $((size * 2)) launcher/uncharted.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+        sips -z "$size" "$size" crates/core/data/icons/uncharted.png --out "$iconset/icon_${size}x${size}.png" >/dev/null
+        sips -z $((size * 2)) $((size * 2)) crates/core/data/icons/uncharted.png --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
     done
     iconutil -c icns -o "$app/Contents/Resources/uncharted.icns" "$iconset"
     rm -rf -- "$iconset"

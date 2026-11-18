@@ -201,7 +201,7 @@ fi
 # bb-probe only; the C unit tests below keep the no-op glue.
 "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
-# GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
+# GPU check (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
     tests=(motion-history-test motion-shader-test wbinvl1-test ui-composition-test upscaler-support-test expand-image-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)

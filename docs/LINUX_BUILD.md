@@ -56,8 +56,7 @@ bash build.sh
 ## Running
 
 ```bash
-export BB_GAME_DIR="/path/to/CUSA02320"   # the folder with eboot.bin
-./run.sh
+cargo run -p uncharted_cli -- play u1 --dump /path/to/CUSA02320
 ```
 
 Optional environment variables:
@@ -91,4 +90,4 @@ psarcy -e uiextra.psarc && mv uiextra/* . && rmdir uiextra
 ## Known issues
 
 - The emulator reports `watchdog timeout` a few seconds into gameplay because `.pak` mounting (`pak19/ps4/*.pak`) is incomplete. This is orthogonal to the build fixes.
-- The FSR 3 upscaler requires the shader hashes set by `run.sh` (`BB_VELOCITY_PS`, `BB_UPSCALE_BEFORE_CS`, `BB_HUDLESS_PS`). Without them, the upscaler falls back to "not run".
+- The FSR 3 upscaler requires the shader hashes (`BB_VELOCITY_PS`, `BB_UPSCALE_BEFORE_CS`, `BB_HUDLESS_PS`). Without them, the upscaler falls back to "not run".

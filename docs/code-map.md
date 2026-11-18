@@ -18,7 +18,7 @@ These issues have their foundation on `main`; the issues stay open (or their mod
 | [#175](https://github.com/iannitram/Uncharted-Universal/issues/175) | PR #227 | 19 known-issue entries linked to player-posted crash logs, loaded by a test that reads the shipped file. |
 | [#188](https://github.com/iannitram/Uncharted-Universal/issues/188) | PR #228 (closed) | Missing, malformed or unknown SFO title identity refuses with `BadDump`; title-to-region mapping and full prepare/start acceptance remain outstanding. |
 | [#189](https://github.com/iannitram/Uncharted-Universal/issues/189) | PR #231 | Pairing, encrypted resumable transfer and safe staged cleanup foundations. Listener, discovery, serving/CLI wiring, Windows peer storage and device acceptance remain. |
-| [#190](https://github.com/iannitram/Uncharted-Universal/issues/190) | PR #223 | Writes the five original artwork outputs from Rust. Deleting `launcher/uncharted_art.py` and its test once nothing calls them, and Windows packaging acceptance, remain. |
+| [#190](https://github.com/iannitram/Uncharted-Universal/issues/190) | PR #223 | Writes the five original artwork outputs from Rust; `launcher/uncharted_art.py` and its tests deleted in 2.11 (#377). |
 | [#206](https://github.com/iannitram/Uncharted-Universal/issues/206) | PR #232 | Bounded shared SELF/plain-ELF parsing and synthetic fixtures; this is not the prepare/link pipeline. |
 | [#207](https://github.com/iannitram/Uncharted-Universal/issues/207) | PR #229, PR #255 | Pinned Android dependency recipe, synthetic native target and the vendored Turnip KGSL/FEX patch series. The Android SDK/NDK build was not run and the artifact is not a game APK. |
 | [#211](https://github.com/iannitram/Uncharted-Universal/issues/211) | PR #230 | Feasibility matrix and owner-run checklist only. CPU/Metal probes were not run; this remains a partial, plan-only gate. |
@@ -282,12 +282,12 @@ Other ready candidates include #184 environment wiring, #189 hub/bundle transfer
 
 | Path | Removed when |
 |---|---|
-| `launcher/` (Python, Tk and GTK, about 11.7k lines), `launcher/bb-launcher.sh` | the Slint app has parity: Continue, first run, Settings, Add to Steam, update |
-| `scripts/*.py`, `run.py`, `run.sh`, `install.sh` | every `crates/core` module listed above is present |
+| `launcher/` (Python, Tk and GTK), `launcher/bb-launcher.sh` | deleted in 2.11 (#377); replaced by `uncharted-app` (Slint) |
+| `scripts/*.py`, `run.py`, `run.sh` | deleted in 2.11 (#377); replaced by `crates/core` and `uncharted-universal` |
 | `src/*.c`, `src/*.h` | `crates/runtime::loader` is present and the game boots |
-| `packaging/windows/` PyInstaller and the PyInstaller half of `packaging/linux/package.sh` (`packaging/appimage.sh` and `packaging/default.nix` went in 2.10, when the release workflow started building the Rust app into the AppImage, the Windows zip and the macOS bundle) | the classic launcher retires (2.11) |
+| `packaging/windows/` PyInstaller and the PyInstaller packaging in `packaging/linux/package.sh` | deleted in 2.11 (#377) |
 | C of ours that ships today: `tools/gpu_capabilities.c` (`bb-gpu-capabilities`); `packaging/bbport-entry.c` and `packaging/windows/play.c` were deleted in 2.10 (`core::host_env` cleans the environment, `uncharted-universal play` replaced `Play Uncharted.exe`) | `uncharted-run --probe` takes over `gpu_capabilities.c` (M20 allows no C of ours; `gpu/` stays) |
-| `tests/test_*.py` (34 files), the C tests in `tests/` | their Rust ports are present; the `tests/*.cpp` files belong to `gpu/` and stay |
+| Python launcher and script tests under `tests/` | deleted in 2.11 (#377); covered by Rust workspace tests |
 
 ## Build and test
 

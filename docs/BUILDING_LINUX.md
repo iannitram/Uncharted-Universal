@@ -15,7 +15,7 @@ How the port (`bb-probe` and `gpu/libbbgpu.so`) was built from source and run on
 | CMake | 3.24 (`cmake_minimum_required`) | 4.0.3 | |
 | Ninja | not stated | 1.12.1 | |
 | pkg-config | not stated | pkgconf 2.5.1 | |
-| Python 3 | not stated | 3.13.5 | `run.py` and `scripts/` |
+| Python 3 | not stated | 3.13.5 | tools and tests |
 | glslang (`glslang` or `glslangValidator`) | not stated | 1.4.321.0 | `find_program(... REQUIRED)` |
 | glibc (build machine) | = the oldest glibc you want to run on | 2.41 | Build on a system whose glibc is not newer than the players'. The README's runtime floor is glibc 2.41. |
 
@@ -64,7 +64,7 @@ bash ./build.sh          # writes out/bb-probe and out/gpu/libbbgpu.so
 Run with your own decrypted dump of the collection (CUSA02320; the folder holding `eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`, `sce_sys` and `u1data` / `u2data` / `u3data`). No game files are included or needed for the build.
 
 ```bash
-BB_GAME_DIR=<your dump folder> BB_EXE=u3 python3 run.py
+cargo run -p uncharted_cli -- play u3 --dump <your dump folder>
 ```
 
 `BB_EXE` is `u1`, `u2` or `u3`. `BB_FRAME_STATS=1` prints frame statistics every 5 seconds.

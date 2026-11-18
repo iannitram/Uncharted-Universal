@@ -4,20 +4,9 @@ The launcher can unpack a `.pkg` into a plain game folder. This page says exactl
 covers, because the difference between "a `.pkg`" and "a usable dump" is where most of the
 confusion sits.
 
-## Try it
-
-Point the launcher's **Game folder** Browse at a folder containing `.pkg` files. The launcher
-notices and offers to unpack them into a new folder next to the originals, then carries that
-folder over for you. From a terminal:
-
-```bash
-python scripts/pkg.py EP9000-CUSA02343_00-UNCHARTED4.pkg --out CUSA02343
-python scripts/pkg.py game.pkg --out CUSA02343 --list     # inspect, write nothing
-```
-
 ## What it does
 
-A `.pkg` is a container: a header, an entry table, and a blob of file names. `scripts/pkg.py`
+A `.pkg` is a container: a header, an entry table, and a blob of file names. `crates/core::pkg`
 reads the header, walks the entry table, resolves each name, and writes the files out.
 
 The format is awkward in two ways worth knowing, because both are silent-corruption traps if
