@@ -97,24 +97,31 @@ fn mode_is(value: &str) -> bool {
     std::env::var_os("BB_CPU_PATCH").is_some_and(|m| m == value)
 }
 
+#[allow(unused_unsafe)]
 fn host_missing() -> u32 {
     use std::arch::x86_64::{__cpuid, __cpuid_count};
     let mut missing = 0;
-    let max = __cpuid(0).eax;
-    let max_extended = __cpuid(0x8000_0000).eax;
-    if max < 7 || __cpuid_count(7, 0).ebx & (1 << 3) == 0 {
+    // SAFETY: cpuid is always available on x86_64.
+    let max = unsafe { __cpuid(0) }.eax;
+    // SAFETY: cpuid is always available on x86_64.
+    let max_extended = unsafe { __cpuid(0x8000_0000) }.eax;
+    // SAFETY: cpuid is always available on x86_64.
+    if max < 7 || unsafe { __cpuid_count(7, 0) }.ebx & (1 << 3) == 0 {
         missing |= NEED_BMI1;
     }
-    if max_extended < 0x8000_0001 || __cpuid(0x8000_0001).ecx & (1 << 5) == 0 {
+    // SAFETY: cpuid is always available on x86_64.
+    if max_extended < 0x8000_0001 || unsafe { __cpuid(0x8000_0001) }.ecx & (1 << 5) == 0 {
         missing |= NEED_LZCNT;
     }
-    if max < 1 || __cpuid(1).ecx & (1 << 22) == 0 {
+    // SAFETY: cpuid is always available on x86_64.
+    if max < 1 || unsafe { __cpuid(1) }.ecx & (1 << 22) == 0 {
         missing |= NEED_MOVBE;
     }
     missing
 }
 
 /// The rest of Jaguar's instruction set has no rewrite: name what is missing.
+#[allow(unused_unsafe)]
 fn report_unsupported() {
     const LEAF1: [(u32, &str); 10] = [
         (0, "SSE3"),
@@ -128,7 +135,8 @@ fn report_unsupported() {
         (28, "AVX"),
         (29, "F16C"),
     ];
-    let ecx = std::arch::x86_64::__cpuid(1).ecx;
+    // SAFETY: cpuid is always available on x86_64.
+    let ecx = unsafe { std::arch::x86_64::__cpuid(1) }.ecx;
     let mut list = String::new();
     for (bit, name) in LEAF1 {
         if ecx & (1 << bit) == 0 {
@@ -137,7 +145,9 @@ fn report_unsupported() {
         }
     }
     if !list.is_empty() {
-        println!("CPU: this processor lacks{list}, which the PS4 has; the game will likely stop with an illegal instruction");
+        println!(
+            "CPU: this processor lacks{list}, which the PS4 has; the game will likely stop with an illegal instruction"
+        );
     }
 }
 
@@ -1021,9 +1031,21 @@ fn patch_image(image: Image, ranges: &[[u64; 2]]) {
         } else {
             "rewrite forced"
         },
-        if missing & NEED_BMI1 != 0 { " BMI1" } else { "" },
-        if missing & NEED_LZCNT != 0 { " LZCNT" } else { "" },
-        if missing & NEED_MOVBE != 0 { " MOVBE" } else { "" },
+        if missing & NEED_BMI1 != 0 {
+            " BMI1"
+        } else {
+            ""
+        },
+        if missing & NEED_LZCNT != 0 {
+            " LZCNT"
+        } else {
+            ""
+        },
+        if missing & NEED_MOVBE != 0 {
+            " MOVBE"
+        } else {
+            ""
+        },
         if kinds.is_empty() { "none" } else { &kinds },
     );
 }
