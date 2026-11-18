@@ -899,4 +899,9 @@ fn guest_callback_table_and_exports_are_complete() {
         assert!(super::guest::export(symbol).is_some(), "{symbol}");
     }
     assert!(super::guest::export("scePadNothing").is_none());
+    // Exercise the guest import path: a private export alone cannot enable the sensors.
+    assert_eq!(
+        super::resolve(c"clVvL4ZDntw#A#B"),
+        super::guest::export("scePadSetMotionSensorState")
+    );
 }
