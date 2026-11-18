@@ -131,6 +131,8 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
+      - name: Run the runtime's Windows shim tests (os, 3.15)
+        run: cargo test -p uncharted_runtime --lib os::
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
