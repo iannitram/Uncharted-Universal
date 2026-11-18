@@ -601,7 +601,7 @@ void PipelineCache::EnsureWorkerPipeline(PipelineSelection& worker_sel) {
     const auto& key = worker_sel.graphics_key;
     {
         std::shared_lock lock{pipelines_mutex};
-        if (graphics_pipelines.contains(key)) {
+        if (graphics_pipelines.contains(key) || refused_graphics_pipelines.contains(key)) {
             return;
         }
     }
@@ -626,7 +626,7 @@ void PipelineCache::EnsureWorkerPipeline(PipelineSelection& worker_sel) {
     AcquireClaim(claim_id);
     {
         std::shared_lock lock{pipelines_mutex};
-        if (graphics_pipelines.contains(key)) {
+        if (graphics_pipelines.contains(key) || refused_graphics_pipelines.contains(key)) {
             ReleaseClaim(claim_id);
             return;
         }
@@ -645,6 +645,17 @@ void PipelineCache::EnsureWorkerPipeline(PipelineSelection& worker_sel) {
         auto pipeline = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, key, *pipeline_cache, worker_sel.infos,
             worker_sel.runtime_infos, worker_sel.fetch_shader, worker_sel.modules, sdata, false);
+        // bbport: the driver refused it. Nothing is stored or saved; the key is remembered so
+        // the GPU thread does not compile it again on every draw.
+        if (!pipeline->IsValid()) {
+            {
+                std::unique_lock lock{pipelines_mutex};
+                refused_graphics_pipelines.insert(key);
+            }
+            runtime_fault_recover = nullptr;
+            ReleaseClaim(claim_id);
+            return;
+        }
         pipeline->RebindStages(program_infos);
         RegisterPipelineData(key, pipeline_hash, sdata);
         num_new_pipelines.fetch_add(1, std::memory_order_relaxed);
@@ -717,6 +728,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         if (it != graphics_pipelines.end()) {
             return it->second.get();
         }
+        if (refused_graphics_pipelines.contains(sel.graphics_key)) {
+            return nullptr;
+        }
     }
     // A draw-preparation worker may be building it right now: wait for that instead of
     // repeating the compile.
@@ -730,6 +744,10 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             ReleaseClaim(claim_id);
             return it->second.get();
         }
+        if (refused_graphics_pipelines.contains(sel.graphics_key)) {
+            ReleaseClaim(claim_id);
+            return nullptr;
+        }
     }
     LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
     CompileTimer timer{"gpipe", pipeline_hash, sel.graphics_key.motion_vectors};
@@ -738,12 +756,12 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
     auto pipeline = std::make_unique<GraphicsPipeline>(
         instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
         sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
-    // bbport: the driver could not create it. An empty entry keeps the key from being
-    // compiled again on every draw; it is not saved, so the next start does not load it.
+    // bbport: the driver could not create it. The key is remembered so it is not compiled again
+    // on every draw; it is not stored or saved, so the next start does not load it.
     if (!pipeline->IsValid()) {
         {
             std::unique_lock lock{pipelines_mutex};
-            graphics_pipelines.try_emplace(sel.graphics_key, nullptr);
+            refused_graphics_pipelines.insert(sel.graphics_key);
         }
         ReleaseClaim(claim_id);
         sel.fetch_shader.reset();
@@ -786,6 +804,9 @@ const ComputePipeline* PipelineCache::GetComputePipeline(bool indirect) {
         if (it != compute_pipelines.end()) {
             return it->second.get();
         }
+        if (refused_compute_pipelines.contains(compute_key)) {
+            return nullptr;
+        }
     }
     // A draw-preparation worker may be building it right now: wait for that instead of
     // repeating the compile.
@@ -799,6 +820,10 @@ const ComputePipeline* PipelineCache::GetComputePipeline(bool indirect) {
             ReleaseClaim(claim_id);
             return it->second.get();
         }
+        if (refused_compute_pipelines.contains(compute_key)) {
+            ReleaseClaim(claim_id);
+            return nullptr;
+        }
     }
     LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
     CompileTimer timer{"cpipe", pipeline_hash, u32(liverpool->CurrentQueueId())};
@@ -807,11 +832,11 @@ const ComputePipeline* PipelineCache::GetComputePipeline(bool indirect) {
     auto pipeline = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                       *pipeline_cache, compute_key, *sel.infos[0],
                                                       sel.modules[0], sdata, false);
-    // bbport: as for graphics pipelines, kept empty and not saved.
+    // bbport: as for graphics pipelines, remembered as refused and not saved.
     if (!pipeline->IsValid()) {
         {
             std::unique_lock lock{pipelines_mutex};
-            compute_pipelines.try_emplace(compute_key, nullptr);
+            refused_compute_pipelines.insert(compute_key);
         }
         ReleaseClaim(claim_id);
         return nullptr;
@@ -871,7 +896,7 @@ void PipelineCache::PrepareComputePipeline(PipelineSelection& worker_sel) {
     const Program* program = worker.stages.back().program;
     {
         std::shared_lock lock{pipelines_mutex};
-        if (compute_pipelines.contains(key)) {
+        if (compute_pipelines.contains(key) || refused_compute_pipelines.contains(key)) {
             return;
         }
     }
@@ -881,7 +906,7 @@ void PipelineCache::PrepareComputePipeline(PipelineSelection& worker_sel) {
     AcquireClaim(claim_id);
     {
         std::shared_lock lock{pipelines_mutex};
-        if (compute_pipelines.contains(key)) {
+        if (compute_pipelines.contains(key) || refused_compute_pipelines.contains(key)) {
             ReleaseClaim(claim_id);
             return;
         }
@@ -900,6 +925,16 @@ void PipelineCache::PrepareComputePipeline(PipelineSelection& worker_sel) {
         auto pipeline = std::make_unique<ComputePipeline>(
             instance, scheduler, desc_heap, profile, *pipeline_cache, key, *worker_sel.infos[0],
             worker_sel.modules[0], sdata, false);
+        // bbport: refused by the driver: remembered, not stored or saved (see EnsureWorkerPipeline).
+        if (!pipeline->IsValid()) {
+            {
+                std::unique_lock lock{pipelines_mutex};
+                refused_compute_pipelines.insert(key);
+            }
+            runtime_fault_recover = nullptr;
+            ReleaseClaim(claim_id);
+            return;
+        }
         pipeline->RebindStage(&program->info);
         RegisterPipelineData(key, sdata);
         num_new_pipelines.fetch_add(1, std::memory_order_relaxed);
@@ -1564,6 +1599,11 @@ std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule mo
                 new_module = m.module;
             }
         }
+    }
+    if (new_module) {
+        // bbport: the new code may build what the driver refused before.
+        refused_graphics_pipelines.clear();
+        refused_compute_pipelines.clear();
     }
     if (module_related_pipelines.contains(module)) {
         auto& pipeline_keys = module_related_pipelines[module];

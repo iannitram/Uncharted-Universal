@@ -267,6 +267,10 @@ private:
     bool worker_compile = true; ///< BB_PREP_COMPILE=0 keeps all compiles on the GPU thread
     tsl::robin_map<ComputePipelineKey, std::unique_ptr<ComputePipeline>> compute_pipelines;
     tsl::robin_map<GraphicsPipelineKey, std::unique_ptr<GraphicsPipeline>> graphics_pipelines;
+    /// bbport: keys the driver refused (guarded by pipelines_mutex). They are not stored as null
+    /// entries, so a draw never gets a null pipeline and the key is not compiled again per draw.
+    std::unordered_set<ComputePipelineKey> refused_compute_pipelines;
+    std::unordered_set<GraphicsPipelineKey> refused_graphics_pipelines;
     PipelineSelection sel{}; ///< GPU thread selection state
     ComputePipelineKey compute_key{};
     std::atomic<u32> num_new_pipelines{}; // new pipelines added to the cache since the game start
