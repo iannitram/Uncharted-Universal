@@ -2,9 +2,11 @@
 
 **Decided:** 2026-11-01, by the owner: 1.0 devices "Full TotK parity", then the spec approval.
 
+**Amended 2026-11-18** by owner ruling (`SPEC.md`, M15): the iOS app no longer installs over a cable with Xcode signing; it is an unsigned .ipa in Dropbox, installed with SideStore on a free Apple ID. Its delivery, and the Mac app's, through my own Dropbox is an allowed exception to the home-network-only rule, owner ruling 2026-11-18: "Final deliverables getting to me via Dropbox are really the only way in this case so exception cleared".
+
 ## Decision
 
-Adopt bloodborne-native's route (bloodborne-runtime, -mac, -ios; GPL-2.0 per their headers, licence files checked at piece 8.01 before code comes in, credited): on the Mac, the launcher recompiles each game's x86-64 code from my dump into a native ARM64 library (no JIT, so the same library serves iOS), and the game draws through their Metal renderer. Their code is vendored under `apple/` and stays in its language; our Rust runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios`. The Mac launcher builds the iOS app and installs it over a cable with Xcode signing.
+Adopt bloodborne-native's route (bloodborne-runtime, -mac, -ios; GPL-2.0 per their headers, licence files checked at piece 8.01 before code comes in, credited): on the Mac, the launcher recompiles each game's x86-64 code from my dump into a native ARM64 library (no JIT, so the same library serves iOS), and the game draws through their Metal renderer. Their code is vendored under `apple/` and stays in its language; our Rust runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios`. The Mac launcher builds the iOS app as an unsigned .ipa (iphoneos, arm64) with a version in its file name and puts it in `Dropbox/_transfers/Uncharted-Universal/ios/`; I install it from Dropbox with SideStore, which signs it with my free Apple ID and re-signs it every 7 days on the device.
 
 ## Risks
 
@@ -48,7 +50,7 @@ Perform these checks separately for U1, U2 and U3, first on an Apple-silicon Mac
 3. Measure peak address-space use, committed memory and GPU resource use during boot, loading, saves and a sustained session. Establish headroom on the Mac and each mobile device. Repeat after memory pressure and suspend/resume. Do not assume the Bloodborne iOS memory figure applies to this collection or current devices.
 4. Exercise the Metal renderer with authored probes first, then the owner's game. Check each game's required shader/command paths, render targets, synchronization, formats, presentation and recovery from device loss. A device-creation probe alone is not renderer compatibility.
 5. Validate controller mapping, audio, file access, saves, lifecycle interruptions, low-memory termination and resume. Each game must independently complete a representative session before a broader campaign plan.
-6. Build and install on a physical iPhone/iPad with Xcode using the intended signing method and cable workflow. Verify app identifier, signing certificate, provisioning profile/device authorization, required capabilities, install/launch, sandbox storage and update behavior. For App Store distribution, verify the current review and entitlement requirements at that time. Do not add JIT or unsigned-executable-memory entitlements to make the test pass; such a result would violate the approved no-JIT path.
+6. Build the unsigned .ipa for a physical iPhone/iPad and install it with SideStore from Dropbox (owner ruling 2026-11-18). Verify app identifier, the free-Apple-ID signing SideStore applies, provisioning profile/device authorization, required capabilities, install/launch, sandbox storage and update behavior. For App Store distribution, verify the current review and entitlement requirements at that time. Do not add JIT or unsigned-executable-memory entitlements to make the test pass; such a result would violate the approved no-JIT path.
 
 A future go decision requires documented evidence for each title/target pair, no-JIT synthetic coverage, an audited source/license allowlist and owner approval. If any title needs runtime JIT on iOS, requires retained game-derived tables, exceeds measured memory limits, or cannot meet the signing/distribution route, that target remains no-go and the scope must return to the owner.
 
