@@ -10,12 +10,12 @@
 #
 #     bash packaging/macos/bundle.sh
 #
-# BUNDLE_VERSION overrides the version (default: the launcher's VERSION).
+# BUNDLE_VERSION overrides the version (default: the Rust workspace version).
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 # shellcheck source=packaging/rust_faces.sh
 source packaging/rust_faces.sh
-version=${BUNDLE_VERSION:-$(cat VERSION 2>/dev/null || sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
+version=${BUNDLE_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}
 [[ -n $version ]] || { echo 'No version: set BUNDLE_VERSION' >&2; exit 1; }
 
 app="out/stage/Uncharted Universal.app"

@@ -141,7 +141,7 @@ jobs:
         id: package
         # Slint (the Rust app) needs Rust 1.92: the toolchain above is pinned to it.
         run: |
-          version=$(cat VERSION 2>/dev/null || sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           echo "tag=v$version-linux.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           sudo chroot "$CHROOT" bash -euc "
             export PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:\$PATH
