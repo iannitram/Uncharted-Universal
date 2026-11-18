@@ -113,8 +113,8 @@ MINGW*|MSYS*)
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
         # The file module is Rust now (crates/runtime/src/file.rs, piece 3.09): its Windows
         # coverage is the crate's own tests (check.yml, windows-latest).
-        clang -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test.exe
-        out/cpu-patch-test.exe
+        # cpu_patch and red_zone are Rust now (crates/runtime/src/cpu_patch.rs, red_zone.rs,
+        # piece 3.14): their tests are the crate's own (check.yml, windows-latest).
     fi
     exit 0
     ;;
@@ -199,7 +199,7 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
 fi
 # BB_BENCHMARK=<seconds> (#173/#242): BB_RUST_BENCHMARK sends the glue to the Rust benchmark in
 # bb-probe only; the C unit tests below keep the no-op glue.
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
@@ -225,7 +225,7 @@ if [[ ${1:-} == --test ]]; then
     out/file-mods-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_ajm.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/ajm-test
     out/ajm-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c src/cpu_patch.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test
     out/settings-default-test
@@ -235,8 +235,7 @@ if [[ ${1:-} == --test ]]; then
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim \
         tests/test_vertex_input_deny.cpp gpu/shim/vertex_input_deny.cpp -o out/vertex-input-deny-test
     out/vertex-input-deny-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc tests/test_cpu_patch.c src/cpu_patch.c -lZydis -o out/cpu-patch-test
-    out/cpu-patch-test
+    # tests/test_cpu_patch.c is a Rust test now (crates/runtime/src/cpu_patch/tests.rs).
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -I. tests/test_equeue_request_gate.cpp -o out/equeue-request-gate-test
     out/equeue-request-gate-test
 fi

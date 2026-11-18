@@ -289,7 +289,9 @@ if (WIN32)
     add_library(atrac9 STATIC ${BB_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    add_executable(bb-probe ../src/probe.c ../src/red_zone.c ../src/cpu_patch.c ${BB_RUNTIME} ../src/compat_win.c
+    # cpu_patch and red_zone come from crates/runtime (Rust, piece 3.14); src/cpu_patch.c and
+    # src/red_zone.c stay until 3.17.
+    add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c
         ../packaging/windows/bb-probe.rc)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
