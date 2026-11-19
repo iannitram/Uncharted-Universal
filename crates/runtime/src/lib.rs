@@ -45,12 +45,17 @@
 //! and rumble, keyboard and mouse binds, the mouse camera hooks and the guest callback table, and
 //! the `BB_BENCHMARK` scripted path; it exports `runtime_pad_resolve`, `runtime_pad_report`,
 //! `runtime_pad_tool`, `runtime_pad_watch` and `runtime_guest_callbacks`.
+//! [`cpu_patch`] and [`red_zone`] (piece 3.14) are the guest code patchers, ports of
+//! `src/cpu_patch.c` and `src/red_zone.c`: instructions the host CPU lacks (BMI1, LZCNT, MOVBE)
+//! run from thunks, and guest leaf functions that keep data below rsp run their faulting accesses
+//! with rsp 128 bytes lower. Each exports its C symbols; the loader links these, the C files
+//! stay until 3.17. The x86 decoder is iced-x86 (Zydis in the C).
 //!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
 //! `fiber` and `thread`,
-//! `cpu_patch` and `red_zone`, `loader` (in the `uncharted-run` binary).
+//! `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
 // Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.
@@ -66,6 +71,11 @@ pub mod benchmark;
 pub mod benchmark_run;
 #[cfg(target_arch = "x86_64")]
 pub mod content;
+/// Piece 3.14: exports the C symbols of `src/cpu_patch.h` (declared there, not in the generated
+/// header). Linux and Windows on x86-64; other hosts have no guest code to patch.
+/// cbindgen:ignore
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", windows)))]
+pub mod cpu_patch;
 pub mod crash;
 pub mod display;
 pub mod file;
@@ -78,8 +88,15 @@ pub mod os;
 // `cbindgen:ignore`: their constants are Rust-only, not part of the C header.
 /// cbindgen:ignore
 pub mod pad;
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", windows)))]
+mod patch_util;
 /// cbindgen:ignore
 pub mod probe;
+/// Piece 3.14: exports the C symbols of `src/red_zone.h` (declared there, not in the generated
+/// header).
+/// cbindgen:ignore
+#[cfg(all(target_arch = "x86_64", any(target_os = "linux", windows)))]
+pub mod red_zone;
 pub mod rtc;
 pub mod savedata;
 pub mod services;
