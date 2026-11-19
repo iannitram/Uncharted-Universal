@@ -97,8 +97,21 @@ fn mode_is(value: &str) -> bool {
     std::env::var_os("BB_CPU_PATCH").is_some_and(|m| m == value)
 }
 
+/// `__cpuid` is a safe function on newer Rust and an unsafe one on the toolchain some CI jobs use,
+/// so the calls go through these two wrappers, which build on both.
+#[allow(unused_unsafe)]
+fn __cpuid(leaf: u32) -> std::arch::x86_64::CpuidResult {
+    // SAFETY: CPUID is present on every x86-64 CPU.
+    unsafe { std::arch::x86_64::__cpuid(leaf) }
+}
+
+#[allow(unused_unsafe)]
+fn __cpuid_count(leaf: u32, sub: u32) -> std::arch::x86_64::CpuidResult {
+    // SAFETY: CPUID is present on every x86-64 CPU.
+    unsafe { std::arch::x86_64::__cpuid_count(leaf, sub) }
+}
+
 fn host_missing() -> u32 {
-    use std::arch::x86_64::{__cpuid, __cpuid_count};
     let mut missing = 0;
     let max = __cpuid(0).eax;
     let max_extended = __cpuid(0x8000_0000).eax;
@@ -128,7 +141,7 @@ fn report_unsupported() {
         (28, "AVX"),
         (29, "F16C"),
     ];
-    let ecx = std::arch::x86_64::__cpuid(1).ecx;
+    let ecx = __cpuid(1).ecx;
     let mut list = String::new();
     for (bit, name) in LEAF1 {
         if ecx & (1 << bit) == 0 {
