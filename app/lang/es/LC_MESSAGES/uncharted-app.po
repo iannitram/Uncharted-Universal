@@ -49,8 +49,8 @@ msgstr "Esta aplicación está hecha con Slint, usado bajo la licencia Slint Roy
 msgid "Back"
 msgstr "Volver"
 
-msgid "Up and down scroll. A or B goes back."
-msgstr "Arriba y abajo desplazan. A o B vuelve."
+msgid "Up and down scroll. {} chooses, {} goes back."
+msgstr "Arriba y abajo para desplazarte. {} selecciona, {} vuelve atrás."
 
 msgid "Language: {}"
 msgstr "Idioma: {}"
@@ -171,3 +171,33 @@ msgstr "No se pudo guardar el ajuste: {}"
 
 msgid "Could not start the game: {}"
 msgstr "No se pudo iniciar el juego: {}"
+
+msgid "Button prompts"
+msgstr "Indicaciones de botones"
+
+msgid "Automatic"
+msgstr "Automático"
+
+msgid "Keyboard"
+msgstr "Teclado"
+
+msgid "Space"
+msgstr "Espacio"
+
+msgid "Erase"
+msgstr "Borrar"
+
+msgid "Done"
+msgstr "Listo"
+
+msgid "{}/{} Change keys   {} Choose   {} Cancel"
+msgstr "{}/{} Cambiar teclas   {} Seleccionar   {} Cancelar"
+
+msgid "Xbox"
+msgstr "Xbox"
+
+msgid "PlayStation"
+msgstr "PlayStation"
+
+msgid "Nintendo"
+msgstr "Nintendo"

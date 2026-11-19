@@ -49,8 +49,8 @@ msgstr "このアプリケーションは Slint で作られており、Slint Ro
 msgid "Back"
 msgstr "戻る"
 
-msgid "Up and down scroll. A or B goes back."
-msgstr "上下でスクロール。A または B で戻ります。"
+msgid "Up and down scroll. {} chooses, {} goes back."
+msgstr "上下でスクロール。{}で選択、{}で戻る。"
 
 msgid "Language: {}"
 msgstr "言語: {}"
@@ -171,3 +171,33 @@ msgstr "設定を保存できませんでした: {}"
 
 msgid "Could not start the game: {}"
 msgstr "ゲームを開始できませんでした: {}"
+
+msgid "Button prompts"
+msgstr "ボタン表示"
+
+msgid "Automatic"
+msgstr "自動"
+
+msgid "Keyboard"
+msgstr "キーボード"
+
+msgid "Space"
+msgstr "空白"
+
+msgid "Erase"
+msgstr "削除"
+
+msgid "Done"
+msgstr "完了"
+
+msgid "{}/{} Change keys   {} Choose   {} Cancel"
+msgstr "{}/{} キー切替   {} 選択   {} キャンセル"
+
+msgid "Xbox"
+msgstr "Xbox"
+
+msgid "PlayStation"
+msgstr "PlayStation"
+
+msgid "Nintendo"
+msgstr "Nintendo"

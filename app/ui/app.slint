@@ -40,6 +40,17 @@ export struct ButtonData {
     hint: string,
 }
 
+export struct PromptHints {
+    confirm: string,
+    back: string,
+    prev: string,
+    next: string,
+}
+
+export struct EntryRow {
+    keys: [string],
+}
+
 export struct RowData {
     picture: image,
     has-picture: bool,
@@ -191,6 +202,17 @@ component Prompt inherits Rectangle {
                 spacing: root.unit * 0.8;
                 @children
             }
+        }
+    }
+}
+
+component FocusList inherits Flickable {
+    public function reveal(top: length, row-height: length) {
+        if (top < -self.content-y) {
+            self.content-y = -top;
+        } else if (top + row-height > -self.content-y + self.height) {
+            self.content-y = clamp(self.height - top - row-height,
+                min(0px, self.height - self.content-height), 0px);
         }
     }
 }
@@ -412,6 +434,7 @@ component AboutPage inherits Rectangle {
     in property <[LicenceRow]> learned;
     // The language button's value, and which of the two buttons has focus (`AboutFocus`).
     in property <string> language-name;
+    in property <PromptHints> hints;
     in property <int> focused-index;
     // A click on button <int>: 0 the language button, 1 Back.
     callback clicked(int);
@@ -503,7 +526,7 @@ component AboutPage inherits Rectangle {
             Body {
                 vertical-alignment: center;
                 horizontal-alignment: right;
-                text: @tr("Up and down scroll. A or B goes back.");
+                text: @tr("Up and down scroll. {} chooses, {} goes back.", root.hints.confirm, root.hints.back);
                 color: #8a93a3;
             }
         }
@@ -543,6 +566,7 @@ export component AppWindow inherits Window {
     in property <int> current-game;
     in property <CardData> card;
     in property <[ButtonData]> actions;
+    in property <PromptHints> prompt-hints;
     in property <[string]> pages;
     // 0 = the action row, 1 = the page row (`Row::code`).
     in property <int> focus-row;
@@ -633,21 +657,16 @@ export component AppWindow inherits Window {
     in property <[string]> setting-notes;
     in property <bool> tuning;
 
-    // Keep the focused row of a page in sight: `y` and `h` in the page's list.
-    function follow(y: length, h: length) {
-        if (y < -list.content-y) {
-            list.content-y = -y;
-        } else if (y + h > -list.content-y + list.height) {
-            list.content-y = list.height - y - h;
-        }
-    }
     function follow-focus() {
         if (root.page == 1) {
-            root.follow(root.page-row * (root.unit * 3.4), root.unit * 3);
+            list.reveal(root.page-row * (root.unit * 3.4) +
+                (root.page-row >= root.save-slots.length ? backups-heading.height + root.unit * 0.4 : 0px),
+                root.unit * 3);
         } else if (root.page == 2) {
-            root.follow(
-                root.page-row == 0 ? 0 : root.page-row == 1 ? root.unit * 9 : root.unit * (12.6 + (root.page-row - 2) * 2.9),
-                root.page-row == 0 ? root.unit * 8.6 : root.unit * 2.8);
+            list.reveal(
+                root.page-row == 0 ? settings-cards.y : root.page-row == 1 ? settings-tune.y :
+                    settings-tune.y + settings-tune.height + root.unit * (0.4 + (root.page-row - 2) * 2.9),
+                root.page-row == 0 ? settings-cards.height : root.page-row == 1 ? settings-tune.height : root.unit * 2.5);
         }
     }
     changed page-row => {
@@ -655,6 +674,7 @@ export component AppWindow inherits Window {
     }
     changed page => {
         list.content-y = 0;
+        root.follow-focus();
     }
 
     public function scroll-about(steps: int) {
@@ -678,10 +698,22 @@ export component AppWindow inherits Window {
     in property <int> fr-code-cursor;
     in property <bool> fr-has-progress;
     in property <float> fr-progress;
+    in property <bool> fr-busy;
     in property <string> fr-error;
-    in property <string> fr-hint;
+    in property <[EntryRow]> fr-editor-rows;
+    in property <string> fr-editor-text;
+    in property <int> fr-editor-row;
+    in property <int> fr-editor-col;
+    in property <bool> fr-editor-open;
+    changed fr-editor-open => {
+        if (root.fr-editor-open) { keys.focus(); }
+    }
+    changed mode => {
+        keys.focus();
+    }
     // A first-run button clicked or tapped (`FirstRun::click`).
     callback fr-clicked(int);
+    callback editor-clicked(int, int);
     // Enter in the text field (`FirstRun::field`).
     callback field-accepted(string);
 
@@ -764,7 +796,7 @@ export component AppWindow inherits Window {
                 spacing: root.unit * 0.6;
                 Hint {
                     unit: root.unit;
-                    text: "LB";
+                    text: root.prompt-hints.prev;
                     vertical-alignment: center;
                 }
                 for name[i] in root.games: Rectangle {
@@ -788,7 +820,7 @@ export component AppWindow inherits Window {
                 }
                 Hint {
                     unit: root.unit;
-                    text: "RB";
+                    text: root.prompt-hints.next;
                     vertical-alignment: center;
                 }
             }
@@ -866,7 +898,7 @@ export component AppWindow inherits Window {
                 }
                 Hint {
                     unit: root.unit;
-                    text: "B  Quit";
+                    text: root.prompt-hints.back + "  Quit";
                 }
             }
         }
@@ -889,7 +921,7 @@ export component AppWindow inherits Window {
                     spacing: root.unit * 0.8;
                     FocusButton {
                         label: "Back";
-                        hint: "B";
+                        hint: root.prompt-hints.back;
                         unit: root.unit * 0.9;
                         clicked => {
                             root.page-clicked(-3, 0);
@@ -909,7 +941,7 @@ export component AppWindow inherits Window {
                     spacing: root.unit * 0.6;
                     Hint {
                         unit: root.unit;
-                        text: "LB";
+                        text: root.prompt-hints.prev;
                         vertical-alignment: center;
                     }
                     for name[i] in root.page-games: Rectangle {
@@ -933,12 +965,12 @@ export component AppWindow inherits Window {
                     }
                     Hint {
                         unit: root.unit;
-                        text: "RB";
+                        text: root.prompt-hints.next;
                         vertical-alignment: center;
                     }
                 }
 
-                list := Flickable {
+                list := FocusList {
                     vertical-stretch: 1;
                     content-height: root.page == 1 ? saves-list.preferred-height : settings-list.preferred-height;
 
@@ -992,7 +1024,8 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        if root.save-backups.length > 0: Text {
+                        backups-heading := Text {
+                            visible: root.save-backups.length > 0;
                             text: "Backups";
                             color: Theme.text;
                             font-size: root.unit * 1.1;
@@ -1040,7 +1073,7 @@ export component AppWindow inherits Window {
                         width: list.width;
                         visible: root.page == 2;
                         spacing: root.unit * 0.4;
-                        HorizontalLayout {
+                        settings-cards := HorizontalLayout {
                             spacing: root.unit * 0.6;
                             for card[i] in root.tune-cards: Rectangle {
                                 horizontal-stretch: 1;
@@ -1081,11 +1114,11 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-                        HorizontalLayout {
+                        settings-tune := HorizontalLayout {
                             alignment: start;
                             FocusButton {
                                 label: root.tuning ? "Tuning..." : "Tune this device";
-                                hint: "A";
+                                hint: root.prompt-hints.confirm;
                                 unit: root.unit * 0.9;
                                 focused: root.page-row == 1;
                                 clicked => {
@@ -1180,7 +1213,10 @@ export component AppWindow inherits Window {
                     }
                     Hint {
                         unit: root.unit;
-                        text: root.page == 1 ? "A  Choose   LB/RB  Game   B  Back" : "A  Choose   Left/Right  Change   B  Back";
+                        text: root.prompt-hints.confirm + "  Choose   " +
+                            (root.page == 1 ? root.prompt-hints.prev + "/" + root.prompt-hints.next + "  Game"
+                                            : "Left/Right  Change") + "   " +
+                            root.prompt-hints.back + "  Back";
                     }
                 }
             }
@@ -1202,7 +1238,7 @@ export component AppWindow inherits Window {
                     spacing: root.unit;
                     FocusButton {
                         label: "Delete";
-                        hint: "A";
+                        hint: root.prompt-hints.confirm;
                         unit: root.unit;
                         focused: true;
                         clicked => {
@@ -1211,7 +1247,7 @@ export component AppWindow inherits Window {
                     }
                     FocusButton {
                         label: "Keep";
-                        hint: "B";
+                        hint: root.prompt-hints.back;
                         unit: root.unit;
                         clicked => {
                             root.page-clicked(-2, 1);
@@ -1237,7 +1273,7 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 FocusButton {
                     label: "Quit";
-                    hint: "A";
+                    hint: root.prompt-hints.confirm;
                     unit: root.unit;
                     focused: true;
                     clicked => {
@@ -1246,7 +1282,7 @@ export component AppWindow inherits Window {
                 }
                 FocusButton {
                     label: "Stay";
-                    hint: "B";
+                    hint: root.prompt-hints.back;
                     unit: root.unit;
                     clicked => {
                         root.clicked(6, 0);
@@ -1268,62 +1304,75 @@ export component AppWindow inherits Window {
                 font-size: root.unit * 1.3;
                 font-weight: 700;
             }
-            for row[i] in root.rows: Rectangle {
-                min-height: root.unit * 2.6;
-                border-radius: root.unit * 0.3;
-                border-width: i == root.row-index ? 3px : 1px;
-                border-color: i == root.row-index ? Theme.accent : Theme.edge;
-                background: i == root.row-index ? Theme.button-focused : Theme.button;
-                HorizontalLayout {
-                    padding: root.unit * 0.3;
-                    spacing: root.unit * 0.8;
-                    Picture {
-                        width: root.unit * 2.6;
-                        source: row.picture;
-                        has-source: row.has-picture;
-                        label: "";
-                        unit: root.unit * 0.5;
-                    }
-                    Text {
-                        text: row.title;
-                        color: Theme.text;
-                        font-size: root.unit;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        horizontal-stretch: 2;
-                    }
-                    Text {
-                        text: row.detail;
-                        color: Theme.dim;
-                        font-size: root.unit * 0.9;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        horizontal-stretch: 2;
-                    }
-                    Text {
-                        text: row.when;
-                        color: Theme.dim;
-                        font-size: root.unit * 0.9;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: row.device;
-                        color: Theme.dim;
-                        font-size: root.unit * 0.9;
-                        vertical-alignment: center;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: row.note == "" ? row.slot : row.slot + "  (" + row.note + ")";
-                        color: Theme.dim;
-                        font-size: root.unit * 0.9;
-                        vertical-alignment: center;
-                    }
+            other-saves-list := FocusList {
+                property <int> focused-row: root.row-index;
+                changed focused-row => {
+                    self.reveal(self.focused-row * root.unit * 3.2, root.unit * 2.8);
                 }
-                TouchArea {
-                    clicked => {
-                        root.clicked(3, i);
+                preferred-height: min(self.content-height, root.height * 0.52);
+                content-height: other-saves-items.preferred-height;
+                vertical-stretch: 0;
+                other-saves-items := VerticalLayout {
+                    width: other-saves-list.width;
+                    spacing: root.unit * 0.4;
+                    for row[i] in root.rows: Rectangle {
+                        height: root.unit * 2.8;
+                        border-radius: root.unit * 0.3;
+                        border-width: i == root.row-index ? 3px : 1px;
+                        border-color: i == root.row-index ? Theme.accent : Theme.edge;
+                        background: i == root.row-index ? Theme.button-focused : Theme.button;
+                        HorizontalLayout {
+                            padding: root.unit * 0.3;
+                            spacing: root.unit * 0.8;
+                            Picture {
+                                width: root.unit * 2.6;
+                                source: row.picture;
+                                has-source: row.has-picture;
+                                label: "";
+                                unit: root.unit * 0.5;
+                            }
+                            Text {
+                                text: row.title;
+                                color: Theme.text;
+                                font-size: root.unit;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 2;
+                            }
+                            Text {
+                                text: row.detail;
+                                color: Theme.dim;
+                                font-size: root.unit * 0.9;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 2;
+                            }
+                            Text {
+                                text: row.when;
+                                color: Theme.dim;
+                                font-size: root.unit * 0.9;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: row.device;
+                                color: Theme.dim;
+                                font-size: root.unit * 0.9;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.note == "" ? row.slot : row.slot + "  (" + row.note + ")";
+                                color: Theme.dim;
+                                font-size: root.unit * 0.9;
+                                vertical-alignment: center;
+                            }
+                        }
+                        TouchArea {
+                            clicked => {
+                                root.clicked(3, i);
+                            }
+                        }
                     }
                 }
             }
@@ -1331,11 +1380,11 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 Hint {
                     unit: root.unit;
-                    text: "A  Continue this save";
+                    text: root.prompt-hints.confirm + "  Continue this save";
                 }
                 Hint {
                     unit: root.unit;
-                    text: "B  Back";
+                    text: root.prompt-hints.back + "  Back";
                 }
             }
         }
@@ -1411,14 +1460,14 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 Hint {
                     unit: root.unit;
-                    text: "A  Keep this save";
+                    text: root.prompt-hints.confirm + "  Keep this save";
                 }
                 Rectangle {
                     horizontal-stretch: 1;
                 }
                 Hint {
                     unit: root.unit;
-                    text: "B  Decide later";
+                    text: root.prompt-hints.back + "  Decide later";
                 }
             }
         }
@@ -1440,7 +1489,7 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 FocusButton {
                     label: "Play anyway";
-                    hint: "A";
+                    hint: root.prompt-hints.confirm;
                     unit: root.unit;
                     focused: true;
                     clicked => {
@@ -1449,7 +1498,7 @@ export component AppWindow inherits Window {
                 }
                 FocusButton {
                     label: "Back";
-                    hint: "B";
+                    hint: root.prompt-hints.back;
                     unit: root.unit;
                     clicked => {
                         root.clicked(6, 0);
@@ -1533,12 +1582,27 @@ export component AppWindow inherits Window {
                         }
                     }
                 }
-                for option[i] in root.fr-options: FocusButton {
-                    label: option;
-                    unit: root.unit;
-                    focused: root.fr-focus == i;
-                    clicked => {
-                        root.fr-clicked(i);
+                first-list := FocusList {
+                    visible: root.fr-options.length > 0;
+                    property <int> focused-row: root.fr-focus;
+                    changed focused-row => {
+                        self.reveal(self.focused-row * root.unit * 3, root.unit * 2.6);
+                    }
+                    preferred-height: min(self.content-height, root.height * 0.42);
+                    vertical-stretch: 0;
+                    content-height: first-options.preferred-height;
+                    first-options := VerticalLayout {
+                        width: first-list.width;
+                        spacing: root.unit * 0.4;
+                        for option[i] in root.fr-options: FocusButton {
+                            label: option;
+                            unit: root.unit;
+                            height: root.unit * 2.6;
+                            focused: root.fr-focus == i;
+                            clicked => {
+                                root.fr-clicked(i);
+                            }
+                        }
                     }
                 }
                 field := LineEdit {
@@ -1563,7 +1627,66 @@ export component AppWindow inherits Window {
                 }
                 Hint {
                     unit: root.unit;
-                    text: root.fr-hint;
+                    text: root.fr-busy ? "Please wait" : root.fr-code.length > 0 ?
+                        "Left and Right move, Up and Down change a digit, " + root.prompt-hints.confirm + " pairs, " +
+                            root.prompt-hints.back + " goes back" :
+                        root.prompt-hints.confirm + " chooses, " + root.prompt-hints.back + " goes back";
+                }
+            }
+
+            if root.fr-editor-open: Prompt {
+                width: parent.width;
+                height: parent.height;
+                unit: root.unit;
+                Text {
+                    text: root.fr-field;
+                    font-size: root.unit;
+                    color: Theme.dim;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.fr-editor-text + "▏";
+                    font-size: root.unit * 1.1;
+                    color: Theme.text;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                }
+                if root.fr-error != "": Text {
+                    text: root.fr-error;
+                    color: #ff8a7a;
+                    font-size: root.unit;
+                    wrap: word-wrap;
+                }
+                for row[r] in root.fr-editor-rows: HorizontalLayout {
+                    spacing: root.unit * 0.4;
+                    for key[c] in row.keys: FocusButton {
+                        label: key == " " ? @tr("Space") : key;
+                        unit: root.unit * 0.9;
+                        focused: root.fr-editor-row == r && root.fr-editor-col == c;
+                        clicked => { root.editor-clicked(r, c); }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: root.unit * 0.4;
+                    FocusButton {
+                        label: @tr("Erase");
+                        unit: root.unit;
+                        focused: root.fr-editor-row == root.fr-editor-rows.length && root.fr-editor-col == 0;
+                        clicked => { root.editor-clicked(root.fr-editor-rows.length, 0); }
+                    }
+                    FocusButton {
+                        label: @tr("Done");
+                        unit: root.unit;
+                        focused: root.fr-editor-row == root.fr-editor-rows.length && root.fr-editor-col == 1;
+                        clicked => { root.editor-clicked(root.fr-editor-rows.length, 1); }
+                    }
+                }
+                Hint {
+                    unit: root.unit;
+                    wrap: word-wrap;
+                    text: @tr("{}/{} Change keys   {} Choose   {} Cancel",
+                        root.prompt-hints.prev, root.prompt-hints.next,
+                        root.prompt-hints.confirm, root.prompt-hints.back);
                 }
             }
         }
@@ -1580,6 +1703,7 @@ export component AppWindow inherits Window {
             shipped: root.shipped-licences;
             learned: root.learned-licences;
             language-name: root.language-name;
+            hints: root.prompt-hints;
             focused-index: root.about-focus;
             clicked(index) => {
                 root.clicked(7, index);
@@ -1617,14 +1741,19 @@ export component AppWindow inherits Window {
                 }
             }
 
-            Flickable {
+            fleet-list := FocusList {
                 vertical-stretch: 1;
-                VerticalLayout {
+                content-height: fleet-items.preferred-height;
+                fleet-items := VerticalLayout {
+                    width: fleet-list.width;
                     alignment: start;
                     spacing: 8px;
                     for row[i] in root.fleet-rows: FleetRowView {
                         device: row;
                         focused: root.fleet-focus == i;
+                        changed focused => {
+                            if (self.focused) { fleet-list.reveal(self.y, self.height); }
+                        }
                         activated => { root.clicked(8, i); }
                     }
                     if root.fleet-empty != "": Text {
@@ -1640,7 +1769,7 @@ export component AppWindow inherits Window {
                 alignment: start;
                 LauncherButton {
                     width: 160px;
-                    label: @tr("Back");
+                    label: root.prompt-hints.back + "  " + @tr("Back");
                     focused: root.fleet-focus == root.fleet-back-index;
                     activated => { root.clicked(8, root.fleet-back-index); }
                 }

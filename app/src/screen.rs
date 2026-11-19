@@ -562,9 +562,9 @@ impl Screen {
                 .iter()
                 .enumerate()
                 .map(|(i, a)| match a {
-                    _ if i == 0 => "A",
-                    Action::OtherSaves(_) => "Y",
-                    _ => "",
+                    _ if i == 0 => Some(Input::Activate),
+                    Action::OtherSaves(_) => Some(Input::OtherSaves),
+                    _ => None,
                 })
                 .collect(),
             pages: Page::ALL.iter().map(|p| p.label()).collect(),
@@ -707,8 +707,8 @@ pub struct View {
     pub current: usize,
     pub card: CardView,
     pub actions: Vec<String>,
-    /// The controller button shown on each action: A on the default one, Y on Other saves.
-    pub action_hints: Vec<&'static str>,
+    /// The input shown on each action: confirm on the default one and Other saves on its button.
+    pub action_hints: Vec<Option<Input>>,
     pub pages: Vec<&'static str>,
     pub focus: Focus,
     pub status: String,

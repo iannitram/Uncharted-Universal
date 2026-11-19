@@ -12,13 +12,17 @@
 //! types). Work that takes time is a [`Job`] the caller runs off the UI thread; what it finds
 //! comes back as an [`Event`].
 
-use crate::focus::{self, Digits};
+use crate::focus::{self, Digits, Grid};
 use crate::screen::Input;
 use std::path::PathBuf;
 use uncharted_core::dump::DumpReport;
 use uncharted_core::games::Game;
 use uncharted_core::setup::client::{self, HubChoice, Pulled};
 use uncharted_core::setup::{self, bytes_text, Prepared};
+
+mod text_entry;
+
+use text_entry::{Edit, Editor, EditorView};
 
 /// How many steps the page counts: how to set up, the files or the hub, preparing or pulling,
 /// Steam.
@@ -143,7 +147,6 @@ enum Step {
 }
 
 /// What the page shows.
-#[derive(Debug, Clone, PartialEq)]
 pub struct FirstRunView {
     /// "Step 2 of 4".
     pub step: String,
@@ -164,13 +167,14 @@ pub struct FirstRunView {
     pub busy: bool,
     /// The last error, in a sentence; empty when none.
     pub error: String,
-    /// What the buttons do: "A chooses, B goes back".
-    pub hint: String,
+    /// The controller text editor, when manually entering a folder or hub address.
+    pub editor: Option<EditorView>,
 }
 
 /// The first-run page.
 pub struct FirstRun {
     step: Step,
+    editor: Option<Editor>,
     focus: usize,
     error: String,
     /// The game whose card's Set up opened the page: only that one is prepared.
@@ -203,6 +207,7 @@ impl FirstRun {
     pub fn new(only: Option<Game>, steam: bool) -> FirstRun {
         FirstRun {
             step: Step::Welcome,
+            editor: None,
             focus: 0,
             error: String::new(),
             only,
@@ -214,6 +219,7 @@ impl FirstRun {
 
     fn go(&mut self, step: Step) {
         self.step = step;
+        self.editor = None;
         self.focus = 0;
         self.error.clear();
     }
@@ -260,8 +266,58 @@ impl FirstRun {
         }
     }
 
+    /// Pad activation opens the text editor on the two manual-entry options.
+    pub fn handle_pad(&mut self, input: Input, field_text: &str) -> Job {
+        if self.editor.is_none() && input == Input::Activate {
+            let job = self.handle(Key::Input(input));
+            if job == Job::EditField {
+                self.editor = Some(Editor::new(field_text));
+                self.error.clear();
+                return Job::None;
+            }
+            return job;
+        }
+        self.handle(Key::Input(input))
+    }
+
+    pub fn editor_click(&mut self, key: Grid) -> Job {
+        let Some(editor) = &mut self.editor else {
+            return Job::None;
+        };
+        let edit = editor.press(key);
+        self.finish_edit(edit)
+    }
+
+    fn finish_edit(&mut self, edit: Edit) -> Job {
+        match edit {
+            Edit::None => Job::None,
+            Edit::Cancel => {
+                self.editor = None;
+                self.error.clear();
+                Job::None
+            }
+            Edit::Submit => {
+                let Some(editor) = &self.editor else {
+                    return Job::None;
+                };
+                self.field(&editor.text.clone())
+            }
+        }
+    }
+
     /// A key from the keyboard or the controller.
     pub fn handle(&mut self, key: Key) -> Job {
+        if let Some(editor) = &mut self.editor {
+            let edit = match key {
+                Key::Input(input) => editor.handle(input),
+                Key::Backspace => {
+                    editor.text.pop();
+                    Edit::None
+                }
+                Key::Digit(_) => Edit::None,
+            };
+            return self.finish_edit(edit);
+        }
         if let Step::Code { digits, .. } = &mut self.step {
             match key {
                 Key::Input(Input::Move(nav)) => *digits = digits.step(nav),
@@ -742,13 +798,6 @@ impl FirstRun {
                     ..
                 }
         );
-        let hint = if !code.is_empty() {
-            "Left and Right move, Up and Down change a digit, A pairs, B goes back"
-        } else if busy {
-            "Please wait"
-        } else {
-            "A chooses, B goes back"
-        };
         if lines.is_empty() {
             lines.push(String::new());
         }
@@ -764,7 +813,7 @@ impl FirstRun {
             progress,
             busy,
             error: self.error.clone(),
-            hint: hint.to_owned(),
+            editor: self.editor.as_ref().map(Editor::view),
         }
     }
 }
