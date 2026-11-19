@@ -26,17 +26,25 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. BB_DMEM_MB raises it (the resolution
- * patches above 1080p need about 4 GiB more; run.sh sets it). */
+/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. The loader can raise it before the
+ * first allocation, or the player can set BB_DMEM_MB for an explicit resolution. */
+static uint64_t direct_pool_bytes;
+#ifdef _WIN32
+int runtime_memory_set_dmem(uint32_t mb) {
+    if (mb < 5056 || mb > 16384 || direct_pool_bytes) return -1;
+    direct_pool_bytes = (uint64_t)mb << 20;
+    return 0;
+}
+#endif
+
 static uint64_t pool_size_bytes(void) {
-    static uint64_t size;
-    if (!size) {
+    if (!direct_pool_bytes) {
         const char *env = getenv("BB_DMEM_MB");
         uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
         if (mb < 5056 || mb > 16384) mb = 5056;
-        size = mb * 1024 * 1024;
+        direct_pool_bytes = mb << 20;
     }
-    return size;
+    return direct_pool_bytes;
 }
 #define POOL_SIZE pool_size_bytes()
 #define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024)

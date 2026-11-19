@@ -443,19 +443,10 @@ AVFrame* VdecDecoder::ConvertNV12Frame(AVFrame& frame) {
 }
 
 void GameResolution(s32& width, s32& height) {
-    static s32 w = -1, h = 0;
-    if (w < 0) {
-        w = 0;
-        unsigned pw = 0, ph = 0;
-        if (const char* res = std::getenv("BB_GAME_RES");
-            res && std::sscanf(res, "%ux%u", &pw, &ph) == 2 && pw >= 640 && ph >= 360 &&
-            !(pw == 1920 && ph == 1080)) {
-            w = static_cast<s32>(pw & ~1u);
-            h = static_cast<s32>(ph & ~1u);
-        }
-    }
-    width = w;
-    height = h;
+    u32 w = 0, h = 0;
+    BbMovie::GameResolution(w, h);
+    width = static_cast<s32>(w);
+    height = static_cast<s32>(h);
 }
 
 } // namespace Libraries::Videodec2

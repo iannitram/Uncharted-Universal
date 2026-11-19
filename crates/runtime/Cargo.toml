@@ -20,6 +20,7 @@ name = "uncharted-run"
 path = "src/bin/uncharted-run.rs"
 
 [dependencies]
+uncharted_core = { path = "../core" }
 # Escape the three player-visible save strings without ever serializing a guest buffer.
 serde_json = "1"
 # Vulkan for `uncharted-run --probe` (#171), loaded at run time: a machine without a Vulkan

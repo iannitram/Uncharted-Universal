@@ -26,6 +26,15 @@ typedef struct RuntimeExport {
   void *function;
 } RuntimeExport;
 
+// A size already applied to the guest image, to share with the presenter and direct memory.
+// Zero dimensions mean the loader should use its existing explicit-resolution path.
+typedef struct RuntimeDisplaySize {
+  uint32_t width;
+  uint32_t height;
+  // New direct memory capacity in MiB, or zero if the existing capacity is sufficient.
+  uint32_t direct_memory_mib;
+} RuntimeDisplaySize;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -145,6 +154,17 @@ void runtime_content_report(void);
 // # Safety
 // `image` is null or points to `image_size` writable bytes.
 void runtime_display_patch(uint8_t *image, uint64_t image_size);
+#endif
+
+#if defined(__x86_64__)
+// Apply the automatic render-size patch before the GPU presenter is constructed.
+//
+// # Safety
+// `image` is null or points to `image_size` writable bytes and is used only here.
+struct RuntimeDisplaySize runtime_display_auto(uint8_t *image,
+                                               uint64_t image_size,
+                                               uint32_t width,
+                                               uint32_t height);
 #endif
 
 // Maps guest mount point `guest` on host directory `host` (a mount of the same name is

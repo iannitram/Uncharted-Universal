@@ -1617,6 +1617,18 @@ void runtime_restart(void) {
 #endif
 }
 
+#ifdef _WIN32
+static BbRenderSize prepare_window_render(uint32_t width, uint32_t height, void *context) {
+    const uint64_t image_size = *(const uint64_t *)context;
+    RuntimeDisplaySize render = runtime_display_auto(image,image_size,width,height);
+    if (render.direct_memory_mib && runtime_memory_set_dmem(render.direct_memory_mib))
+        fail("cannot configure automatic render direct memory");
+    if (render.width)
+        printf("Display: window %ux%u, startup render %ux%u\n",width,height,render.width,render.height);
+    return (BbRenderSize){render.width,render.height};
+}
+#endif
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     /* The runtime's exports are Rust now (crates/runtime, linked as a static library): a library
@@ -1853,7 +1865,17 @@ int main(int argc, char **argv) {
         uint64_t sdk=0;
         if (procparam) memcpy(&sdk,image+procparam+16,8); /* procparam: size, magic, count, sdk_version */
         { char base[32]; snprintf(base,sizeof(base),"0x%llx",(unsigned long long)(uintptr_t)image); setenv("BB_GUEST_IMAGE_BASE",base,1); }
-        BbGpuConfig gpu={title,serial,user_dir ? user_dir : "user",(uint32_t)sdk,attributes,1920,1080};
+        BbGpuConfig gpu={.title=title,.serial=serial,.user_dir=user_dir ? user_dir : "user",
+                         .sdk_version=(uint32_t)sdk,.psf_attributes=attributes,.width=1920,.height=1080};
+#ifdef _WIN32
+        /* External boot patches and the legacy overrides can set their own render dimensions. */
+        const char *legacy_size=getenv("BB_RENDER_RES"), *deck720=getenv("BB_RENDER_720P");
+        if (!n_patch_files && !getenv("BB_GAME_RES") && (!legacy_size || !*legacy_size) &&
+            (!deck720 || *deck720!='1')) {
+            gpu.prepare_render=prepare_window_render;
+            gpu.render_context=&size;
+        }
+#endif
         gpu_enabled=1; /* page tracking starts while the rasterizer registers guest memory */
         if (bbgpu_init(&gpu)) fail("GPU initialization failed");
         printf("GPU: window and Vulkan presenter ready; SDK 0x%08x, %u HLE symbols\n",(unsigned)sdk,bbgpu_symbol_count());

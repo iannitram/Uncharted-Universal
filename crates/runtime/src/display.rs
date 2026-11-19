@@ -4,7 +4,7 @@
 //! reads. Rewriting the immediates of that function makes the game allocate and render
 //! everything at another size. `tests/test_display.c`'s cases are this module's tests now.
 //!
-//! `BB_GAME_RES=WxH` is the game's render and display size (default: untouched, 1920x1080).
+//! `BB_GAME_RES=WxH` overrides the Windows loader's startup selection from the game window.
 //!
 //! The init function is found by its code, not by an offset, so every version of the three
 //! executables is covered: `mov [r+8],1920  mov [r+0xc],1080` ... stores of 1920/1080 at
@@ -18,6 +18,9 @@
 //!
 //! The patch itself, [`patch`], is plain byte work on any host; the loader calls it through
 //! [`ffi::runtime_display_patch`] (x86-64 only) with the process environment.
+
+use std::collections::BTreeMap;
+use uncharted_core::{games::Game, render_size};
 
 /// The 16:9 aspect the games store, `1.7777778f32`.
 const ASPECT_16_9: u32 = 0x3fe3_8e39;
@@ -222,14 +225,8 @@ pub fn change_entry(
     let mut changed = 0;
     let mut i = 0usize;
     while i + 32 <= image.len() {
-        if get32(image, i) == Some(id) && get32(image, i + 4) == Some(kind) {
-            let size = get64(image, i + 8);
-            let alignment = get64(image, i + 16);
-            let fits = alignment.is_power_of_two()
-                && size >= min_mb << 20
-                && size <= max_mb << 20
-                && !(delta_mb < 0 && size < (delta_mb.wrapping_neg() as u64) << 20);
-            if fits {
+        if let Some(size) = budget_entry(&image[i..i + 32], id, kind, min_mb, max_mb) {
+            if !(delta_mb < 0 && size < (delta_mb.wrapping_neg() as u64) << 20) {
                 let size = (size as i64).wrapping_add(delta_mb << 20) as u64;
                 put64(image, i + 8, size);
                 log(&format!(
@@ -243,6 +240,38 @@ pub fn change_entry(
         i += 8;
     }
     changed
+}
+
+fn budget_entry(entry: &[u8], id: u32, kind: u32, min_mb: u64, max_mb: u64) -> Option<u64> {
+    if get32(entry, 0) != Some(id) || get32(entry, 4) != Some(kind) {
+        return None;
+    }
+    let size = get64(entry, 8);
+    ((min_mb << 20..=max_mb << 20).contains(&size) && get64(entry, 16).is_power_of_two())
+        .then_some(size)
+}
+
+/// How much room the original guest GPU arena has for both render heaps. An ambiguous or
+/// incomplete table can still render at the stock pixel budget without changing that table.
+fn gpu_headroom_mib(image: &[u8]) -> u32 {
+    let unique_entry = |id, kind, min, max| {
+        let mut entries = image
+            .windows(32)
+            .step_by(8)
+            .filter_map(|entry| budget_entry(entry, id, kind, min, max));
+        entries.next().filter(|_| entries.next().is_none())
+    };
+    if unique_entry(133, 6, 300, 1500).is_none()
+        || unique_entry(132, 6, 100, 1000).is_none()
+        || !image
+            .windows(MEMORY_TOTAL.len())
+            .any(|word| word == MEMORY_TOTAL)
+    {
+        return 0;
+    }
+    unique_entry(3, 2, 2000, 4000)
+        .map(|size| (((1_u64 << 32) - 1 - size) >> 20) as u32)
+        .unwrap_or(0)
 }
 
 /// The GPU memory budget for a larger size: the render target heaps grow by `BB_GAME_RT_MB` and
@@ -334,8 +363,8 @@ pub fn grow_budget(
 /// - `cmp qword [r+0x10], 0x400000` (the decode path's check of the frame buffer size).
 ///
 /// Each becomes `bytes`; returns how many immediates changed.
-pub fn patch_movie_slots(image: &mut [u8], bytes: u32) -> usize {
-    let mut patched = 0;
+fn movie_slots(image: &[u8]) -> Vec<usize> {
+    let mut slots = Vec::new();
     let mut i = 0usize;
     while i + 64 < image.len() {
         let p = &image[i..];
@@ -347,8 +376,7 @@ pub fn patch_movie_slots(image: &mut [u8], bytes: u32) -> usize {
             && p[3] == 0x10
             && at(4) == Some(MOVIE_FRAME)
         {
-            put32(image, i + 4, bytes);
-            patched += 1;
+            slots.push(i + 4);
             i += 1;
             continue;
         }
@@ -370,16 +398,100 @@ pub fn patch_movie_slots(image: &mut [u8], bytes: u32) -> usize {
         let offset_before =
             p[7] & 0xf8 == 0x48 && p[8] == 0x29 && p[10] == 0xb8 && at(11) == Some(0xffff_ffff);
         if slot {
-            put32(image, i + 3, bytes);
-            put32(image, i + 15, bytes);
-            patched += 2;
+            slots.extend([i + 3, i + 15]);
         } else if offset_before {
-            put32(image, i + 3, bytes);
-            patched += 1;
+            slots.push(i + 3);
         }
         i += 1;
     }
-    patched
+    slots
+}
+
+pub fn patch_movie_slots(image: &mut [u8], bytes: u32) -> usize {
+    let slots = movie_slots(image);
+    for &at in &slots {
+        put32(image, at, bytes);
+    }
+    slots.len()
+}
+
+fn is_display_block(block: &[u8]) -> bool {
+    block[0] == 0xc7
+        && block[1] & 0xf8 == 0x40
+        && block[2] == 0x08
+        && get32(block, 3) == Some(1920)
+        && block[7] == 0xc7
+        && block[8] == block[1]
+        && block[9] == 0x0c
+        && get32(block, 10) == Some(1080)
+}
+
+/// A size already applied to the guest image, to share with the presenter and direct memory.
+/// Zero dimensions mean the loader should use its existing explicit-resolution path.
+#[repr(C)]
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct RuntimeDisplaySize {
+    pub width: u32,
+    pub height: u32,
+    /// New direct memory capacity in MiB, or zero if the existing capacity is sufficient.
+    pub direct_memory_mib: u32,
+}
+
+fn automatic_patch(
+    image: &mut [u8],
+    screen: (u32, u32),
+    var: &dyn Fn(&str) -> Option<String>,
+    log: &mut dyn FnMut(&str),
+) -> Option<RuntimeDisplaySize> {
+    const DIRECT_BASE: u32 = 5056;
+    const DIRECT_LIMIT: u32 = 16384;
+    let game = var("BB_EXE")
+        .as_deref()
+        .and_then(|name| Game::from_key(name).or_else(|| Game::from_executable(name)));
+    // BB_RESOLUTION is the launcher's preferred size. An explicit BB_GAME_RES opts out before
+    // this path; a preference uses the same memory checks as a size from the window.
+    let requested = var("BB_RESOLUTION")
+        .and_then(|size| parse_size(size.as_bytes()))
+        .filter(|&(width, height)| width > 0 && height > 0)
+        .unwrap_or(screen);
+    if requested == render_size::OUTPUT_SIZE || !image.windows(14).any(is_display_block) {
+        return None;
+    }
+
+    let explicit_dmem = var("BB_DMEM_MB").filter(|size| !size.is_empty());
+    let direct_limit = explicit_dmem.as_deref().map_or(DIRECT_LIMIT, |size| {
+        u32::try_from(c_signed(size.as_bytes()))
+            .ok()
+            .filter(|mb| (DIRECT_BASE..=DIRECT_LIMIT).contains(mb))
+            .unwrap_or(DIRECT_BASE)
+    });
+    let headroom = gpu_headroom_mib(image).min(direct_limit - DIRECT_BASE);
+    let (width, height) = render_size::automatic_size(requested, game, headroom)?;
+    if (width, height) == render_size::OUTPUT_SIZE {
+        return None;
+    }
+
+    let variables = render_size::game_res_env(&BTreeMap::from([(
+        "BB_GAME_RES".to_owned(),
+        format!("{width}x{height}"),
+    )]));
+    if render_size::movie_slot_mib((width, height)) > 4 && movie_slots(image).len() < 4 {
+        log("Display: automatic size skipped because movie frame buffers were not found");
+        return None;
+    }
+    patch(image, &|name| variables.get(name).cloned(), log);
+    Some(RuntimeDisplaySize {
+        width,
+        height,
+        direct_memory_mib: if explicit_dmem.is_some() {
+            0
+        } else {
+            variables
+                .get("BB_DMEM_MB")
+                .and_then(|size| size.parse().ok())
+                .unwrap_or(0)
+        },
+    })
 }
 
 /// `BB_GAME_RES` (and the budget, skip and movie variables, read through `var`) applied to the
@@ -399,15 +511,7 @@ pub fn patch(image: &mut [u8], var: &dyn Fn(&str) -> Option<String>, log: &mut d
     // mov dword [r+8],1920 ; mov dword [r+0xc],1080  (same base register)
     let mut i = 0usize;
     while i + 14 <= image.len() {
-        let block = image[i] == 0xc7
-            && image[i + 1] & 0xf8 == 0x40
-            && image[i + 2] == 0x08
-            && get32(image, i + 3) == Some(1920)
-            && image[i + 7] == 0xc7
-            && image[i + 8] == image[i + 1]
-            && image[i + 9] == 0x0c
-            && get32(image, i + 10) == Some(1080);
-        if block {
+        if is_display_block(&image[i..i + 14]) {
             stores += patch_block(image, i, BLOCK_WINDOW, (w, h), skip);
             blocks += 1;
         }
@@ -428,7 +532,12 @@ pub fn patch(image: &mut [u8], var: &dyn Fn(&str) -> Option<String>, log: &mut d
 /// The exported C function of this module, declared in `include/uncharted_runtime.h`.
 #[cfg(target_arch = "x86_64")]
 pub mod ffi {
+    use super::RuntimeDisplaySize;
     use crate::abi::host;
+
+    fn var(name: &str) -> Option<String> {
+        std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
+    }
 
     /// `BB_GAME_RES`: rewrites the display configuration the game initializes, the memory
     /// budget and the movie frame buffers in the loaded executable (`image_size` bytes at
@@ -443,9 +552,29 @@ pub mod ffi {
         }
         // SAFETY: the loader passes its loaded image, `image_size` writable bytes.
         let image = unsafe { std::slice::from_raw_parts_mut(image, image_size as usize) };
-        let var =
-            |name: &str| std::env::var_os(name).map(|value| value.to_string_lossy().into_owned());
         super::patch(image, &var, &mut |line| host::out_line(line));
+    }
+
+    /// Apply the automatic render-size patch before the GPU presenter is constructed.
+    ///
+    /// # Safety
+    /// `image` is null or points to `image_size` writable bytes and is used only here.
+    #[no_mangle]
+    pub unsafe extern "C" fn runtime_display_auto(
+        image: *mut u8,
+        image_size: u64,
+        width: u32,
+        height: u32,
+    ) -> RuntimeDisplaySize {
+        if image.is_null() {
+            return RuntimeDisplaySize::default();
+        }
+        // SAFETY: the loader passes its loaded image, `image_size` writable bytes.
+        let image = unsafe { std::slice::from_raw_parts_mut(image, image_size as usize) };
+        super::automatic_patch(image, (width, height), &var, &mut |line| {
+            host::out_line(line)
+        })
+        .unwrap_or_default()
     }
 }
 
@@ -524,6 +653,91 @@ mod tests {
 
     fn store(image: &[u8], n: usize) -> u32 {
         get(image, CODE + n * 7 + 3)
+    }
+
+    #[test]
+    fn automatic_size_reaches_the_guest_aspect_heaps_and_movie_slots() {
+        const MOVIE: usize = 0x2000;
+        for (window, expected) in [
+            ((2208, 1840), Some((2208, 1840))),
+            ((2266, 1488), Some((2272, 1488))),
+            ((1920, 1080), None),
+            ((2560, 1600), Some((2560, 1600))),
+            ((2092, 1080), Some((2096, 1080))),
+        ] {
+            let mut image = synthetic_image();
+            let movie = movie_image();
+            image[MOVIE..MOVIE + movie.len()].copy_from_slice(&movie);
+            let original = image.clone();
+            let chosen = automatic_patch(&mut image, window, &vars(&[]), &mut |_| {});
+            assert_eq!(chosen.as_ref().map(|s| (s.width, s.height)), expected);
+            if let Some(chosen) = chosen {
+                assert_eq!(
+                    (store(&image, 0), store(&image, 1)),
+                    (chosen.width, chosen.height)
+                );
+                assert_eq!(
+                    store(&image, 5),
+                    (chosen.width as f32 / chosen.height as f32).to_bits()
+                );
+                let growth = u64::from(chosen.direct_memory_mib) - 5056;
+                assert_eq!(get64(&image, TABLE + 8) >> 20, 2988 + growth);
+                assert_eq!(get64(&image, TOTAL + 2) >> 20, 4608 + growth);
+                assert_eq!(
+                    get(&image, MOVIE + 0x14) >> 20,
+                    render_size::movie_slot_mib((chosen.width, chosen.height))
+                );
+            } else {
+                assert_eq!(image, original);
+            }
+        }
+    }
+
+    #[test]
+    fn automatic_size_obeys_the_image_arena_and_host_direct_memory() {
+        let mut image = synthetic_image();
+        let movie = movie_image();
+        image[0x2000..0x2000 + movie.len()].copy_from_slice(&movie);
+        put_entry(&mut image, TABLE, 3, 2, 3967);
+        let mut smaller = image.clone();
+        let chosen = automatic_patch(&mut image, (3840, 2400), &vars(&[]), &mut |_| {}).unwrap();
+        assert_eq!(chosen.direct_memory_mib, 5056 + 128);
+        assert_eq!(get64(&image, TABLE + 8) >> 20, 4095);
+        assert!(chosen.width < 3840 && chosen.height < 2400);
+
+        let chosen = automatic_patch(
+            &mut smaller,
+            (3840, 2400),
+            &vars(&[("BB_DMEM_MB", "5183")]),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(chosen.direct_memory_mib, 0);
+        assert_eq!(get64(&smaller, TABLE + 8) >> 20, 3967 + 64);
+        assert!(chosen.width * chosen.height < store(&image, 0) * store(&image, 1));
+    }
+
+    #[test]
+    fn automatic_preferences_and_missing_patches() {
+        let mut image = synthetic_image();
+        let original = image.clone();
+        // Extra movie memory is required; leave the original image intact without the sites.
+        assert_eq!(
+            automatic_patch(&mut image, (2560, 1600), &vars(&[]), &mut |_| {}),
+            None
+        );
+        assert_eq!(image, original);
+        let chosen = automatic_patch(
+            &mut image,
+            (2560, 1600),
+            &vars(&[("BB_RESOLUTION", "1280x800")]),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            (chosen.width, chosen.height, chosen.direct_memory_mib),
+            (1280, 800, 0)
+        );
     }
 
     #[test]
