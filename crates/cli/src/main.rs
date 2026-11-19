@@ -9,7 +9,7 @@
 //! ```text
 //! uncharted-universal check        [<dump folder>]
 //! uncharted-universal prepare      <u1|u2|u3> [--dump <folder>]
-//! uncharted-universal play         <u1|u2|u3> [--keep server|local] [-- <runtime arguments>]
+//! uncharted-universal play         <u1|u2|u3> [--keep server|local | --relay-prompt stdio] [-- <runtime arguments>]
 //! uncharted-universal steam-add    [<u1|u2|u3>] [--userdata <folder>] [--dump <folder>]
 //! uncharted-universal patches      [<dump folder>] [--patches-dir <folder>]
 //! uncharted-universal hub          serve [--builds <folder>] [--role <hub>] [--port <n>] ...
@@ -58,7 +58,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ),
     (
         "play",
-        "<u1|u2|u3> [--keep server|local] [-- <args>]",
+        "<u1|u2|u3> [--keep server|local | --relay-prompt stdio] [-- <args>]",
         "pull the save, play, push the save",
     ),
     (

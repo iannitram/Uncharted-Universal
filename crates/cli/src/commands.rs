@@ -6,6 +6,7 @@ use crate::args::{self, Parsed};
 use crate::{Ctx, Outcome, FAILED};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use uncharted_core::artwork::{self, Art};
@@ -17,7 +18,9 @@ use uncharted_core::patches::{self, Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::prepare::{self, PrepareOptions};
 use uncharted_core::profile::DeviceProfile;
+use uncharted_core::relay::DesktopRelay;
 use uncharted_core::run_env::Settings;
+use uncharted_core::savecard::{SaveCard, SideBySide};
 use uncharted_core::steam::{self, Shortcut};
 use uncharted_core::{host_env, profile, saves, Error, Result};
 
@@ -182,8 +185,6 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlayPlan {
     pub install: PathBuf,
-    /// The selected save slot's folder: what save-relay syncs (`saves::relay_saves_dir`).
-    pub saves_dir: PathBuf,
     /// `run.py`'s folders: the install is its `BB_DATA_DIR` (`out/` inside it), the user
     /// folder is `saves::user_dir`.
     pub paths: Paths,
@@ -199,8 +200,11 @@ pub struct PlayPlan {
 pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
     let vars = vars(ctx)?;
     let install = AppDirs::new(&vars).install(game.key());
-    let user_dir = saves::user_dir(ctx.os, &vars, &install)?;
-    let saves_dir = saves::relay_saves_dir(&user_dir, game);
+    let default_user = saves::user_dir(ctx.os, &vars, &install)?;
+    let user_dir = ctx
+        .var("BB_USER_DIR")
+        .map(PathBuf::from)
+        .unwrap_or(default_user);
     let player_env: BTreeMap<String, String> = ctx
         .env
         .iter()
@@ -220,7 +224,6 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
         .unwrap_or_else(|| beside(&ctx.exe, "uncharted-run"));
     Ok(PlayPlan {
         install,
-        saves_dir,
         paths,
         profile: device,
         player_env,
@@ -271,19 +274,17 @@ fn beside(exe: &Path, name: &str) -> PathBuf {
     }
 }
 
-/// save-relay is not linked into this build yet (roadmap 9.01): every sync is a no-op that
-/// says so, and the save stays on this device.
-pub struct LocalRelay;
+/// Platforms whose release does not yet carry the helper keep local play available.
+struct UnbundledRelay;
 
-pub const NO_RELAY: &str =
-    "save-relay is not in this build yet (roadmap 9.01); the save stays on this device";
-
-impl Relay for LocalRelay {
-    fn pull(&self, _saves_dir: &Path, _resolve: Option<Keep>) -> Result<Sync> {
-        Ok(Sync::Done(NO_RELAY.into()))
+impl Relay for UnbundledRelay {
+    fn pull(&self, _: Game, _: &Path, _: Option<Keep>) -> Result<Sync> {
+        Ok(Sync::LocalOnly(
+            "This platform build has no Save Relay; using local saves.",
+        ))
     }
-    fn push(&self, _saves_dir: &Path, _resolve: Option<Keep>) -> Result<Sync> {
-        Ok(Sync::Done(NO_RELAY.into()))
+    fn push(&self, game: Game, path: &Path, keep: Option<Keep>) -> Result<Sync> {
+        self.pull(game, path, keep)
     }
 }
 
@@ -296,6 +297,7 @@ impl Relay for LocalRelay {
 pub struct RuntimeRunner {
     pub program: PathBuf,
     pub extra_args: Vec<String>,
+    pub relay_prompt_stdio: bool,
     /// `host_env::changes` for this machine.
     pub host: Vec<host_env::Change>,
 }
@@ -312,6 +314,9 @@ impl RuntimeRunner {
             .args(&self.extra_args)
             .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null());
+        if self.relay_prompt_stdio {
+            command.stdout(Stdio::from(io::stderr()));
+        }
         host_env::apply_to_command(&mut command, &self.host);
         command
     }
@@ -330,35 +335,65 @@ impl Runner for RuntimeRunner {
     }
 }
 
-/// The answer to a sync conflict: `--keep`, else a question on the terminal, else this
-/// device's save (nobody is there to ask, as in Game Mode; save-relay keeps the other copy).
-fn choose_keep(keep: Option<Keep>, interactive: bool) -> Keep {
+/// Only data from the conflict that stopped this particular pull or push goes to the GUI.
+fn conflict_event(phase: &str, pair: &SideBySide) -> serde_json::Value {
+    let card = |c: &SaveCard| {
+        serde_json::json!({
+            "device": c.device, "saved_unix": c.saved_unix, "detail": c.detail,
+            "play_time_secs": c.play_time_secs, "slot": c.slot,
+        })
+    };
+    serde_json::json!({
+        "version": 1, "event": "save-conflict", "phase": phase, "game": pair.local.game.key(),
+        "server": card(&pair.server), "local": card(&pair.local),
+    })
+}
+
+fn choose_keep(
+    keep: Option<Keep>,
+    interactive: bool,
+    stdio: bool,
+    phase: &str,
+    cards: &SideBySide,
+) -> Result<Keep> {
     if let Some(keep) = keep {
-        return keep;
+        return Ok(keep);
     }
-    if interactive {
-        for _ in 0..3 {
-            eprint!(
-                "The save changed both here and on the save server. Keep the (s)erver's or this \
-                 device's (l)ocal save? "
+    if stdio {
+        let mut out = io::stdout().lock();
+        writeln!(out, "{}", conflict_event(phase, cards))?;
+        out.flush()?;
+    } else if interactive {
+        for (label, card) in [("Server", &cards.server), ("Local", &cards.local)] {
+            eprintln!(
+                "{label}: {} | {} | {} | {}",
+                card.device.as_deref().unwrap_or("unknown device"),
+                card.slot,
+                card.saved_unix,
+                card.detail.as_deref().unwrap_or("")
             );
-            let mut answer = String::new();
-            if std::io::stdin().read_line(&mut answer).is_err() {
-                break;
-            }
-            match answer.trim().to_ascii_lowercase().as_str() {
-                "s" | "server" => return Keep::Server,
-                "l" | "local" => return Keep::Local,
-                _ => {}
-            }
+        }
+        eprintln!("Choose server or local, or cancel to leave both saves pending.");
+    } else {
+        return Err(Error::Launch("Save conflict: both saves are pending. Choose a side with --keep server or --keep local.".into()));
+    }
+    let mut answer = String::new();
+    io::stdin().lock().take(16).read_line(&mut answer)?;
+    if answer.ends_with('\n') {
+        match answer.trim() {
+            "server" => return Ok(Keep::Server),
+            "local" => return Ok(Keep::Local),
+            _ => (),
         }
     }
-    eprintln!("Sync conflict: keeping this device's save (pass --keep server to take the other).");
-    Keep::Local
+    Err(Error::Launch(
+        "Save conflict left pending; neither side was selected.".into(),
+    ))
 }
 
 fn describe(sync: &Sync, pushing: bool) -> String {
     match sync {
+        Sync::LocalOnly(message) => (*message).into(),
         Sync::Done(message) => message.clone(),
         Sync::Offline if pushing => {
             "the save server is offline; the save is pushed next time".into()
@@ -375,7 +410,7 @@ pub fn exit_status(code: i32) -> u8 {
 }
 
 fn play(args: &[String], ctx: &Ctx) -> Done {
-    let p = parsed("play", args, &["keep"], 1)?;
+    let p = parsed("play", args, &["keep", "relay-prompt"], 1)?;
     let game = game_arg("play", &p)?;
     let keep = match p.flag("keep") {
         None => None,
@@ -388,33 +423,56 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
             ))
         }
     };
+    let stdio = match p.flag("relay-prompt") {
+        None => false,
+        Some("stdio") if keep.is_none() => true,
+        _ => {
+            return Err(Outcome::usage(
+                "play",
+                "--relay-prompt takes stdio and requires an interactive choice without --keep",
+            ))
+        }
+    };
     let plan = core("play", play_plan(game, ctx))?;
+    let root = ctx.exe.parent().unwrap_or(Path::new("."));
+    let relay = DesktopRelay {
+        program: beside(&ctx.exe, "save-relay"),
+        manifests: root.join("save-relay-manifests"),
+    };
+    let adapter: &dyn Relay = if ctx.os == Os::Windows || relay.program.is_file() {
+        &relay
+    } else {
+        &UnbundledRelay
+    };
+    if ctx.os == Os::Windows && !plan.player_env.contains_key("BB_SAVEDATA_DIRS") {
+        core("play", saves::migrate_windows_slots(&plan.paths.user_dir))?;
+    }
     let runner = RuntimeRunner {
         program: plan.program.clone(),
         extra_args: p.rest,
+        relay_prompt_stdio: stdio,
         host: host_env::changes(ctx.os, |name| ctx.var(name)),
     };
     let interactive = ctx.interactive;
-    let choose = move |_: &Sync| choose_keep(keep, interactive);
+    let chosen = std::cell::Cell::new(keep);
+    let choose = |phase: &str, cards: &SideBySide| {
+        choose_keep(chosen.take(), interactive, stdio, phase, cards)
+    };
     let played = core(
         "play",
-        launch::play(
-            &LocalRelay,
-            &runner,
-            game,
-            &plan.saves_dir,
-            &plan.session(ctx.os),
-            &choose,
-        ),
+        launch::play(adapter, &runner, game, &plan.session(ctx.os), &choose),
     )?;
     let mut out = Outcome::default();
-    out.line(format!("save pulled: {}", describe(&played.pulled, false)));
+    out.line(format!("before play: {}", describe(&played.pulled, false)));
     out.line(format!(
         "{} quit with exit status {}",
-        game.name(),
+        played.game.name(),
         played.exit_code
     ));
-    out.line(format!("save pushed: {}", describe(&played.pushed, true)));
+    out.line(format!("after play: {}", describe(&played.pushed, true)));
+    if stdio {
+        out.stderr = std::mem::take(&mut out.stdout);
+    }
     out.code = exit_status(played.exit_code);
     Ok(out)
 }

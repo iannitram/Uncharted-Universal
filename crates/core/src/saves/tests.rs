@@ -189,7 +189,7 @@ fn manifest_is_one_line_save_relay_format_1_from_the_launcher() {
         relay_manifest(Game::U2),
         "{\"format\":1,\"id\":\"uncharted-2\",\"name\":\"Uncharted 2: Among Thieves\",\
          \"saves\":{},\"saves_from\":\"launcher\",\"include\":[\"SAVEDATA02*/**\"],\
-         \"exclude\":[\"**/*.tmp\"]}"
+         \"exclude\":[\"**/*.tmp\",\"**/.save-relay-*\"]}"
     );
     for game in Game::ALL {
         let text = relay_manifest(game);
@@ -425,4 +425,44 @@ fn slot_numbers_outside_one_to_ten_are_refused() {
         select(&temp.0, Game::U1, 11),
         Err(Error::Saves(_))
     ));
+}
+
+#[test]
+fn windows_slot_migration_refuses_duplicate_entries_before_moving_anything() {
+    let temp = Temp::new();
+    let old = temp.0.join("savedata/1/TITLE/SAVEDATA020");
+    let new = slot_dir(&temp.0, Game::U2, 1).join("SAVEDATA020");
+    for (dir, bytes) in [(&old, "old"), (&new, "new")] {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(dir.join("progress"), bytes).unwrap();
+    }
+    assert!(migrate_windows_slots(&temp.0).is_err());
+    assert_eq!(fs::read(old.join("progress")).unwrap(), b"old");
+    assert_eq!(fs::read(new.join("progress")).unwrap(), b"new");
+    let alternate = new.with_file_name("SAVEDATA021");
+    fs::rename(&new, &alternate).unwrap();
+    migrate_windows_slots(&temp.0).unwrap();
+    migrate_windows_slots(&temp.0).unwrap();
+    assert!(!old.exists());
+    assert_eq!(fs::read(new.join("progress")).unwrap(), b"old");
+    assert_eq!(fs::read(alternate.join("progress")).unwrap(), b"new");
+}
+
+#[test]
+fn relay_follows_a_custom_runtime_mapping_or_refuses_a_split_title() {
+    let env = |mapping: &str| {
+        vec![
+            ("BB_USER_DIR".into(), "custom user".into()),
+            ("BB_SAVEDATA_DIRS".into(), mapping.into()),
+        ]
+    };
+    let folder = mapped_save_dir(Game::U2, &env("SAVEDATA01=one;SAVEDATA02=myslots/two")).unwrap();
+    assert_eq!(folder, Path::new("custom user").join("myslots/two"));
+    for spec in [
+        "SAVEDATA021=other;SAVEDATA02=main",
+        "SAVEDATA02=../other",
+        "SAVEDATA01=only",
+    ] {
+        assert!(mapped_save_dir(Game::U2, &env(spec)).is_err());
+    }
 }

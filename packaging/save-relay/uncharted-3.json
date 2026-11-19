@@ -1,0 +1,1 @@
+{"format":1,"id":"uncharted-3","name":"Uncharted 3: Drake's Deception","saves":{},"saves_from":"launcher","include":["SAVEDATA03*/**"],"exclude":["**/*.tmp","**/.save-relay-*"]}

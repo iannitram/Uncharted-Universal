@@ -254,6 +254,8 @@ jobs:
           { ./uncharted-run.exe --help 2>&1 || true; } | grep -q "usage: uncharted-run"
           test -s licenses/rust-crates.txt
           test ! -e "Play Uncharted.exe"
+      - name: Verify Save Relay in the Windows zip and exercise Play
+        run: python tests/windows_relay.py dist/uncharted-windows.zip
       - uses: actions/upload-artifact@v4
         continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:

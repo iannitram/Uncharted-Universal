@@ -1,0 +1,1 @@
+{"format":1,"id":"uncharted-1","name":"Uncharted: Drake's Fortune","saves":{},"saves_from":"launcher","include":["SAVEDATA01*/**"],"exclude":["**/*.tmp","**/.save-relay-*"]}

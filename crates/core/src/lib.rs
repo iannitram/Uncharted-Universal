@@ -5,7 +5,7 @@
 //! per module of the code map's `crates/core` table. A function that is not built yet returns
 //! `Err(Error::NotBuilt("<module>::<fn>"))`, or panics with "not built yet" when its signature
 //! cannot fail; each one is filled in by its own issue (ROADMAP stage 1). Pure Rust, no
-//! dependencies. `relay` (save-relay adapter, feature `relay`) is planned and not in the tree.
+//! dependencies. `relay` invokes the bundled Save Relay CLI.
 //!
 //! Never in this crate: game data, keys, firmware, or code that copies, uploads or logs them
 //! (SPEC.md M9, Won'ts).
@@ -47,6 +47,7 @@ pub mod platform;
 pub mod prepare;
 pub mod profile;
 pub mod recipe;
+pub mod relay;
 pub mod render_size;
 pub mod run_env;
 pub mod savecard;

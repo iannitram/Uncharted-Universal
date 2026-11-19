@@ -64,3 +64,6 @@ Known problems
   shadPS4). Not fixed yet.
 
 Port by SuperMedo.
+
+Shared saves
+Save Relay v1.0.0-rc.2 ships beside the launcher and requires the Microsoft Visual C++ x64 Redistributable. Microsoft provides it at https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist. Once configured, Play syncs your selected slot before starting each game and after it quits. Without setup or while offline, your saves stay available locally. Until launcher sign-in is available, use the bundled save-relay.exe setup. A console Play session shows both sides of a conflict. The launcher leaves an unanswered conflict pending.

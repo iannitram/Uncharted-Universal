@@ -58,7 +58,7 @@ impl FakeRelay {
 }
 
 impl Relay for FakeRelay {
-    fn pull(&self, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+    fn pull(&self, _: Game, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
         self.calls.borrow_mut().push(("pull", resolve));
         self.pulls
             .borrow_mut()
@@ -66,7 +66,7 @@ impl Relay for FakeRelay {
             .expect("unexpected pull")
     }
 
-    fn push(&self, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+    fn push(&self, _: Game, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
         self.calls.borrow_mut().push(("push", resolve));
         self.pushes
             .borrow_mut()
@@ -202,7 +202,7 @@ impl Fixture {
     }
 }
 
-fn never_asked(_: &Sync) -> Keep {
+fn never_asked(_: &str, _: &SideBySide) -> Result<Keep> {
     panic!("no conflict was expected")
 }
 
@@ -215,7 +215,6 @@ fn clean_pull_play_push() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
         &never_asked,
     )
@@ -223,6 +222,7 @@ fn clean_pull_play_push() {
     assert_eq!(
         played,
         Played {
+            game: Game::U2,
             pulled: Sync::Done("pulled".to_owned()),
             exit_code: 0,
             pushed: Sync::Done("pushed".to_owned()),
@@ -242,20 +242,12 @@ fn pull_conflict_keep_local_pulls_again_with_the_answer() {
     );
     let runner = FakeRunner::new(vec![exit(0)]);
     let asked = RefCell::new(0);
-    let choose = |s: &Sync| {
-        assert!(matches!(s, Sync::Conflict(c) if c.server_is_newer));
+    let choose = |_: &str, cards: &SideBySide| {
+        assert!(cards.server_is_newer);
         *asked.borrow_mut() += 1;
-        Keep::Local
+        Ok(Keep::Local)
     };
-    let played = play(
-        &relay,
-        &runner,
-        Game::U2,
-        Path::new("saves"),
-        &fx.session(Os::Linux),
-        &choose,
-    )
-    .unwrap();
+    let played = play(&relay, &runner, Game::U2, &fx.session(Os::Linux), &choose).unwrap();
     assert_eq!(*asked.borrow(), 1);
     assert_eq!(played.pulled, Sync::Done("kept local".to_owned()));
     assert_eq!(
@@ -276,9 +268,8 @@ fn pull_conflict_keep_server() {
         &relay,
         &runner,
         Game::U3,
-        Path::new("saves"),
         &fx.session(Os::Linux),
-        &|_| Keep::Server,
+        &|_, _| Ok(Keep::Server),
     )
     .unwrap();
     assert_eq!(played.pulled, Sync::Done("took the server's".to_owned()));
@@ -295,7 +286,6 @@ fn offline_pull_plays_on() {
         &relay,
         &runner,
         Game::U1,
-        Path::new("saves"),
         &fx.session(Os::Linux),
         &never_asked,
     )
@@ -314,7 +304,6 @@ fn pull_error_stops_before_the_game_starts() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
         &never_asked,
     )
@@ -336,9 +325,8 @@ fn error_on_the_resolved_pull_stops_before_the_game_starts() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
-        &|_| Keep::Local,
+        &|_, _| Ok(Keep::Local),
     )
     .unwrap_err();
     assert_eq!(err.code(), "launch");
@@ -354,9 +342,8 @@ fn a_conflict_left_after_the_answer_is_an_error() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
-        &|_| Keep::Server,
+        &|_, _| Ok(Keep::Server),
     )
     .unwrap_err();
     assert_eq!(err.code(), "launch");
@@ -376,7 +363,6 @@ fn push_error_is_returned_after_the_game_quits() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
         &never_asked,
     )
@@ -398,9 +384,8 @@ fn push_conflict_asks_and_pushes_again() {
         &relay,
         &runner,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
-        &|_| Keep::Local,
+        &|_, _| Ok(Keep::Local),
     )
     .unwrap();
     assert_eq!(played.pushed, Sync::Done("pushed local".to_owned()));
@@ -420,7 +405,6 @@ fn exit_code_is_passed_through() {
             &relay,
             &runner,
             Game::U2,
-            Path::new("saves"),
             &fx.session(Os::Linux),
             &never_asked,
         )
@@ -443,7 +427,6 @@ fn runner_error_stops_before_the_push() {
         &relay,
         &Broken,
         Game::U2,
-        Path::new("saves"),
         &fx.session(Os::Linux),
         &never_asked,
     )
@@ -588,10 +571,13 @@ fn session_env_sets_the_path_variables() {
 }
 
 #[test]
-fn session_env_on_windows_has_no_savedata_mapping() {
+fn session_env_on_windows_uses_the_selected_slots() {
     let fx = Fixture::new(&[]);
     let env = fx.session(Os::Windows).env(Game::U2).unwrap();
-    assert!(!env.iter().any(|(k, _)| k == "BB_SAVEDATA_DIRS"));
+    assert!(env.contains(&(
+        "BB_SAVEDATA_DIRS".into(),
+        saves::mapping(&fx.paths.user_dir)
+    )));
 }
 
 #[test]
