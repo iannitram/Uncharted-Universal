@@ -41,10 +41,15 @@
 //! `src/runtime_services.c`; they export their resolvers and the process clock the GPU library
 //! shares, and keep their places in `abi`'s resolver chain.
 //!
+//! [`pad`] is libScePad (piece 3.10, from the deleted `src/runtime_pad.c`): SDL3 gamepads with gyro
+//! and rumble, keyboard and mouse binds, the mouse camera hooks and the guest callback table, and
+//! the `BB_BENCHMARK` scripted path; it exports `runtime_pad_resolve`, `runtime_pad_report`,
+//! `runtime_pad_tool`, `runtime_pad_watch` and `runtime_guest_callbacks`.
+//!
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
-//! `pad`, `fiber` and `thread`,
+//! `fiber` and `thread`,
 //! `cpu_patch` and `red_zone`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 

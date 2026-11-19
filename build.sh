@@ -217,8 +217,6 @@ if [[ ${1:-} == --test ]]; then
     done
     if [[ -n ${VK_ICD_FILENAMES:-} ]]; then echo "GPU tests: VK_ICD_FILENAMES=$VK_ICD_FILENAMES"; fi
     for test in scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test; do "out/gpu/$test"; done
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread "${includes[@]}" -I. -Isrc tests/test_pad.c "${libraries[@]}" -o out/pad-test
-    out/pad-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
     "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/file-mods-test
