@@ -52,14 +52,12 @@ void *runtime_map_guest_memory(uint64_t size);
 void *runtime_image_map(size_t size, int prot);
 /* Windows: reserves the PS4 user address range as a placeholder (no-op elsewhere). */
 void runtime_memory_reserve(void);
-uintptr_t runtime_ajm_resolve(const char *name);
-void runtime_ajm_report(void);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
 int runtime_pad_tool(int test, int strength);
 int runtime_pad_watch(int seconds);
-void runtime_savedata_configure(const char *title);
-uintptr_t runtime_savedata_resolve(const char *name);
+/* Save data (Rust: crates/runtime/src/savedata.rs, roadmap 3.06): its functions are declared in
+ * uncharted_runtime.h. */
 /* Trophies (Rust: crates/runtime/src/trophy.rs, roadmap 3.05). The loader binds the user folder and
  * the in-game notice (bbgpu_trophy_notify) first, then gives the folder run.py prepared for the
  * running game (scripts/trophies.py). */
@@ -67,7 +65,6 @@ void runtime_trophy_bind(const char *(*user_dir)(void),
                          void (*notify)(int grade, const char *game, const char *name, const void *png, uint64_t png_size));
 void runtime_trophy_configure(const char *dir);
 uintptr_t runtime_trophy_resolve(const char *name);
-void runtime_savedata_report(void);
 /* Benchmark mode (BB_BENCHMARK=<seconds>, #173): runtime_benchmark.c forwards to
  * crates/runtime/src/benchmark_run.rs when the build links it (BB_RUST_BENCHMARK) and is a no-op
  * otherwise. With BB_BENCHMARK unset every call costs one atomic load and changes nothing.
@@ -82,10 +79,6 @@ int runtime_benchmark_pad(RuntimeBenchmarkPad *out);
 void runtime_benchmark_frame(uint64_t vram_mib);
 void runtime_benchmark_crash(void);
 
-/* Waits up to timeout_ms for a save in progress: 0 none, 1 it finished, -1 timed out. */
-int runtime_savedata_wait_idle(unsigned timeout_ms);
-int runtime_savedata_pick(int32_t user, const char *title, const char (*names)[32], uint32_t count,
-                          int which, const char *focus, char out[32], void *param_out);
 void runtime_thread_attach_host(const char *name);
 uintptr_t runtime_fiber_resolve(const char *name);
 void runtime_fiber_report(void);
@@ -115,5 +108,5 @@ typedef struct {
     const unsigned char *patch;
 } RuntimeGuestCallback;
 const RuntimeGuestCallback *runtime_guest_callbacks(size_t *count);
-extern int runtime_raw_mouse_hooks; /* set by probe.c when a "(raw mouse)" hook was installed */
+extern int runtime_raw_mouse_hooks; /* Rust (crates/runtime pad); set by probe.c when a "(raw mouse)" hook was installed */
 #endif

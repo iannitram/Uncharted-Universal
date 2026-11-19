@@ -116,6 +116,16 @@ jobs:
             target/debug/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl \
             -o /tmp/file-mods-test
           /tmp/file-mods-test
+      - name: Build the runtime library for aarch64-apple-darwin (8.02, macOS)
+        # The Mac app links this library (8.05). The runner must be arm64: the check fails on any
+        # other architecture, so the Mac build is known to be Apple silicon. gpu/ is not built here
+        # (UNCHARTED_GPU_BUILD stays unset; crates/runtime/build.rs).
+        if: matrix.os == 'macos'
+        run: |
+          echo "runner architecture: $(uname -m)"
+          test "$(uname -m)" = arm64
+          rustup target add aarch64-apple-darwin
+          cargo build -p uncharted_runtime --lib --target aarch64-apple-darwin
 
   native-windows:
     # CLANG64 builds the Windows GPU library and runs the GPU unit targets and portable native C harnesses (the Python suite is not yet Windows-ready); it is not a hardware GPU test.
@@ -142,6 +152,8 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
+      - name: Run the runtime's Windows shim tests (os, 3.15)
+        run: cargo test -p uncharted_runtime --lib os::
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no
@@ -164,7 +176,9 @@ jobs:
       - run: cargo build -p uncharted_runtime --lib --target aarch64-linux-android
 
   ios:
-    # The runtime checks for iOS (ROADMAP 8.02); `check` because nothing links an iOS binary yet.
+    # The runtime builds as a library for iOS (ROADMAP 8.02, #407); the iOS app links it (8.05).
+    # Like the Mac build, the runner must be arm64 (the check fails otherwise). gpu/ is not built
+    # (UNCHARTED_GPU_BUILD stays unset; crates/runtime/build.rs). No app is linked here yet.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,7 +190,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
-      - run: cargo check --target aarch64-apple-ios -p uncharted_runtime
+      - name: Check the runner is arm64
+        run: |
+          echo "runner architecture: $(uname -m)"
+          test "$(uname -m)" = arm64
+      - run: cargo build --target aarch64-apple-ios -p uncharted_runtime --lib
 
   apple-nojit-synthetic:
     # #212: synthetic cases through bbcpu's interpreter (BB_JIT=0) on the macOS arm64 runner; a

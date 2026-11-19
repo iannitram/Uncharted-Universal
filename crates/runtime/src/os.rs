@@ -8,9 +8,12 @@
 //!
 //! The guest file layer ([`crate::file`], roadmap 3.09) keeps one per open guest file.
 
-use std::fs::File;
+use std::ffi::{c_char, c_int, c_void, CStr};
+use std::fs::{self, File};
 use std::io::{self, SeekFrom};
+use std::path::Path;
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// An open file description with its own sequential position.
 ///
@@ -160,6 +163,404 @@ fn read_at(_: &File, _: &mut [u8], _: u64) -> io::Result<usize> {
 #[cfg(not(any(unix, windows)))]
 fn write_at(_: &File, _: &[u8], _: u64) -> io::Result<usize> {
     Err(io::ErrorKind::Unsupported.into())
+}
+
+// errno values of the Windows C runtime (UCRT, which MinGW-w64 uses). These are the numbers the
+// guest sees on Windows; the POSIX values differ for some of them.
+const EIO: i32 = 5;
+const EBADF: i32 = 9;
+const ENOMEM: i32 = 12;
+const EACCES: i32 = 13;
+const EFAULT: i32 = 14;
+const EEXIST: i32 = 17;
+const ENOTDIR: i32 = 20;
+const EINVAL: i32 = 22;
+const EMFILE: i32 = 24;
+const ENOSPC: i32 = 28;
+const ENOENT: i32 = 2;
+const ENAMETOOLONG: i32 = 38;
+const ENOTEMPTY: i32 = 41;
+
+/// errno for a Win32 error code, as `compat_errno_from_win32` mapped it. `ERROR_SUCCESS` and
+/// `ERROR_HANDLE_EOF` (38) are 0; a code without a mapping is `EIO`.
+pub fn errno_from_win32(error: u32) -> i32 {
+    match error {
+        0 | 38 => 0,
+        // FILE_NOT_FOUND, PATH_NOT_FOUND, INVALID_DRIVE, BAD_NETPATH, BAD_NET_NAME, INVALID_NAME
+        2 | 3 | 15 | 53 | 67 | 123 => ENOENT,
+        // ACCESS_DENIED, WRITE_PROTECT, SHARING_VIOLATION, LOCK_VIOLATION
+        5 | 19 | 32 | 33 => EACCES,
+        // FILE_EXISTS, ALREADY_EXISTS
+        80 | 183 => EEXIST,
+        6 => EBADF,
+        // NOT_ENOUGH_MEMORY, OUTOFMEMORY, COMMITMENT_LIMIT
+        8 | 14 | 1455 => ENOMEM,
+        // DISK_FULL, HANDLE_DISK_FULL
+        112 | 39 => ENOSPC,
+        145 => ENOTEMPTY,
+        267 => ENOTDIR,
+        // FILENAME_EXCED_RANGE, BUFFER_OVERFLOW
+        206 | 111 => ENAMETOOLONG,
+        4 => EMFILE,
+        998 => EFAULT,
+        // INVALID_PARAMETER, NEGATIVE_SEEK
+        87 | 131 => EINVAL,
+        _ => EIO,
+    }
+}
+
+/// Sleeps for `ns` nanoseconds; 0 gives up the rest of the thread's time slice. Rust's standard
+/// library sleeps on a high-resolution waitable timer on Windows, so the wait is not rounded to
+/// the 15.6 ms scheduler tick that `nanosleep` in winpthreads rounds to.
+pub fn sleep_ns(ns: u64) {
+    if ns == 0 {
+        std::thread::yield_now();
+    } else {
+        std::thread::sleep(Duration::from_nanos(ns));
+    }
+}
+
+/// Seconds east of UTC at `seconds` since the Unix epoch, daylight saving included. The Windows
+/// `struct tm` has no `tm_gmtoff`, so this is `time::utc_offset`, the one computation for both.
+pub fn utc_offset(seconds: i64) -> i64 {
+    crate::time::utc_offset(seconds)
+}
+
+/// Fills `buffer` with bytes from the operating system's cryptographic random source.
+pub fn random_bytes(buffer: &mut [u8]) -> io::Result<()> {
+    getrandom::fill(buffer).map_err(|_| io::Error::other("the OS random source failed"))
+}
+
+/// Removes `path` and everything under it, as the C shim's `compat_remove_tree` did. A path that
+/// does not exist is success. Each entry is attempted even after a failure, so as much as
+/// possible is removed; the first error is returned. Symbolic links and Windows reparse points
+/// are removed themselves, never followed.
+pub fn remove_tree(path: &Path) -> io::Result<()> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    clear_readonly(path, &meta);
+    let mut first_error: Option<io::Error> = None;
+    if meta.is_dir() {
+        match fs::read_dir(path) {
+            Ok(entries) => {
+                for entry in entries {
+                    let result = entry.and_then(|entry| remove_tree(&entry.path()));
+                    if let Err(error) = result {
+                        first_error.get_or_insert(error);
+                    }
+                }
+            }
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    let removed = if meta.is_dir() {
+        fs::remove_dir(path)
+    } else {
+        // A directory symbolic link on Windows is removed with remove_dir, not remove_file.
+        fs::remove_file(path).or_else(|error| fs::remove_dir(path).map_err(|_| error))
+    };
+    if let Err(error) = removed {
+        first_error.get_or_insert(error);
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Windows refuses to delete read-only files and directories; the C shim cleared the attribute
+/// first, and so does this. POSIX deletion depends on the directory, not the file's mode.
+#[cfg(windows)]
+// The lint warns that `set_readonly(false)` makes files world-writable on Unix; this is Windows only.
+#[allow(clippy::permissions_set_readonly_false)]
+fn clear_readonly(path: &Path, meta: &fs::Metadata) {
+    if meta.permissions().readonly() {
+        let mut permissions = meta.permissions();
+        permissions.set_readonly(false);
+        let _ = fs::set_permissions(path, permissions);
+    }
+}
+
+#[cfg(not(windows))]
+fn clear_readonly(_: &Path, _: &fs::Metadata) {}
+
+/// User and kernel CPU time in microseconds of the calling thread (`thread`) or the process.
+/// Only Windows reads these (GetThreadTimes and GetProcessTimes); other hosts get `Unsupported`.
+pub fn cpu_times(thread: bool) -> io::Result<(i64, i64)> {
+    let (user, kernel) = cpu_times_100ns(thread)?;
+    // 100 ns units to microseconds.
+    Ok(((user / 10) as i64, (kernel / 10) as i64))
+}
+
+#[cfg(windows)]
+fn cpu_times_100ns(thread: bool) -> io::Result<(u64, u64)> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentThread, GetProcessTimes, GetThreadTimes,
+    };
+    let blank = || FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let (mut created, mut exited, mut kernel, mut user) = (blank(), blank(), blank(), blank());
+    // SAFETY: each pseudo-handle names the calling process or thread; the four out-pointers are
+    // live, writable FILETIME locals.
+    let ok = unsafe {
+        if thread {
+            GetThreadTimes(
+                GetCurrentThread(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        } else {
+            GetProcessTimes(
+                GetCurrentProcess(),
+                &mut created,
+                &mut exited,
+                &mut kernel,
+                &mut user,
+            )
+        }
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let ticks =
+        |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+    Ok((ticks(user), ticks(kernel)))
+}
+
+#[cfg(not(windows))]
+fn cpu_times_100ns(_: bool) -> io::Result<(u64, u64)> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "CPU times are read on Windows only",
+    ))
+}
+
+// The C symbols of compat_win.h that this module replaces. They are declared for C in
+// include/uncharted_runtime.h (written by cbindgen, checked by tests/header.rs).
+
+/// errno for a Win32 error code (see [`errno_from_win32`]).
+#[no_mangle]
+pub extern "C" fn compat_errno_from_win32(error: u32) -> c_int {
+    errno_from_win32(error)
+}
+
+/// Seconds east of UTC at `seconds` (see [`utc_offset`]).
+#[no_mangle]
+pub extern "C" fn compat_utc_offset(seconds: i64) -> i64 {
+    utc_offset(seconds)
+}
+
+/// Cryptographic random bytes: 0 on success, -1 on failure.
+///
+/// # Safety
+/// `buffer` must be valid for writes of `size` bytes, or `size` must be 0.
+#[no_mangle]
+pub unsafe extern "C" fn compat_random(buffer: *mut c_void, size: usize) -> c_int {
+    if size == 0 {
+        return 0;
+    }
+    if buffer.is_null() {
+        return -1;
+    }
+    // SAFETY: the caller's contract gives `size` writable bytes at `buffer`.
+    let bytes = unsafe { std::slice::from_raw_parts_mut(buffer.cast::<u8>(), size) };
+    match random_bytes(bytes) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Sleeps for `ns` nanoseconds (see [`sleep_ns`]).
+#[no_mangle]
+pub extern "C" fn compat_sleep_ns(ns: u64) {
+    sleep_ns(ns);
+}
+
+/// Removes the tree at a NUL-terminated UTF-8 `path`: 0 when it is gone or never existed, -1
+/// otherwise (see [`remove_tree`]).
+///
+/// # Safety
+/// `path` must be null or point to a NUL-terminated string that stays valid during the call.
+#[no_mangle]
+pub unsafe extern "C" fn compat_remove_tree(path: *const c_char) -> c_int {
+    if path.is_null() {
+        return -1;
+    }
+    // SAFETY: the caller's contract gives a NUL-terminated string at `path`.
+    let Ok(text) = unsafe { CStr::from_ptr(path) }.to_str() else {
+        return -1;
+    };
+    match remove_tree(Path::new(text)) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// User (`who` == 0: process; otherwise the calling thread) and kernel CPU time in microseconds,
+/// written to `user_us` and `kernel_us`. 0 on success, -1 on failure.
+///
+/// # Safety
+/// `user_us` and `kernel_us` must each be null or valid for one `int64_t` write.
+#[no_mangle]
+pub unsafe extern "C" fn compat_cpu_times(
+    who: c_int,
+    user_us: *mut i64,
+    kernel_us: *mut i64,
+) -> c_int {
+    if user_us.is_null() || kernel_us.is_null() {
+        return -1;
+    }
+    match cpu_times(who != 0) {
+        Ok((user, kernel)) => {
+            // SAFETY: both pointers are non-null and valid for one i64 write, by the contract.
+            unsafe {
+                user_us.write(user);
+                kernel_us.write(kernel);
+            }
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+#[cfg(test)]
+mod shim_tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn errno_map_matches_the_compat_table() {
+        assert_eq!(errno_from_win32(0), 0);
+        assert_eq!(errno_from_win32(38), 0);
+        for code in [2, 3, 15, 53, 67, 123] {
+            assert_eq!(errno_from_win32(code), ENOENT, "win32 {code}");
+        }
+        for code in [5, 19, 32, 33] {
+            assert_eq!(errno_from_win32(code), EACCES, "win32 {code}");
+        }
+        assert_eq!(errno_from_win32(80), EEXIST);
+        assert_eq!(errno_from_win32(183), EEXIST);
+        assert_eq!(errno_from_win32(6), EBADF);
+        for code in [8, 14, 1455] {
+            assert_eq!(errno_from_win32(code), ENOMEM, "win32 {code}");
+        }
+        assert_eq!(errno_from_win32(112), ENOSPC);
+        assert_eq!(errno_from_win32(39), ENOSPC);
+        assert_eq!(errno_from_win32(145), ENOTEMPTY);
+        assert_eq!(errno_from_win32(267), ENOTDIR);
+        assert_eq!(errno_from_win32(206), ENAMETOOLONG);
+        assert_eq!(errno_from_win32(111), ENAMETOOLONG);
+        assert_eq!(errno_from_win32(4), EMFILE);
+        assert_eq!(errno_from_win32(998), EFAULT);
+        assert_eq!(errno_from_win32(87), EINVAL);
+        assert_eq!(errno_from_win32(131), EINVAL);
+        assert_eq!(errno_from_win32(9999), EIO);
+        assert_eq!(compat_errno_from_win32(5), EACCES);
+    }
+
+    #[test]
+    fn sleep_waits_at_least_the_requested_time() {
+        let start = Instant::now();
+        sleep_ns(2_000_000);
+        assert!(start.elapsed() >= Duration::from_millis(2));
+        sleep_ns(0);
+    }
+
+    #[test]
+    fn utc_offset_is_a_real_zone_offset() {
+        for seconds in [0, 1_700_000_000, 1_720_000_000] {
+            let offset = utc_offset(seconds);
+            assert!(
+                (-14 * 3600..=14 * 3600).contains(&offset),
+                "offset {offset}"
+            );
+            assert_eq!(compat_utc_offset(seconds), offset);
+        }
+    }
+
+    #[test]
+    fn random_bytes_are_filled_and_differ() {
+        let mut first = [0u8; 32];
+        let mut second = [0u8; 32];
+        random_bytes(&mut first).unwrap();
+        random_bytes(&mut second).unwrap();
+        assert!(first.iter().any(|&byte| byte != 0));
+        assert_ne!(first, second);
+        let mut empty: [u8; 0] = [];
+        assert_eq!(unsafe { compat_random(empty.as_mut_ptr().cast(), 0) }, 0);
+        assert_eq!(unsafe { compat_random(std::ptr::null_mut(), 4) }, -1);
+        let mut third = [0u8; 16];
+        assert_eq!(
+            unsafe { compat_random(third.as_mut_ptr().cast(), third.len()) },
+            0
+        );
+        assert!(third.iter().any(|&byte| byte != 0));
+    }
+
+    #[test]
+    fn remove_tree_removes_nested_entries_and_tolerates_absence() {
+        let root = std::env::temp_dir().join(format!(
+            "uncharted-os-tree-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("a/b")).unwrap();
+        fs::write(root.join("a/b/file.bin"), b"data").unwrap();
+        fs::write(root.join("top.txt"), b"x").unwrap();
+        remove_tree(&root).unwrap();
+        assert!(!root.exists());
+        remove_tree(&root).unwrap();
+
+        let file = root.with_extension("single");
+        fs::write(&file, b"y").unwrap();
+        remove_tree(&file).unwrap();
+        assert!(!file.exists());
+
+        assert_eq!(unsafe { compat_remove_tree(std::ptr::null()) }, -1);
+        let missing = std::ffi::CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        assert_eq!(unsafe { compat_remove_tree(missing.as_ptr()) }, 0);
+    }
+
+    #[test]
+    fn cpu_times_are_read_on_windows_only() {
+        if cfg!(windows) {
+            let (user, kernel) = cpu_times(false).unwrap();
+            assert!(user >= 0 && kernel >= 0);
+            let (thread_user, thread_kernel) = cpu_times(true).unwrap();
+            assert!(thread_user >= 0 && thread_kernel >= 0);
+            let (mut user_us, mut kernel_us) = (-1i64, -1i64);
+            assert_eq!(
+                unsafe { compat_cpu_times(1, &mut user_us, &mut kernel_us) },
+                0
+            );
+            assert!(user_us >= 0 && kernel_us >= 0);
+        } else {
+            let error = cpu_times(false).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+            let (mut user_us, mut kernel_us) = (0i64, 0i64);
+            assert_eq!(
+                unsafe { compat_cpu_times(0, &mut user_us, &mut kernel_us) },
+                -1
+            );
+        }
+        assert_eq!(
+            unsafe { compat_cpu_times(0, std::ptr::null_mut(), std::ptr::null_mut()) },
+            -1
+        );
+    }
 }
 
 #[cfg(test)]

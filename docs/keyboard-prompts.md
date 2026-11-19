@@ -40,13 +40,15 @@ one table row (below).
 
 ## Switching
 
-`runtime_pad.c` notes the last device used: a bound key, a mouse button, the wheel or mouse motion
-of more than a few pixels means keyboard; a controller button, a trigger or a stick past half way
-means controller. A DualShock or DualSense (or any pad SDL labels with ✕ ○ □ △) gets the game's own
-pictures; every other controller gets Xbox buttons, since SDL names the buttons by position. It
-calls `bbgpu_prompts_controller(device)` (0 keyboard, 1 PlayStation, 2 Xbox), logged as `Button
-prompts: keyboard keys`, `Button prompts: PlayStation controller used, PlayStation buttons` or
-`Button prompts: Xbox controller used, Xbox buttons`.
+`crates/runtime/src/pad` notes the last device used: a bound key, a mouse button, the wheel or
+mouse motion of more than a few pixels means keyboard; a controller button, a trigger or a stick
+past half way means controller. A DualShock or DualSense (or any pad SDL labels with ✕ ○ □ △) gets
+the game's own pictures; a Switch Pro or Joy-Con is reported as Nintendo and shows Xbox buttons
+until #439 adds Nintendo pictures; every other controller gets Xbox buttons, since SDL names the
+buttons by position. It calls `bbgpu_prompts_controller(device)` (0 keyboard, 1 PlayStation,
+2 Xbox, 3 Nintendo), logged as `Button prompts: keyboard keys`, `Button prompts: PlayStation
+controller used, PlayStation buttons`, `Button prompts: Xbox controller used, Xbox buttons` or
+`Button prompts: Nintendo controller used, Xbox buttons until #439`.
 
 - `ReplaceButtonPrompts()` (`texture_cache.cpp`), after the game uploads a texture: when its size
   and format can be a known picture, its guest data is hashed; a match records the range and, in

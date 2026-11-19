@@ -375,3 +375,9 @@ When one of them is `0`, the run logs a line starting `Upscaler: debug switch:`.
 is told about the device, not the game's rendering. The RADV PHOENIX noise they were added for is
 now fixed by patch 0004 (`gpu/patches/fsr-vulkan/0004-ffx_vk-never-pick-a-protected-memory-type.patch`),
 so they are not needed for normal runs and are kept only for troubleshooting.
+
+Status of the PHOENIX / STRIX_HALO default (issue #114): the cause is the one patch 0004 fixes (FSR 3.1's
+device-local resources landed in a protected memory type). The allow-list keeps FSR 3.1 on for
+`(RADV PHOENIX)` and `(RADV STRIX_HALO)`. Still to check on a handheld: the Uncharted 1 boat-deck at 1080p
+and 1280x800 with default settings. If it is still noisy, remove the entries from `validated` in
+`gpu/shim/bbport_settings.cpp`.
