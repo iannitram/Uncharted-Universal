@@ -263,6 +263,7 @@
 {"rIZnR6eSpvk#A#B","scePadResetOrientation"},
 {"r44mAxdSG+U#A#B","scePadSetAngularVelocityDeadbandState"},
 {"vDLMoJLde8I#A#B","scePadSetTiltCorrectionState"},
+{"clVvL4ZDntw#A#B","scePadSetMotionSensorState"},
 {"yFVnOdGxvZY#A#B","scePadSetVibration"},
 {"WFcfL2lzido#p#J","sceKernelQueryMemoryProtection"},
 {"rVjRvHJ0X6c#p#J","sceKernelVirtualQuery"},

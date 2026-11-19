@@ -1100,11 +1100,14 @@ Force Forced() {
 } // namespace
 
 void SetDevice(int device) {
-    device = std::clamp(device, 0, 2);
+    // 3 is a Nintendo controller (Switch Pro, Joy-Con): its own pictures arrive in #439, so it
+    // shows the Xbox ones until then, but the launcher still learns which family was used last.
+    device = std::clamp(device, 0, 3);
     if (device_used.exchange(device) != device) {
         switches.fetch_add(1, std::memory_order_release);
-        static constexpr const char* names[] = {"keyboard keys", "PlayStation controller used, PlayStation buttons",
-                                                "Xbox controller used, Xbox buttons"};
+        static constexpr const char* names[] = {
+            "keyboard keys", "PlayStation controller used, PlayStation buttons",
+            "Xbox controller used, Xbox buttons", "Nintendo controller used, Xbox buttons until #439"};
         std::printf("Button prompts: %s\n", names[device]);
     }
 }

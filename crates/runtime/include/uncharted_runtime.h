@@ -270,6 +270,35 @@ uint64_t runtime_tsc_frequency(void);
 void runtime_thread_keys_cleanup(void);
 #endif
 
+// errno for a Win32 error code (see [`errno_from_win32`]).
+int compat_errno_from_win32(uint32_t error);
+
+// Seconds east of UTC at `seconds` (see [`utc_offset`]).
+int64_t compat_utc_offset(int64_t seconds);
+
+// Cryptographic random bytes: 0 on success, -1 on failure.
+//
+// # Safety
+// `buffer` must be valid for writes of `size` bytes, or `size` must be 0.
+int compat_random(void *buffer, uintptr_t size);
+
+// Sleeps for `ns` nanoseconds (see [`sleep_ns`]).
+void compat_sleep_ns(uint64_t ns);
+
+// Removes the tree at a NUL-terminated UTF-8 `path`: 0 when it is gone or never existed, -1
+// otherwise (see [`remove_tree`]).
+//
+// # Safety
+// `path` must be null or point to a NUL-terminated string that stays valid during the call.
+int compat_remove_tree(const char *path);
+
+// User (`who` == 0: process; otherwise the calling thread) and kernel CPU time in microseconds,
+// written to `user_us` and `kernel_us`. 0 on success, -1 on failure.
+//
+// # Safety
+// `user_us` and `kernel_us` must each be null or valid for one `int64_t` write.
+int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
+
 #if defined(__x86_64__)
 // The address of the guest `sceRtc*` function behind the scoped import `name`, or 0 (the C
 // `runtime_rtc_resolve`, now in `crates/runtime/src/rtc.rs`).
@@ -278,6 +307,44 @@ void runtime_thread_keys_cleanup(void);
 // `name` is null or a NUL-terminated string.
 uintptr_t runtime_rtc_resolve(const char *name);
 #endif
+
+// `runtime_savedata_configure`: the title id of the running game (its save folder name), then
+// the Bloodborne sound flag.
+//
+// # Safety
+// `title` is null or a NUL-terminated string valid for the call.
+void runtime_savedata_configure(const char *title);
+
+// The module's counters, one line on stdout (and the `where.json` failures, when there were any).
+void runtime_savedata_report(void);
+
+// A save is in progress while a directory is mounted for writing (the game writes its files
+// between mount and unmount). Waits up to `timeout_ms` for none: 0 nothing was in progress,
+// 1 it finished, -1 still in progress at the timeout.
+int runtime_savedata_wait_idle(unsigned int timeout_ms);
+
+// An existing slot of a save list: `which` 0 first, 1 last, 2 latest written, 3 oldest, 4 the
+// one named `focus`. 1 with the slot's name in `out` and its parameters in `param_out` (when
+// not null), or -1 when there is none.
+//
+// # Safety
+// `names` is null or `count` names of 32 bytes; `title` and `focus` are null or NUL-terminated
+// strings; `out` is 32 writable bytes and `param_out` null or 1328 writable bytes.
+int runtime_savedata_pick(int32_t user,
+                          const char *title,
+                          const uint8_t (*names)[32],
+                          uint32_t count,
+                          int which,
+                          const char *focus,
+                          uint8_t *out,
+                          void *param_out);
+
+// The address of the guest entry point for the import `name` (`NID#library#module`), 0 when it
+// is not one of this library's.
+//
+// # Safety
+// `name` is null or a NUL-terminated string valid for the call.
+uintptr_t runtime_savedata_resolve(const char *name);
 
 #if defined(__x86_64__)
 // The address of the guest service function (user, system, network, PSN, dialogs, PlayGo

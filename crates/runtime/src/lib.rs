@@ -12,8 +12,10 @@
 //! [`memory`] is the guest address space (piece 3.12): direct and flexible memory, the region
 //! table and the GPU library's page hooks. On Linux and Android it exports the C symbols of
 //! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
-//! [`os`] has the open file description whose positioned reads and writes never touch the
-//! shared position (#39, from `compat_win.c`); [`file`] keeps one per open guest file.
+//! [`os`] is the host OS shims (piece 3.15, from `src/compat_win.c`): the open file description
+//! whose positioned reads and writes never touch the shared position (#39), the Win32 errno map,
+//! the sleep, the UTC offset, OS random bytes, `remove_tree` and CPU times; [`file`] keeps one
+//! `os::Description` per open guest file.
 //! [`file`] is the guest file system (piece 3.09): mounts, the mod overlay, the descriptor table
 //! and the file calls of the deleted `src/runtime_file.c`, with its C symbols.
 //! [`time`] and [`rtc`] (piece 3.02) are the guest's `gettimeofday` and `libSceRtc`, from
@@ -32,11 +34,17 @@
 //! [`audio`] is libSceAudioOut (piece 3.07, from the deleted `src/runtime_audio.c` and
 //! `src/runtime_speakers.h`): ports paced like hardware on SDL3 audio streams in the loader
 //! build, the speaker layout and the 7.1 fold-down; every other build plays on a silent timer.
+//! [`ajm`] is libSceAjm (piece 3.08, from the deleted `src/runtime_ajm.c`): decoder batches, ATRAC9
+//! through LibAtrac9 and MP3 through a pure-Rust decoder in place of FFmpeg.
 //! [`kernel`] and [`services`] (piece 3.11) are libkernel/libScePosix process services and the
 //! offline system services, from the deleted `src/runtime_kernel.c` and
 //! `src/runtime_services.c`; they export their resolvers and the process clock the GPU library
 //! shares, and keep their places in `abi`'s resolver chain.
 //!
+//! [`pad`] is libScePad (piece 3.10, from the deleted `src/runtime_pad.c`): SDL3 gamepads with gyro
+//! and rumble, keyboard and mouse binds, the mouse camera hooks and the guest callback table, and
+//! the `BB_BENCHMARK` scripted path; it exports `runtime_pad_resolve`, `runtime_pad_report`,
+//! `runtime_pad_tool`, `runtime_pad_watch` and `runtime_guest_callbacks`.
 //! [`cpu_patch`] and [`red_zone`] (piece 3.14) are the guest code patchers, ports of
 //! `src/cpu_patch.c` and `src/red_zone.c`: instructions the host CPU lacks (BMI1, LZCNT, MOVBE)
 //! run from thunks, and guest leaf functions that keep data below rsp run their faulting accesses
@@ -46,14 +54,18 @@
 //! # Remaining planned modules
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
-//! `ajm`, `pad`, `fiber` and `thread`,
-//! the rest of `os`, `loader` (in the `uncharted-run` binary).
+//! `fiber` and `thread`,
+//! `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
 // Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.
 #![allow(unused_variables)]
 
 pub mod abi;
+// `cbindgen:ignore`: only the Rust loader side calls its resolver and report; its constants and
+// structs are Rust-only, not part of the C header.
+/// cbindgen:ignore
+pub mod ajm;
 pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
