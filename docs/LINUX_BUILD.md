@@ -70,6 +70,17 @@ Optional environment variables:
 | `BB_VBLANK_HZ` | `60` | VBlank frequency |
 | `BB_CONTENT_SKU` | `full` | `full` or `trial` |
 
+## Controllers on SteamOS (Steam Deck)
+
+In SteamOS **Desktop Mode**, InputPlumber can hold the built-in controller and expose a virtual Valve Deck controller that the port's SDL build does not list. The game then sees 0 joysticks and the built-in pad does nothing. This is a SteamOS input-stack behaviour, not a bug in the game or the launcher.
+
+To play with the built-in pad, start the game through Steam instead of running `run.sh` or the launcher from Desktop Mode:
+
+- **Game Mode:** launch the Uncharted shortcut from the Steam library.
+- **Desktop Mode:** add the launcher or `uncharted-universal` as a non-Steam game in Steam, and start it from there.
+
+Steam Input then provides the controller to the game. Launching through Steam is the expected fix and is still to be confirmed on a handheld in Game Mode; until that check is recorded, treat it as the recommended route rather than a verified one.
+
 ## Game data extraction
 
 The game files must be extracted and decrypted. The community uses `ps4-pkg-tools` for the PKG and `psarcy` for `.psarc` files.

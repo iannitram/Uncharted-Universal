@@ -12,8 +12,10 @@
 //! [`memory`] is the guest address space (piece 3.12): direct and flexible memory, the region
 //! table and the GPU library's page hooks. On Linux and Android it exports the C symbols of
 //! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
-//! [`os`] has the open file description whose positioned reads and writes never touch the
-//! shared position (#39, from `compat_win.c`); [`file`] keeps one per open guest file.
+//! [`os`] is the host OS shims (piece 3.15, from `src/compat_win.c`): the open file description
+//! whose positioned reads and writes never touch the shared position (#39), the Win32 errno map,
+//! the sleep, the UTC offset, OS random bytes, `remove_tree` and CPU times; [`file`] keeps one
+//! `os::Description` per open guest file.
 //! [`file`] is the guest file system (piece 3.09): mounts, the mod overlay, the descriptor table
 //! and the file calls of the deleted `src/runtime_file.c`, with its C symbols.
 //! [`time`] and [`rtc`] (piece 3.02) are the guest's `gettimeofday` and `libSceRtc`, from
@@ -48,7 +50,7 @@
 //!
 //! Each module arrives with its own piece (ROADMAP stage 3), in this order: the rest of `savedata`,
 //! `fiber` and `thread`,
-//! `cpu_patch` and `red_zone`, the rest of `os`, `loader` (in the `uncharted-run` binary).
+//! `cpu_patch` and `red_zone`, `loader` (in the `uncharted-run` binary).
 //! `build.rs` builds `gpu/` with CMake when `build.sh` asks for it (`UNCHARTED_GPU_BUILD`).
 
 // Skeleton only: stubs ignore their inputs. Remove this line when the last stub is built.

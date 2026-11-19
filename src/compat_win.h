@@ -76,19 +76,9 @@ static inline int compat_setenv(const char *name, const char *value, int overwri
 }
 #define setenv compat_setenv
 
-/* Seconds east of UTC at time t (struct tm has no tm_gmtoff on Windows). */
-long compat_utc_offset(time_t t);
-/* Cryptographic random bytes; 0 or -1. */
-int compat_random(void *buffer, size_t size);
-/* Sleeps with sub-millisecond precision (high-resolution waitable timer; winpthreads'
- * nanosleep rounds up to the 15.6 ms scheduler tick). */
-void compat_sleep_ns(uint64_t ns);
-/* rm -rf: 0 when the tree is gone (or never existed). */
-int compat_remove_tree(const char *path);
-/* errno for a Win32 error code. */
-int compat_errno_from_win32(unsigned long error);
-/* User and kernel CPU time of the process (who=0) or calling thread (who=1), microseconds. */
-int compat_cpu_times(int who, int64_t *user_us, int64_t *kernel_us);
+/* compat_utc_offset, compat_random, compat_sleep_ns, compat_remove_tree, compat_errno_from_win32 and
+ * compat_cpu_times are Rust now (crates/runtime/src/os.rs): declared by include/uncharted_runtime.h,
+ * which runtime.h includes. */
 /* setjmp/longjmp without SEH unwinding (guest frames have no unwind data) that saves every
  * Win64 callee-saved register, xmm6-15 included. clang's __builtin_longjmp restores a wrong
  * frame pointer on Win64. bb_longjmp may also be entered from the exception handler. */

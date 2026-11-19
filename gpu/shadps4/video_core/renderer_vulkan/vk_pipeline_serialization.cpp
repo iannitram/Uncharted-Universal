@@ -510,13 +510,6 @@ void PipelineCache::WarmUpThread() {
         if (!entry.parsed) {
             return;
         }
-        // bbport: motion-vector pipelines are never preloaded. The shader metadata is stored once
-        // per program, not per permutation, so the preload could build the 8-attachment motion
-        // key with plain shaders: the AMD driver refused some (the startup crash) and the rest
-        // were registered without motion output. Built at first use instead.
-        if (!entry.compute && entry.gkey.motion_vectors) {
-            return;
-        }
         if (entry.compute) {
             const auto it = by_hash.find(entry.ckey.value);
             if (it == by_hash.end() || !it->second->ready) {
@@ -553,6 +546,19 @@ void PipelineCache::WarmUpThread() {
             const auto it = by_hash.find(hash);
             if (it == by_hash.end() || !it->second->ready) {
                 return;
+            }
+            // bbport: a motion-vector key needs its stages stored with motion output. The shader
+            // metadata is stored once per program, not per permutation, so a motion key can
+            // match plain shaders; those are left to be built at first use.
+            if (entry.gkey.motion_vectors) {
+                const auto hw_stage = it->second->owner->info.hw_stage;
+                const auto& stage_rt = it->second->spec.runtime_info;
+                if (hw_stage == Shader::HwStage::Vertex && !stage_rt.hw.vs.motion_vectors) {
+                    return;
+                }
+                if (hw_stage == Shader::HwStage::Fragment && !stage_rt.hw.fs.motion_vectors) {
+                    return;
+                }
             }
             infos[stage] = it->second->owner->info_template.get();
             program_infos[stage] = &it->second->owner->info;

@@ -9,6 +9,8 @@
 //! - the GPU library: with `UNCHARTED_GPU_BUILD=<build dir>`, CMake and Ninja build `gpu/` (the
 //!   `bbgpu` target) there before the crate is compiled. `build.sh` sets it on Linux; on Windows
 //!   CMake builds `gpu/` and the loader and runs cargo itself, so this step is not used there.
+//!   Apple targets (macOS, iOS) never build `gpu/`: CI leaves the variable unset and this script
+//!   refuses it for them (8.02; the Apple renderer is Metal, 8.04).
 
 use std::env;
 use std::fmt::Write as _;
@@ -96,6 +98,13 @@ fn gpu(root: &Path) {
     let Some(dir) = env::var_os("UNCHARTED_GPU_BUILD").map(PathBuf::from) else {
         return;
     };
+    // gpu/ needs X11 and a Vulkan loader, which Apple targets do not have. On Apple the renderer
+    // is Metal (8.04), so a request to build gpu/ there is an error, not a silent skip.
+    if env::var("CARGO_CFG_TARGET_VENDOR").as_deref() == Ok("apple") {
+        panic!(
+            "UNCHARTED_GPU_BUILD is set for an Apple target: gpu/ is not built there (8.04 Metal)"
+        );
+    }
     let gpu = root.join("gpu");
     // The sources, and the library itself (a deleted build directory builds again). Ninja does
     // not touch an up-to-date library, so this does not rerun on every build.
