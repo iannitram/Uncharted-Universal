@@ -23,11 +23,11 @@ present to the guest.
 ## Layers
 
 ```
-  Uncharted.exe (launcher, Python + PyInstaller)
+  uncharted-app (Slint launcher) / uncharted-universal (CLI)
       |
-      | runs scripts/prepare.py, link_modules.py, content_profile.py
+      | prepares via crates/core (prepare, link, content_profile, patches)
       v
-  run.py  (builds the boot image, sets BB_* environment)
+  launch::play / uncharted-run (starts loader, sets environment)
       |
       v
   bb-probe.exe  =  src/probe.c        (loader, faults, patches)
@@ -115,7 +115,7 @@ Undocumented ones are found in `src/probe.c` and `docs/upscaler.md`.
 
 `patches/Bloodborne.xml` is a shadPS4/GoldHEN community patch database in the
 guest's address space. It is **not** applied at runtime directly:
-`scripts/patches.py` compiles selected patches into `out/patches.bin` (literal
+`crates/core::patches` compiles selected patches into `out/patches.bin` (literal
 writes only — pattern/mask patches are rejected), the presets used by
 `bbport.ini`, the in-game menu and the launcher map onto them, and the loader
 applies the result via `--patches`.
@@ -148,17 +148,17 @@ string while having entirely different code there:
 
 - **App version.** A game whose `APP_VER` is not the one the database was written
   for is declined, and the run continues unpatched.
-- **Title ID.** `check_patch_target()` in `patches.py` additionally refuses when
+- **Title ID.** `check_patch_target()` in `crates/core::patches` additionally refuses when
   the game's `TITLE_ID` is not one the database declares. This is the guard that
   matters: without it, Bloodborne 1.09 and a hypothetical Uncharted 1.09 pass the
   version check together, and 19 of the database's writes fall inside Uncharted's
   10 MB `eboot.bin` and would corrupt it. The `<TitleID>` element was in the XML
   all along but nothing read it.
 
-`BB_FORCE_PATCHES=1` overrides the version check only; `patches.py`'s bounds
+`BB_FORCE_PATCHES=1` overrides the version check only; `crates/core::patches`'s bounds
 check then rejects writes outside the image before any file is written.
 
-Both `run.sh` and `run.py` compile the patches and pass `--patches` to the loader.
+The launcher compiles the patches and passes `--patches` to the loader.
 
 ## Two platforms, one codebase
 
@@ -172,17 +172,15 @@ calls that MinGW lacks. The differences are documented in a table in
 - VEH instead of `SIGSEGV` for guest faults.
 - The launcher is GTK4 on Linux and Tkinter on Windows.
 
-The Linux tree retains the Bloodborne originals (`launcher/bbport_*.py`,
-`packaging/appimage.sh`, deleted in roadmap 2.10); the Windows tree is Uncharted-specific. The
-`bb-probe` binary name is inherited from `bloodborne_pc` and is used on both.
+The `bb-probe` binary name is inherited from `bloodborne_pc` and is used on both.
 
 ## Tests
 
-The Python suite and the C tests run in CI (`.github/workflows/ci.yml`); the C++
+The Rust workspace and the C tests run in CI (`.github/workflows/check.yml` and `build.yml`); the C++
 renderer targets do not, so those are run by hand.
 
-- **Python** (`tests/test_*.py`) — preparation, linking, patches, mods and
-  launcher settings. `python -m unittest discover -s tests`.
+- **Rust workspace** (`cargo test --workspace`) — preparation, linking, patches, mods and
+  launcher settings.
 - **C** (`tests/test_*.c`) — runtime contracts: threads, memory,
   the file layer. `bash build.sh --test` on Linux; the MSYS2 CLANG64 shell
   builds the same set through CMake.
@@ -197,6 +195,6 @@ renderer targets do not, so those are run by hand.
 | The game crashes on load | `src/probe.c` fault handlers; `user/last_run.log` |
 | A shader renders wrong | `gpu/shadps4/video_core/renderer_vulkan/`, `BB_CAPTURE_TRIGGER` |
 | Upscaling or frame generation | `gpu/shim/`, `host_shaders/`, [docs/upscaler.md](upscaler.md) |
-| FPS, resolution or cheat patches | `patches/Bloodborne.xml`, `scripts/patches.py` |
+| FPS, resolution or cheat patches | `patches/Bloodborne.xml`, `crates/core::patches` |
 | Performance regressions | [docs/parallel_gpu.md](parallel_gpu.md), `BB_FRAME_STATS`, `tools/ab.sh` |
 | What ships to players | `packaging/windows/package.sh`, `licenses/MANIFEST.txt` |

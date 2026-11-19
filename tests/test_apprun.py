@@ -13,7 +13,7 @@ from pathlib import Path
 
 APPRUN = ROOT / 'packaging' / 'linux' / 'AppRun'
 HOST_ENV = ROOT / 'crates' / 'core' / 'src' / 'host_env.rs'
-PROGRAMS = ('Uncharted', 'uncharted-app', 'uncharted-universal')
+PROGRAMS = ('uncharted-app', 'uncharted-universal')
 
 # What Steam sets for a non-Steam game, plus an empty one (removed, not kept).
 STEAM = {
@@ -79,22 +79,6 @@ class AppRunEnvironmentTests(unittest.TestCase):
         for layer in rust_list('DISABLED_LAYERS'):
             self.assertEqual(seen.get(layer), '1')
 
-    def test_classic_launcher_play_shortcut_is_cleaned(self):
-        """`<AppImage> --play u1`, the shortcut the classic launcher wrote before 2.10."""
-        program, passed, seen = self.run_apprun('--play', 'u1')
-        self.assertEqual((program, passed), ('Uncharted', '--play u1'))
-        self.assert_cleaned(seen)
-
-    def test_classic_report_is_cleaned(self):
-        program, passed, seen = self.run_apprun('--report')
-        self.assertEqual((program, passed), ('Uncharted', '--report'))
-        self.assert_cleaned(seen)
-
-    def test_classic_flag_is_cleaned_and_dropped(self):
-        program, passed, seen = self.run_apprun('--classic', '--play', 'u2')
-        self.assertEqual((program, passed), ('Uncharted', '--play u2'))
-        self.assert_cleaned(seen)
-
     def test_rust_faces_are_cleaned_too(self):
         program, passed, seen = self.run_apprun('play', 'u1')
         self.assertEqual((program, passed), ('uncharted-universal', 'play u1'))
@@ -105,8 +89,8 @@ class AppRunEnvironmentTests(unittest.TestCase):
 
     def test_earlier_diagnostic_copy_is_kept_when_the_value_is_empty(self):
         """As bbport-entry.c: an empty value leaves an existing BB_HOST_ copy alone."""
-        _, _, seen = self.run_apprun('--play', 'u1', extra={'LD_PRELOAD': '',
-                                                             'BB_HOST_LD_PRELOAD': 'earlier.so'})
+        _, _, seen = self.run_apprun('play', 'u1', extra={'LD_PRELOAD': '',
+                                                           'BB_HOST_LD_PRELOAD': 'earlier.so'})
         self.assertNotIn('LD_PRELOAD', seen)
         self.assertEqual(seen.get('BB_HOST_LD_PRELOAD'), 'earlier.so')
 

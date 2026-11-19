@@ -5,7 +5,7 @@ _Translated from Russian; original: [ru/MODS.md](ru/MODS.md)._
 ## Uncharted layouts (`crates/core` `mods`, piece 1.11)
 
 The text after this section came with the Bloodborne launcher and describes
-`scripts/mods.py`, whose layouts use Bloodborne's `dvdroot_ps4` folder. Uncharted's dump has
+the former Bloodborne mods pipeline, whose layouts use Bloodborne's `dvdroot_ps4` folder. Uncharted's dump has
 no `dvdroot_ps4`: its game files sit in `u1data/`, `u2data/`, `u3data/` and `shareddata/`
 beside the executables. The Rust `mods` module (`crates/core/src/mods.rs`), which the Rust
 launcher and runtime use (pieces 1.25 and 3.09), accepts these layouts instead:
@@ -91,8 +91,7 @@ its author.
 To launch from a terminal:
 
 ```sh
-BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_DIR=/path/to/mods bash run.sh
-BB_GAME_DIR=/path/to/CUSA03173 BB_MODS_ENABLED=0 bash run.sh
+uncharted-universal play u1 --dump /path/to/game
 ```
 
 Order and disabled mods are saved in the data directory's `mods.json`:
@@ -120,8 +119,7 @@ choice made in the launcher is saved to `patches.json` in the data directory:
 Supported line types: `bytes`, `bytes16/32/64`, `float32/64`, `utf8`, `utf16`.
 A patch with `mask` lines (pattern search) or with an address outside the eboot is skipped entirely,
 with a message in the log. Third-party patches are applied after the built-in ones
-(`patches/Bloodborne.xml`): on overlap the third-party patch wins. From a terminal:
-`BB_PATCHES_DIR=/path BB_PATCHES_CONFIG=/path/patches.json bash run.sh`.
+(`patches/Bloodborne.xml`): on overlap the third-party patch wins.
 
 Patches that replace pointers in tables (such as `60 FPS++` and `90 FPS++`) are relocated by the
 loader to the real image address. Previously such patches stopped the launch with the error

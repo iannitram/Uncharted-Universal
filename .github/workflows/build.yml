@@ -1,7 +1,6 @@
 # Builds the release packages (roadmap 2.10): the Linux / Steam Deck AppImage and tarball, the
 # Windows zip, and the macOS app bundle. Each carries the Rust launcher (uncharted-app, with
-# uncharted-universal and uncharted-run beside it; packaging/rust_faces.sh) and, until roadmap
-# 2.11, the classic PyInstaller launcher. Every build of main is published as a release
+# uncharted-universal and uncharted-run beside it; packaging/rust_faces.sh). Every build of main is published as a release
 # (v<upstream version>-linux.<run>, the tag the Linux launcher's update check looks for) with
 # the Linux and Windows packages, one manifest.json and one SHA256SUMS over them. The macOS
 # bundle is built and kept as a CI artifact only: the Mac app that ships is roadmap 1.x.
@@ -142,7 +141,7 @@ jobs:
         id: package
         # Slint (the Rust app) needs Rust 1.92: the toolchain above is pinned to it.
         run: |
-          version=$(sed -n "s/^VERSION = '\(.*\)'/\1/p" launcher/uncharted_launcher.py | head -1)
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
           echo "tag=v$version-linux.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           sudo chroot "$CHROOT" bash -euc "
             export PATH=\$HOME/.rustup/toolchains/1.92.0-x86_64-unknown-linux-gnu/bin:\$PATH
@@ -214,7 +213,7 @@ jobs:
 
   windows:
     # The Windows zip: the GPU library and loader with CLANG64 (as check.yml's native-windows),
-    # the Rust faces with the runner's MSVC toolchain, the classic launcher with PyInstaller.
+    # the Rust faces with the runner's MSVC toolchain.
     # No DLSS, XeSS or FSR 4 here: packaging/windows/package.sh leaves them out when their
     # build or fetch scripts have not run.
     runs-on: windows-latest
@@ -247,7 +246,7 @@ jobs:
       - name: Build
         run: BB_JOBS=2 bash build.sh
       - name: Package
-        run: WINPYTHON="$(cygpath -u '${{ steps.python.outputs.python-path }}')" bash packaging/windows/package.sh
+        run: bash packaging/windows/package.sh
       - name: Start the Rust faces from the package
         run: |
           cd out/stage/uncharted-windows

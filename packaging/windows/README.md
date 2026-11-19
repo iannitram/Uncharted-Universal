@@ -26,23 +26,15 @@ Then, in the repository:
 ```bash
 git submodule update --init --recursive
 bash build.sh                      # out/bb-probe.exe, out/bb-gpu-capabilities.exe
-BB_GAME_DIR=F:/path/to/CUSA03173 python run.py
-python launcher/bbport_launcher_win.py
-bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.exe + DLLs
+bash packaging/windows/package.sh  # dist/uncharted-windows/ and .zip: uncharted-app.exe + DLLs
 ```
 
-`run.py` is the Windows `run.sh` (same variables; works from a plain Windows Python too).
-The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
-python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
-scripts (`--script`) and the game without the window (`--play`): players need no Python.
-The package also carries the Rust launcher (roadmap 2.10): `uncharted-app.exe`, with
+The package carries the Rust launcher: `uncharted-app.exe`, with
 `uncharted-universal.exe` (the command line; `uncharted-universal.exe play u1` starts a game and
 waits for it, which replaced `Play Uncharted.exe`, `packaging/windows/play.c`) and
 `uncharted-run.exe` beside it. `packaging/rust_faces.sh` builds them with the host's (MSVC)
 toolchain, the C runtime linked in, and `packaging/rust_licences.py` writes the licences of
 the crates they link to `licenses/rust-crates.txt`.
-`patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
-`run.py` then runs other versions at 30 FPS with live resolution changes.
 From a source tree it adds `C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.
 `bash tools/fetch_fsr4_assets.sh` works in the CLANG64 shell as on Linux.
 
@@ -58,10 +50,7 @@ license into `out/` (next to `out/bb-probe.exe`); `package.sh` ships them when p
 loads the DLL at run time (`vk_xess.cpp`, no MSVC needed) with the same inputs as DLSS. The PC needs the
 Visual C++ 2022 x64 Redistributable. `BB_XESS=0` turns it off, `BB_XESS_DLL=<file>` picks another copy.
 
-The launcher texts are written in English with the Russian beside them; the other languages
-are in `launcher/bbport_lang.py` (one list per language in the order of `KEYS`; a missing or
-empty text falls back to English). The icon (`launcher/bloodborne.ico`/`.png`) is drawn by
-`packaging/windows/make_icon.py` and built into `Bloodborne.exe`, `bb-probe.exe` (the game
+The icon (`crates/core/data/icons/uncharted.ico`/`.png`) is built into `bb-probe.exe` (the game
 window) and `bb-gpu-capabilities.exe`.
 
 ## What is different from Linux
@@ -75,7 +64,7 @@ window) and `bb-gpu-capabilities.exe`.
 | Guest thread stacks from `runtime_low_map` | Windows allocates them, fully committed (`pthread_attr_setstacksize`): guest code has no stack probes and would skip the guard page. The main thread stack is 16 MiB committed. |
 | glibc `nanosleep`, monotonic condition variables | High-resolution waitable timers (`compat_sleep_ns`; winpthreads' sleep rounds to 15.6 ms); semaphore deadlines use `CLOCK_REALTIME` (winpthreads rejects monotonic condition variables). |
 | `libbbgpu.so` | `libbbgpu.a`, linked into `bb-probe.exe` by CMake (`gpu/CMakeLists.txt`), with a manifest for UTF-8 paths and long paths. |
-| `execlp bash run.sh` (in-game restart) | `run.py` puts its command line in `BB_RESTART_COMMAND`; the new launch waits for the old process (`--after PID`). The launcher keeps the game in a job object. |
+| In-game restart | Restart command in `BB_RESTART_COMMAND`; the new launch waits for the old process (`--after PID`). |
 | Mod overlay with symlinks | Symlinks when allowed (Developer Mode), else junctions for folders and hard links for files. |
 
 Diagnostics added on the way: `BB_FRAME_DUMP_TRIGGER=<file>` writes the guest display buffer
@@ -83,5 +72,5 @@ and the presented image of the next frame to `BB_DUMP_DIR` (raw 32-bit pixels), 
 works for menus and movies.
 
 Not ported: the watchdog/`--timeout` thread dumps (Linux signals), userfaultfd tracking
-(`BB_UFFD`), MangoHud, PGO (GCC flags), the GTK launcher (`launcher/bbport_launcher_win.py`, Tkinter, replaces it), and
+(`BB_UFFD`), MangoHud, PGO (GCC flags), and
 the `tests/` programs (several use Linux-only APIs).

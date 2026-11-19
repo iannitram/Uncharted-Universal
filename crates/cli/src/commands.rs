@@ -868,7 +868,7 @@ fn generate_art(args: &[String]) -> Done {
         .positional
         .first()
         .map(PathBuf::from)
-        .unwrap_or_else(|| "launcher/covers".into());
+        .unwrap_or_else(|| "crates/core/data/collection-artwork".into());
     core(
         "generate-art",
         artwork::generate_collection_art(&folder)

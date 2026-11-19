@@ -21,7 +21,7 @@ What had to follow the size:
   id, type, size). It checks that each type adds up to a constant. The render target heaps
   are entry 133 (497 MiB, 561 in Uncharted 3) and entry 132 (140 MiB) of type 6, inside the
   GPU pool (entry 3 of type 2, 2988 MiB), whose total is validated against `0x120000000`.
-  `run.py` computes how much each render target heap grows from the pixel count
+  The launcher computes how much each render target heap grows from the pixel count
   (`BB_GAME_RT_MB`, `BB_GAME_RT2_MB`), gives up the pool's unreserved remainder
   (`BB_GAME_FREE_MB`, entry 14) if needed, and raises the direct memory the same amount
   (`BB_DMEM_MB`). `display.rs` applies the amounts to the table and the constant.
@@ -36,7 +36,7 @@ What had to follow the size:
   1/1088) are rewritten to 1/W, 1/H when the SPIR-V is built (`vk_shader_util.cpp`). The
   chroma plane follows luma rows padded to 64.
 
-Variables (all optional, `run.py` fills the amounts):
+Variables (all optional, the launcher fills the amounts):
 
 | Variable | Meaning |
 |---|---|
@@ -45,8 +45,8 @@ Variables (all optional, `run.py` fills the amounts):
 | `BB_GAME_MOVIE_MB` | movie frame buffer slot size, a multiple of 2 |
 | `BB_GAME_SKIP=0x38,0x18` | display configuration fields to leave at 1920x1080 (diagnosis) |
 
-Tests: the `display` unit tests in `crates/runtime/src/display.rs` (patch on a synthetic image),
-`crates/runtime/tests/display_env.rs` and `tests/test_display.py` (run.py's budget, the launcher's sizes).
+Tests: the `display` unit tests in `crates/runtime/src/display.rs` (patch on a synthetic image) and
+`crates/runtime/tests/display_env.rs` (display memory budget, launcher sizes).
 
 ## Ultrawide
 

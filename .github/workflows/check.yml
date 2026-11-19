@@ -44,6 +44,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: false
+      - name: Enforce no Python runtime files (roadmap 2.11)
+        run: |
+          if [ -d launcher ] || [ -d scripts ] || [ -f run.py ] || [ -f run.sh ]; then
+            echo "Python runtime path found" >&2
+            exit 1
+          fi
+          py_runtime=$(find . -name "*.py" -not -path "*/.*" -not -path "./tools/*" -not -path "./tests/*" -not -path "./packaging/*" -not -path "./gpu/third_party/*" 2>/dev/null || true)
+          if [ -n "$py_runtime" ]; then
+            echo "Python runtime file(s) found: $py_runtime" >&2
+            exit 1
+          fi
       - name: Install Slint and gilrs system packages (Linux)
         # app/ (Slint + gilrs): udev for gilrs; fontconfig, freetype, xkbcommon and the
         # X11/Wayland/GL headers for Slint's winit and femtovg backends.

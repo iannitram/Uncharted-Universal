@@ -40,7 +40,7 @@ echo "Downloading $url"
 curl -fL --progress-bar -o "$appimage.part" "$url"
 chmod +x "$appimage.part"
 mv -f "$appimage.part" "$appimage"
-curl -fsSL -o "$icon" "https://raw.githubusercontent.com/$repo/main/launcher/uncharted.png" || true
+curl -fsSL -o "$icon" "https://raw.githubusercontent.com/$repo/main/crates/core/data/icons/uncharted.png" || true
 
 cat > "$entry" <<EOF
 [Desktop Entry]
