@@ -827,6 +827,9 @@ pub use hub::DETAILS as HUB_DETAILS;
 // ---- fleet ----
 
 fn fleet(args: &[String], ctx: &Ctx) -> Done {
+    if args.first().map(String::as_str) == Some("record") {
+        return fleet_record(&args[1..], ctx);
+    }
     let p = parsed("fleet", args, &["device"], 1)?;
     let file = match p.positional.first() {
         Some(file) => PathBuf::from(file),
@@ -835,26 +838,79 @@ fn fleet(args: &[String], ctx: &Ctx) -> Done {
             .join(FLEET_FILE),
     };
     let mut out = Outcome::default();
-    let text = match fs::read_to_string(&file) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            out.line(format!(
-                "no paired devices yet ({} does not exist)",
-                file.display()
-            ));
-            return Ok(out);
-        }
-        Err(error) => return Err(Outcome::error("fleet", &Error::from(error))),
-    };
-    let records = core(
-        "fleet",
-        text.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(fleet::from_line)
-            .collect::<Result<Vec<_>>>(),
-    )?;
+    if !file.exists() {
+        out.line(format!(
+            "no paired devices yet ({} does not exist)",
+            file.display()
+        ));
+        return Ok(out);
+    }
+    let records = core("fleet", fleet::read_records(&file))?;
     write_fleet(&mut out, &records, p.flag("device"));
     Ok(out)
+}
+
+fn fleet_record(args: &[String], ctx: &Ctx) -> Done {
+    let p = parsed(
+        "fleet",
+        args,
+        &[
+            "device",
+            "build",
+            "os",
+            "patch-level",
+            "sync-unix",
+            "free-bytes",
+            "file",
+        ],
+        0,
+    )?;
+    let device = p
+        .flag("device")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Outcome::usage("fleet", "give --device <name>"))?;
+    let build_id = p
+        .flag("build")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Outcome::usage("fleet", "give --build <id>"))?;
+    let os = match p.flag("os") {
+        Some(key) => Os::from_key(key)
+            .ok_or_else(|| Outcome::usage("fleet", &format!("unknown os: {key}")))?,
+        None => ctx.os,
+    };
+    let patch_level: u32 = parse_int_flag("patch-level", p.flag("patch-level"))?;
+    let last_sync_unix: u64 = parse_int_flag("sync-unix", p.flag("sync-unix"))?;
+    let free_bytes: u64 = parse_int_flag("free-bytes", p.flag("free-bytes"))?;
+    let file = match p.flag("file") {
+        Some(file) => PathBuf::from(file),
+        None => AppDirs::new(&core("fleet", vars(ctx))?)
+            .config
+            .join(FLEET_FILE),
+    };
+    let record = DeviceRecord {
+        device: device.to_string(),
+        os,
+        build_id: build_id.to_string(),
+        patch_level,
+        last_sync_unix,
+        free_bytes,
+    };
+    let records = core("fleet", fleet::upsert_file(&file, record))?;
+    let mut out = Outcome::default();
+    write_fleet(&mut out, &records, Some(device));
+    Ok(out)
+}
+
+fn parse_int_flag<T: Default + std::str::FromStr>(
+    name: &str,
+    value: Option<&str>,
+) -> std::result::Result<T, Outcome> {
+    match value {
+        None => Ok(T::default()),
+        Some(raw) => raw.parse().map_err(|_| {
+            Outcome::usage("fleet", &format!("--{name} must be a non-negative integer"))
+        }),
+    }
 }
 
 /// The fleet table; with `here` (this device's name), each other device's drift and the

@@ -16,6 +16,7 @@
 //! uncharted-universal hub          pair <code> [--hub <address[:port]>]
 //! uncharted-universal hub          pull [--hub <address[:port]>] [--from <hub>] [--into <folder>]
 //! uncharted-universal fleet        [<records file>] [--device <name>]
+//! uncharted-universal fleet        record --device <name> --build <id> [--os <os>] [--patch-level <n>] [--sync-unix <n>] [--free-bytes <n>] [--file <path>]
 //! uncharted-universal generate-art [<output folder>]
 //! uncharted-universal setup        [status|hub|client|steam]
 //! ```

@@ -5,6 +5,9 @@
 
 use crate::error::{Error, Result};
 use crate::platform::Os;
+use std::fs;
+use std::io::ErrorKind;
+use std::path::Path;
 
 /// What one launcher reports to its hubs after each sync.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +118,56 @@ pub fn from_line(line: &str) -> Result<DeviceRecord> {
         last_sync_unix: number(last_sync).ok_or_else(bad)?,
         free_bytes: number(free).ok_or_else(bad)?,
     })
+}
+
+/// Reads all device records from `path`, ignoring blank lines. Returns an empty vector if `path`
+/// does not exist yet.
+pub fn read_records(path: &Path) -> Result<Vec<DeviceRecord>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(Error::from(err)),
+    };
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(from_line)
+        .collect()
+}
+
+/// Inserts or replaces `record` in `records` by `device` name, preserving existing order.
+pub fn upsert(records: &mut Vec<DeviceRecord>, record: DeviceRecord) {
+    if let Some(existing) = records.iter_mut().find(|r| r.device == record.device) {
+        *existing = record;
+    } else {
+        records.push(record);
+    }
+}
+
+/// Atomically writes `records` to `path` in `to_line` format, creating parent directories if
+/// needed.
+pub fn write_records(path: &Path, records: &[DeviceRecord]) -> Result<()> {
+    let mut out = String::new();
+    for record in records {
+        out.push_str(&to_line(record)?);
+        out.push('\n');
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("txt.tmp");
+    fs::write(&tmp, out.as_bytes())?;
+    fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+/// Reads `path` (if present), upserts `record` by `device` name, atomically writes the result,
+/// and returns the updated list.
+pub fn upsert_file(path: &Path, record: DeviceRecord) -> Result<Vec<DeviceRecord>> {
+    let _ = to_line(&record)?;
+    let mut records = read_records(path)?;
+    upsert(&mut records, record);
+    write_records(path, &records)?;
+    Ok(records)
 }
 
 /// A field of decimal digits; `None` for anything else, including a sign or an overflow.
@@ -275,5 +328,38 @@ mod tests {
             assert_eq!(err.code(), "hub", "{line:?}");
             assert_eq!(hub_message(err), format!("bad device record: {line}"));
         }
+    }
+
+    #[test]
+    fn upsert_replaces_matching_device_and_appends_new_ones() {
+        let mut records = vec![record("Desktop", "aaa", 1), record("Handheld", "bbb", 2)];
+        upsert(&mut records, record("Desktop", "ccc", 3));
+        upsert(&mut records, record("Tablet", "ddd", 4));
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].build_id, "ccc");
+        assert_eq!(records[0].patch_level, 3);
+        assert_eq!(records[1].device, "Handheld");
+        assert_eq!(records[2].device, "Tablet");
+    }
+
+    #[test]
+    fn upsert_file_creates_reads_and_updates_atomically() {
+        let dir = std::env::temp_dir().join(format!("uncharted-fleet-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("nested").join("fleet.txt");
+        assert!(read_records(&path).unwrap().is_empty());
+
+        let first = record("Desktop", "b1", 1);
+        let updated = upsert_file(&path, first.clone()).unwrap();
+        assert_eq!(updated, vec![first]);
+
+        let second = record("Handheld", "b2", 2);
+        let updated_desktop = record("Desktop", "b3", 3);
+        upsert_file(&path, second.clone()).unwrap();
+        let final_records = upsert_file(&path, updated_desktop.clone()).unwrap();
+        assert_eq!(final_records, vec![updated_desktop, second]);
+        assert_eq!(read_records(&path).unwrap(), final_records);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

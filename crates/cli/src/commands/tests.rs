@@ -775,6 +775,74 @@ fn fleet_without_records_says_so() {
 }
 
 #[test]
+fn fleet_record_persists_updates_and_reports_drift() {
+    let dir = TempDir::new("fleet-record");
+    let first = exec(
+        &[
+            "fleet",
+            "record",
+            "--device",
+            "Desktop",
+            "--build",
+            "b1",
+            "--patch-level",
+            "3",
+            "--sync-unix",
+            "1700000000",
+            "--free-bytes",
+            "3221225472",
+        ],
+        &home(dir.path()),
+    );
+    assert_eq!(first.code, OK, "{}", first.stderr);
+    assert!(first
+        .stdout
+        .contains("Desktop  linux  build b1  patch level 3"));
+    assert!(first.stdout.contains("(this device)"));
+
+    let second = exec(
+        &[
+            "fleet",
+            "record",
+            "--device",
+            "Handheld",
+            "--build",
+            "b2",
+            "--patch-level",
+            "5",
+            "--sync-unix",
+            "1700000100",
+        ],
+        &home(dir.path()),
+    );
+    assert_eq!(second.code, OK, "{}", second.stderr);
+
+    let view = exec(&["fleet", "--device", "Desktop"], &home(dir.path()));
+    assert_eq!(view.code, OK, "{}", view.stderr);
+    assert!(view.stdout.contains("patch level 5, this device 3"));
+    assert!(view
+        .stdout
+        .contains("Handheld made this save with 5 of our fixes; this device has 3."));
+
+    assert_eq!(
+        exec(&["fleet", "record", "--build", "b1"], &ctx()).code,
+        USAGE
+    );
+    assert_eq!(
+        exec(&["fleet", "record", "--device", "Desktop"], &ctx()).code,
+        USAGE
+    );
+    assert_eq!(
+        exec(
+            &["fleet", "record", "--device", "Desktop", "--build", "b1", "--os", "beos",],
+            &ctx(),
+        )
+        .code,
+        USAGE
+    );
+}
+
+#[test]
 fn the_fleet_table_lists_each_device() {
     let mut out = Outcome::default();
     write_fleet(

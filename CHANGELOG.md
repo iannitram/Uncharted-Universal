@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 `fleet` record persistence (4.04, #458): added `read_records`, `write_records`, `upsert`, and `upsert_file` to `crates/core/src/fleet.rs` for atomic `fleet.txt` persistence, and wired `uncharted-universal fleet record` in `crates/cli/src/commands.rs`. `uncharted_core` and `uncharted_cli` unit/CLI tests, clippy and fmt pass.
+
 - 2026-11-20 `loader` foundation in Rust (3.16, #457): added `crates/runtime/src/loader.rs` (`BBPROBE1`–`BBPROBE5` parser/validator, `missing_imports`, `ContentProfile`, masked `find_pattern`, CLI `parse_args`) and wired `--list-missing` into `uncharted-run`. Full guest execution, GPU/SDL/signal handlers remain in `src/probe.c` until 3.17.
 
 - 2026-11-20 `fiber` and `thread` in Rust on Linux (3.13, #362): `crates/runtime/src/fiber.rs` and `thread.rs` replace `src/runtime_fiber.c` and `src/runtime_thread.c` on Linux x86-64 (ABI version 9), keeping `runtime_ndgi_open` in `src/runtime_fault.c` and Windows on the C files until 3.17. `uncharted_runtime` tests (317 unit + header/integration), clippy and fmt pass; Linux C/GPU build and AMD handheld thread check remain owed.
