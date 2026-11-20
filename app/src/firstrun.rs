@@ -17,6 +17,7 @@ use crate::screen::Input;
 use std::path::PathBuf;
 use uncharted_core::dump::DumpReport;
 use uncharted_core::games::Game;
+use uncharted_core::relay::{CloudService, RelayAccountStatus, RelayChallenge};
 use uncharted_core::setup::client::{self, HubChoice, Pulled};
 use uncharted_core::setup::{self, bytes_text, Prepared};
 
@@ -70,6 +71,14 @@ pub enum Job {
     AddToSteam,
     /// Ask Steam to quit, wait for it, then add to Steam.
     CloseSteamAndAdd,
+    /// Sign in to Nextcloud via Save Relay (`save-relay` owns the OS credential store).
+    RelaySignInNextcloud {
+        url: String,
+        account: String,
+        password: String,
+    },
+    /// Start OAuth / QR sign-in via Save Relay for Google Drive or Dropbox.
+    RelayStartOAuth(CloudService),
     /// Give the text field the keyboard.
     EditField,
     /// Back to the Continue screen, which loads again; `start_steam` starts Steam first.
@@ -96,6 +105,15 @@ pub enum Event {
     SteamOpen,
     /// Added to Steam: what was written, in a sentence; or why not.
     Added(Result<String, String>),
+    RelaySignedIn(Result<RelayAccountStatus, String>),
+    RelayChallenge(Result<RelayChallenge, String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextcloudField {
+    Url,
+    Account,
+    Password,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +158,24 @@ enum Step {
     SteamOpen,
     Adding {
         closing: bool,
+    },
+    SaveSync {
+        after_lines: Vec<String>,
+    },
+    Nextcloud {
+        url: String,
+        account: String,
+        password: String,
+        active: NextcloudField,
+        after_lines: Vec<String>,
+    },
+    SaveSyncBusy {
+        service: CloudService,
+        after_lines: Vec<String>,
+    },
+    OAuthChallenge {
+        challenge: RelayChallenge,
+        after_lines: Vec<String>,
     },
     Done {
         lines: Vec<String>,
@@ -204,6 +240,15 @@ const CLOSE_AND_ADD: &str = "Close Steam and add";
 const BACK: &str = "Back";
 const START_STEAM: &str = "Start Steam again";
 const OPEN: &str = "Open the launcher";
+const SYNC_NEXTCLOUD: &str = "Nextcloud";
+const SYNC_GDRIVE: &str = "Google Drive";
+const SYNC_DROPBOX: &str = "Dropbox";
+const SKIP_SYNC: &str = "Skip for now";
+const NC_URL: &str = "Server address";
+const NC_ACCOUNT: &str = "Account";
+const NC_PASSWORD: &str = "App password";
+const SIGN_IN: &str = "Sign in";
+const CONTINUE: &str = "Continue";
 
 impl FirstRun {
     /// The page at its first step. `only` is the game whose Set up button opened it; `steam`
@@ -262,13 +307,17 @@ impl FirstRun {
             Step::Pulled { .. } => own(&[NEXT]),
             Step::Steam => own(&[ADD, NOT_NOW]),
             Step::SteamOpen => own(&[CLOSE_AND_ADD, BACK]),
+            Step::SaveSync { .. } => own(&[SYNC_NEXTCLOUD, SYNC_GDRIVE, SYNC_DROPBOX, SKIP_SYNC]),
+            Step::Nextcloud { .. } => own(&[NC_URL, NC_ACCOUNT, NC_PASSWORD, SIGN_IN, BACK]),
+            Step::OAuthChallenge { .. } => own(&[CONTINUE, BACK]),
             Step::Done { .. } if self.steam_closed => own(&[START_STEAM, OPEN]),
             Step::Done { .. } => own(&[OPEN]),
             Step::Checking(_)
             | Step::Preparing { .. }
             | Step::Code { .. }
             | Step::Pulling { .. }
-            | Step::Adding { .. } => Vec::new(),
+            | Step::Adding { .. }
+            | Step::SaveSyncBusy { .. } => Vec::new(),
         }
     }
 
@@ -356,18 +405,40 @@ impl FirstRun {
     }
 
     fn field_draft(&self) -> Option<&str> {
-        match self.step {
+        match &self.step {
             Step::PickDump { .. } => self.dump_draft.as_deref(),
             Step::FindHub { .. } => self.hub_draft.as_deref(),
+            Step::Nextcloud {
+                url,
+                account,
+                active,
+                ..
+            } => match active {
+                NextcloudField::Url => Some(url.as_str()),
+                NextcloudField::Account => Some(account.as_str()),
+                // Never expose stored password bytes in view drafts.
+                NextcloudField::Password => Some(""),
+            },
             _ => None,
         }
     }
 
     /// Physical edits become the draft; controller edits commit only on Submit.
     pub fn edit_field(&mut self, text: &str) {
-        match self.step {
+        match &mut self.step {
             Step::PickDump { .. } => self.dump_draft = Some(text.to_owned()),
             Step::FindHub { .. } => self.hub_draft = Some(text.to_owned()),
+            Step::Nextcloud {
+                url,
+                account,
+                password,
+                active,
+                ..
+            } => match active {
+                NextcloudField::Url => *url = text.to_owned(),
+                NextcloudField::Account => *account = text.to_owned(),
+                NextcloudField::Password => *password = text.to_owned(),
+            },
             _ => (),
         }
     }
@@ -398,6 +469,11 @@ impl FirstRun {
                     Job::None
                 }
             },
+            Step::Nextcloud { .. } => {
+                self.edit_field(text);
+                self.error.clear();
+                Job::None
+            }
             _ => Job::None,
         }
     }
@@ -427,7 +503,7 @@ impl FirstRun {
         if self.steam {
             self.go(Step::Steam);
         } else {
-            self.go(Step::Done { lines });
+            self.go(Step::SaveSync { after_lines: lines });
         }
         Job::None
     }
@@ -485,11 +561,105 @@ impl FirstRun {
                 Job::AddToSteam
             }
             (Step::Steam, _) => {
-                self.go(Step::Done {
-                    lines: vec!["The launcher is not in Steam. Add it later with \
+                self.go(Step::SaveSync {
+                    after_lines: vec!["The launcher is not in Steam. Add it later with \
                          uncharted-universal setup steam."
                         .into()],
                 });
+                Job::None
+            }
+            (Step::SaveSync { after_lines }, SYNC_NEXTCLOUD) => {
+                let after_lines = after_lines.clone();
+                self.go(Step::Nextcloud {
+                    url: String::new(),
+                    account: String::new(),
+                    password: String::new(),
+                    active: NextcloudField::Url,
+                    after_lines,
+                });
+                Job::None
+            }
+            (Step::SaveSync { after_lines }, SYNC_GDRIVE) => {
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSyncBusy {
+                    service: CloudService::GoogleDrive,
+                    after_lines,
+                });
+                Job::RelayStartOAuth(CloudService::GoogleDrive)
+            }
+            (Step::SaveSync { after_lines }, SYNC_DROPBOX) => {
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSyncBusy {
+                    service: CloudService::Dropbox,
+                    after_lines,
+                });
+                Job::RelayStartOAuth(CloudService::Dropbox)
+            }
+            (Step::SaveSync { after_lines }, _) => {
+                let lines = after_lines.clone();
+                self.go(Step::Done { lines });
+                Job::None
+            }
+            (Step::Nextcloud { .. }, NC_URL) => {
+                if let Step::Nextcloud { active, .. } = &mut self.step {
+                    *active = NextcloudField::Url;
+                }
+                Job::EditField
+            }
+            (Step::Nextcloud { .. }, NC_ACCOUNT) => {
+                if let Step::Nextcloud { active, .. } = &mut self.step {
+                    *active = NextcloudField::Account;
+                }
+                Job::EditField
+            }
+            (Step::Nextcloud { .. }, NC_PASSWORD) => {
+                if let Step::Nextcloud { active, .. } = &mut self.step {
+                    *active = NextcloudField::Password;
+                }
+                Job::EditField
+            }
+            (
+                Step::Nextcloud {
+                    url,
+                    account,
+                    password,
+                    after_lines,
+                    ..
+                },
+                SIGN_IN,
+            ) => {
+                let (url, account) = (url.trim().to_owned(), account.trim().to_owned());
+                let password = password.clone();
+                if url.is_empty() || account.is_empty() || password.is_empty() {
+                    self.error =
+                        "Enter the Nextcloud address, account and app password first.".into();
+                    return Job::None;
+                }
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSyncBusy {
+                    service: CloudService::Nextcloud,
+                    after_lines,
+                });
+                Job::RelaySignInNextcloud {
+                    url,
+                    account,
+                    password,
+                }
+            }
+            (Step::Nextcloud { after_lines, .. }, _) => {
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSync { after_lines });
+                Job::None
+            }
+            (Step::OAuthChallenge { after_lines, .. }, CONTINUE) => {
+                let mut lines = after_lines.clone();
+                lines.push("Save sync setup started; finish signing in to sync saves.".into());
+                self.go(Step::Done { lines });
+                Job::None
+            }
+            (Step::OAuthChallenge { after_lines, .. }, _) => {
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSync { after_lines });
                 Job::None
             }
             (Step::SteamOpen, CLOSE_AND_ADD) => {
@@ -550,6 +720,16 @@ impl FirstRun {
                 Job::None
             }
             Step::Steam => self.choose(1),
+            Step::SaveSync { after_lines } => {
+                let lines = after_lines.clone();
+                self.go(Step::Done { lines });
+                Job::None
+            }
+            Step::Nextcloud { after_lines, .. } | Step::OAuthChallenge { after_lines, .. } => {
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSync { after_lines });
+                Job::None
+            }
             Step::Done { .. } => Job::Finish {
                 start_steam: self.steam_closed,
             },
@@ -557,7 +737,8 @@ impl FirstRun {
             | Step::Preparing { .. }
             | Step::Pulling { .. }
             | Step::Pulled { .. }
-            | Step::Adding { .. } => Job::None,
+            | Step::Adding { .. }
+            | Step::SaveSyncBusy { .. } => Job::None,
         }
     }
 
@@ -647,13 +828,48 @@ impl FirstRun {
                     if self.steam_closed {
                         lines.push("Steam was closed for this; start it again below.".into());
                     }
-                    self.go(Step::Done { lines });
+                    self.go(Step::SaveSync { after_lines: lines });
                 }
                 Err(err) => {
                     self.go(Step::Steam);
                     self.error = sentence(&err);
                 }
             },
+            (Event::RelaySignedIn(result), Step::SaveSyncBusy { after_lines, .. }) => {
+                let after_lines = std::mem::take(after_lines);
+                match result {
+                    Ok(status) => {
+                        let mut lines = after_lines;
+                        let who = status
+                            .account
+                            .as_deref()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("signed in");
+                        let svc = status.service.map(|s| s.name()).unwrap_or("Save sync");
+                        lines.push(format!("Save sync ready ({svc}: {who})."));
+                        self.go(Step::Done { lines });
+                    }
+                    Err(err) => {
+                        self.go(Step::SaveSync { after_lines });
+                        self.error = sentence(&err);
+                    }
+                }
+            }
+            (Event::RelayChallenge(result), Step::SaveSyncBusy { after_lines, .. }) => {
+                let after_lines = std::mem::take(after_lines);
+                match result {
+                    Ok(challenge) => {
+                        self.go(Step::OAuthChallenge {
+                            challenge,
+                            after_lines,
+                        });
+                    }
+                    Err(err) => {
+                        self.go(Step::SaveSync { after_lines });
+                        self.error = sentence(&err);
+                    }
+                }
+            }
             _ => {}
         }
         Job::None
@@ -786,6 +1002,66 @@ impl FirstRun {
                     "Adding the launcher...".to_owned()
                 }],
             ),
+            Step::SaveSync { .. } => (
+                4,
+                "Save sync".to_owned(),
+                vec![
+                    "Sync your saves across devices with Save Relay, or skip for now and play on \
+                     local saves."
+                        .to_owned(),
+                ],
+            ),
+            Step::Nextcloud {
+                url,
+                account,
+                password,
+                ..
+            } => (
+                4,
+                "Nextcloud sign-in".to_owned(),
+                vec![
+                    format!(
+                        "Address: {}",
+                        if url.is_empty() {
+                            "not set"
+                        } else {
+                            url.as_str()
+                        }
+                    ),
+                    format!(
+                        "Account: {}",
+                        if account.is_empty() {
+                            "not set"
+                        } else {
+                            account.as_str()
+                        }
+                    ),
+                    format!(
+                        "App password: {}",
+                        if password.is_empty() {
+                            "not set"
+                        } else {
+                            "entered (kept only in system credential store)"
+                        }
+                    ),
+                ],
+            ),
+            Step::SaveSyncBusy { service, .. } => (
+                4,
+                format!("Signing in to {}", service.name()),
+                vec!["Storing credentials in your system credential store...".to_owned()],
+            ),
+            Step::OAuthChallenge { challenge, .. } => {
+                let mut lines = vec![format!(
+                    "Open or scan this address to sign in to {}:",
+                    challenge.service.name()
+                )];
+                lines.push(challenge.verification_url.clone());
+                if let Some(code) = &challenge.user_code {
+                    lines.push(format!("Code: {code}"));
+                }
+                (4, format!("{} sign-in", challenge.service.name()), lines)
+            }
             Step::Done { lines } => (4, "All set".to_owned(), lines.clone()),
         };
         let (code, code_cursor) = match &self.step {
@@ -816,6 +1092,7 @@ impl FirstRun {
                 | Step::Preparing { .. }
                 | Step::Pulling { .. }
                 | Step::Adding { .. }
+                | Step::SaveSyncBusy { .. }
                 | Step::PickDump {
                     searching: true,
                     ..

@@ -52,9 +52,18 @@ cp README.md "$dest/README.md"
 echo "${LINUX_BUILD:-}" > "$dest/LINUX_BUILD"
 # A custom build that must never update itself to an official release (NO_UPDATE_CHECK=1).
 if [[ ${NO_UPDATE_CHECK:-0} == 1 ]]; then : > "$dest/NO_UPDATE_CHECK"; fi
-for license in gpu/third_party/httplib/LICENSE:cpp-httplib crates/core/data/fonts/OFL.txt:Cinzel; do
+for license in gpu/third_party/httplib/LICENSE:cpp-httplib crates/core/data/fonts/OFL.txt:Cinzel packaging/save-relay/LICENSE:save-relay; do
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
 done
+if [[ -d packaging/save-relay ]]; then
+    mkdir -p "$dest/save-relay-manifests"
+    cp packaging/save-relay/uncharted-*.json "$dest/save-relay-manifests/"
+fi
+relay_bin=${SAVE_RELAY_BIN:-out/save-relay}
+if [[ -f $relay_bin ]]; then
+    cp "$relay_bin" "$dest/save-relay"
+    chmod +x "$dest/save-relay"
+fi
 # The bundled libraries' own copyright files (Debian keeps them per package). A library whose
 # package has no copyright file fails the package step with its name (#302).
 bundled=()

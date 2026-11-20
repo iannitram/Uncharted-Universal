@@ -2,7 +2,7 @@
 //! access, credentials, revision comparisons and deferred uploads.
 use crate::games::Game;
 use crate::launch::{Keep, Relay, Sync};
-use crate::savecard::{side_by_side, SaveCard};
+use crate::savecard::{side_by_side, SaveCard, SideBySide};
 use crate::{Error, Result};
 use chrono::DateTime;
 use serde_json::Value;
@@ -157,6 +157,220 @@ fn card(game: Game, side: &Value, card: &Value) -> Result<SaveCard> {
         title: None,
         build_id: None,
     })
+}
+
+/// Encodes a save conflict as a single-line JSON event for the launcher UI or `--relay-prompt stdio`.
+pub fn conflict_event(phase: &str, pair: &SideBySide) -> Value {
+    let card = |c: &SaveCard| {
+        serde_json::json!({
+            "device": c.device,
+            "saved_unix": c.saved_unix,
+            "detail": c.detail,
+            "play_time_secs": c.play_time_secs,
+            "slot": c.slot,
+        })
+    };
+    serde_json::json!({
+        "version": 1,
+        "event": "save-conflict",
+        "phase": phase,
+        "game": pair.local.game.key(),
+        "server": card(&pair.server),
+        "local": card(&pair.local),
+    })
+}
+
+/// Parses a `conflict_event` JSON line back into `(Game, SideBySide)`.
+pub fn parse_conflict_event(line: &str) -> Option<(Game, SideBySide)> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    if value["version"] != 1 || value["event"] != "save-conflict" {
+        return None;
+    }
+    let game = Game::from_key(value["game"].as_str()?)?;
+    let parse_card = |side: &Value| -> Option<SaveCard> {
+        Some(SaveCard {
+            game,
+            slot: side["slot"].as_str().unwrap_or_default().to_owned(),
+            device: side["device"].as_str().map(str::to_owned),
+            detail: side["detail"].as_str().map(str::to_owned),
+            play_time_secs: side["play_time_secs"].as_u64(),
+            saved_unix: side["saved_unix"].as_u64()?,
+            picture: None,
+            title: None,
+            build_id: None,
+        })
+    };
+    let server = parse_card(&value["server"])?;
+    let local = parse_card(&value["local"])?;
+    Some((game, side_by_side(server, local)))
+}
+
+/// Cloud storage provider supported by Save Relay (roadmap 9.05).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudService {
+    Nextcloud,
+    GoogleDrive,
+    Dropbox,
+}
+
+impl CloudService {
+    pub fn id(self) -> &'static str {
+        match self {
+            CloudService::Nextcloud => "nextcloud",
+            CloudService::GoogleDrive => "gdrive",
+            CloudService::Dropbox => "dropbox",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            CloudService::Nextcloud => "Nextcloud",
+            CloudService::GoogleDrive => "Google Drive",
+            CloudService::Dropbox => "Dropbox",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "nextcloud" => Some(CloudService::Nextcloud),
+            "gdrive" | "google-drive" => Some(CloudService::GoogleDrive),
+            "dropbox" => Some(CloudService::Dropbox),
+            _ => None,
+        }
+    }
+}
+
+/// Current Save Relay account state without any secret material.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RelayAccountStatus {
+    pub service: Option<CloudService>,
+    pub account: Option<String>,
+    pub configured: bool,
+}
+
+/// Pending OAuth/QR sign-in challenge returned by Save Relay for Google Drive / Dropbox.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayChallenge {
+    pub service: CloudService,
+    pub verification_url: String,
+    pub user_code: Option<String>,
+}
+
+/// Setup & sign-in operations delegated to the `save-relay` binary (credentials stay in the
+/// OS credential store managed by `save-relay`, never written to launcher files or logs).
+pub trait RelaySetup {
+    fn status(&self) -> Result<RelayAccountStatus>;
+    fn sign_in_nextcloud(
+        &self,
+        url: &str,
+        account: &str,
+        app_password: &str,
+    ) -> Result<RelayAccountStatus>;
+    fn start_oauth(&self, service: CloudService) -> Result<RelayChallenge>;
+    fn sign_out(&self) -> Result<()>;
+}
+
+impl RelaySetup for DesktopRelay {
+    fn status(&self) -> Result<RelayAccountStatus> {
+        let output = Command::new(&self.program)
+            .args(["status", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+        let report: Value = serde_json::from_slice(&output.stdout).map_err(|_| invalid())?;
+        let data = &report["data"];
+        let service = data["service"].as_str().and_then(CloudService::from_id);
+        let account = data["account"].as_str().map(str::to_owned);
+        let configured = data["configured"].as_bool().unwrap_or(service.is_some());
+        Ok(RelayAccountStatus {
+            service,
+            account,
+            configured,
+        })
+    }
+
+    fn sign_in_nextcloud(
+        &self,
+        url: &str,
+        account: &str,
+        app_password: &str,
+    ) -> Result<RelayAccountStatus> {
+        // Pass the password on stdin so it never appears in argv, logs, or settings files.
+        use std::io::Write;
+        let mut child = Command::new(&self.program)
+            .args([
+                "setup",
+                "nextcloud",
+                "--url",
+                url,
+                "--user",
+                account,
+                "--password-stdin",
+                "--json",
+            ])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{app_password}");
+        }
+        let output = child
+            .wait_with_output()
+            .map_err(|e| Error::Launch(format!("Save Relay setup failed: {e}")))?;
+        if !output.status.success() {
+            return Err(Error::Launch(
+                "Save Relay could not sign in to Nextcloud. Check the address, user and app password."
+                    .into(),
+            ));
+        }
+        Ok(RelayAccountStatus {
+            service: Some(CloudService::Nextcloud),
+            account: Some(account.to_owned()),
+            configured: true,
+        })
+    }
+
+    fn start_oauth(&self, service: CloudService) -> Result<RelayChallenge> {
+        let output = Command::new(&self.program)
+            .args(["setup", service.id(), "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+        if !output.status.success() {
+            return Err(Error::Launch(format!(
+                "Save Relay could not start {} sign-in.",
+                service.name()
+            )));
+        }
+        let report: Value = serde_json::from_slice(&output.stdout).map_err(|_| invalid())?;
+        let verification_url = report["data"]["verification_url"]
+            .as_str()
+            .ok_or_else(invalid)?
+            .to_owned();
+        let user_code = report["data"]["user_code"].as_str().map(str::to_owned);
+        Ok(RelayChallenge {
+            service,
+            verification_url,
+            user_code,
+        })
+    }
+
+    fn sign_out(&self) -> Result<()> {
+        let output = Command::new(&self.program)
+            .args(["sign-out", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+        if !output.status.success() {
+            return Err(Error::Launch("Save Relay could not sign out.".into()));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

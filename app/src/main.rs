@@ -854,7 +854,7 @@ impl Ui {
                 }
                 self.screen
                     .borrow_mut()
-                    .finished(&run_status(start.game, Err(error)));
+                    .finished(&run_status(start.game, &Err(error)));
                 self.redraw();
                 None
             }
@@ -1155,8 +1155,24 @@ fn play_args(start: &Start) -> Vec<String> {
     args
 }
 
+/// Extracts a `save-conflict` JSON event emitted by `uncharted-universal play` (9.01).
+fn extract_conflict_event(
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Option<uncharted_core::savecard::SideBySide> {
+    for stream in [stdout, stderr] {
+        let text = String::from_utf8_lossy(stream);
+        for line in text.lines() {
+            if let Some((_, pair)) = uncharted_core::relay::parse_conflict_event(line) {
+                return Some(pair);
+            }
+        }
+    }
+    None
+}
+
 /// The status line after a run of the play command.
-fn run_status(game: Game, result: std::io::Result<std::process::Output>) -> String {
+fn run_status(game: Game, result: &std::io::Result<std::process::Output>) -> String {
     match result {
         Err(err) => format!("Could not start {}: {err}", cli_path().display()),
         Ok(out) if out.status.success() => format!("{} closed.", game.name()),
@@ -1284,7 +1300,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // A finished game run comes back from its thread through this channel, the hardware probe
     // through the second and what the first run's jobs come to through the third.
-    let (done_tx, done_rx) = mpsc::channel::<(Game, String)>();
+    let (done_tx, done_rx) =
+        mpsc::channel::<(Game, String, Option<uncharted_core::savecard::SideBySide>)>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
     let run_args = args.run_args;
@@ -1396,7 +1413,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                         None => child.wait_with_output(),
                     };
-                    let _ = done.send((start.game, run_status(start.game, result)));
+                    let conflict = result
+                        .as_ref()
+                        .ok()
+                        .and_then(|out| extract_conflict_event(&out.stdout, &out.stderr));
+                    let _ = done.send((start.game, run_status(start.game, &result), conflict));
                 });
             }
             Cmd::Saves(command) => {
@@ -1519,11 +1540,14 @@ fn main() -> Result<(), slint::PlatformError> {
         slint::TimerMode::Repeated,
         Duration::from_millis(16),
         move || {
-            if let Ok((game, status)) = done_rx.try_recv() {
+            if let Ok((game, status, conflict)) = done_rx.try_recv() {
                 let games = load_all(&places.borrow());
                 let mut screen = ui.screen.borrow_mut();
                 screen.reload(games);
                 screen.finished(&status);
+                if let Some(pair) = conflict {
+                    screen.set_conflict(game, pair);
+                }
                 drop(screen);
                 ui.redraw();
                 ui.run_ended(game);
@@ -2395,7 +2419,7 @@ mod tests {
 
     #[test]
     fn status_after_a_run() {
-        assert!(run_status(Game::U1, Err(std::io::Error::other("missing")))
+        assert!(run_status(Game::U1, &Err(std::io::Error::other("missing")))
             .starts_with("Could not start "));
         assert_eq!(
             page_status(Page::Fleet),

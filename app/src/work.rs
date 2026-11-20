@@ -118,7 +118,36 @@ pub fn run(job: Job, cx: &Context, tx: &Sender<Event>) {
             let result = close_steam(cx.os).and_then(|()| add_to_steam(cx));
             send(Event::Added(result));
         }
+        Job::RelaySignInNextcloud {
+            url,
+            account,
+            password,
+        } => {
+            use uncharted_core::relay::RelaySetup;
+            let res = desktop_relay()
+                .sign_in_nextcloud(&url, &account, &password)
+                .map_err(|e| message(&e));
+            send(Event::RelaySignedIn(res));
+        }
+        Job::RelayStartOAuth(service) => {
+            use uncharted_core::relay::RelaySetup;
+            let res = desktop_relay()
+                .start_oauth(service)
+                .map_err(|e| message(&e));
+            send(Event::RelayChallenge(res));
+        }
     }
+}
+
+fn desktop_relay() -> uncharted_core::relay::DesktopRelay {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("uncharted-app"));
+    let bin = format!("save-relay{}", std::env::consts::EXE_SUFFIX);
+    let program = exe.with_file_name(&bin);
+    let manifests = exe
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("save-relay-manifests");
+    uncharted_core::relay::DesktopRelay { program, manifests }
 }
 
 /// What a look for hubs (`hub::discover`, mDNS on the home network) came to: the hubs that

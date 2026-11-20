@@ -20,7 +20,7 @@ use uncharted_core::prepare::{self, PrepareOptions};
 use uncharted_core::profile::DeviceProfile;
 use uncharted_core::relay::DesktopRelay;
 use uncharted_core::run_env::Settings;
-use uncharted_core::savecard::{SaveCard, SideBySide};
+use uncharted_core::savecard::SideBySide;
 use uncharted_core::steam::{self, Shortcut};
 use uncharted_core::{host_env, profile, saves, Error, Result};
 
@@ -357,16 +357,7 @@ impl Runner for RuntimeRunner {
 
 /// Only data from the conflict that stopped this particular pull or push goes to the GUI.
 fn conflict_event(phase: &str, pair: &SideBySide) -> serde_json::Value {
-    let card = |c: &SaveCard| {
-        serde_json::json!({
-            "device": c.device, "saved_unix": c.saved_unix, "detail": c.detail,
-            "play_time_secs": c.play_time_secs, "slot": c.slot,
-        })
-    };
-    serde_json::json!({
-        "version": 1, "event": "save-conflict", "phase": phase, "game": pair.local.game.key(),
-        "server": card(&pair.server), "local": card(&pair.local),
-    })
+    uncharted_core::relay::conflict_event(phase, pair)
 }
 
 fn choose_keep(
@@ -395,6 +386,7 @@ fn choose_keep(
         }
         eprintln!("Choose server or local, or cancel to leave both saves pending.");
     } else {
+        println!("{}", conflict_event(phase, cards));
         return Err(Error::Launch("Save conflict: both saves are pending. Choose a side with --keep server or --keep local.".into()));
     }
     let mut answer = String::new();

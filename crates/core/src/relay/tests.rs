@@ -85,3 +85,31 @@ fn responses_cannot_alias_another_slot_or_the_legacy_namespace() {
     )
     .is_ok());
 }
+
+#[test]
+fn conflict_event_round_trips() {
+    let mut conflict = report("conflict");
+    conflict["data"]["server"] =
+        json!({"device":"tablet","time":"2026-11-17T00:00:00Z","revision":7});
+    conflict["data"]["local"] =
+        json!({"device":"desktop","time":"2026-11-16T00:00:00Z","revision":null});
+    conflict["data"]["server_card"] = json!({"place":"Chapter two","playtime_secs":40});
+    let Sync::Conflict(cards) = decode(
+        "pull",
+        Game::U2,
+        3,
+        Some(3),
+        conflict.to_string().as_bytes(),
+    )
+    .unwrap() else {
+        panic!("expected conflict");
+    };
+    let line = conflict_event("pull", &cards).to_string();
+    let (game, parsed) = parse_conflict_event(&line).expect("parse conflict event");
+    assert_eq!(game, Game::U2);
+    assert_eq!(parsed.server.device, cards.server.device);
+    assert_eq!(parsed.server.slot, cards.server.slot);
+    assert_eq!(parsed.server.detail, cards.server.detail);
+    assert_eq!(parsed.local.device, cards.local.device);
+    assert_eq!(parse_conflict_event("not json"), None);
+}

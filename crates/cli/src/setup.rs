@@ -28,6 +28,7 @@ pub const USAGE: &str = "usage: uncharted-universal setup [status]
        uncharted-universal setup hub [<dump folder>] [u1|u2|u3]
        uncharted-universal setup client <address:port> <six-digit code>
        uncharted-universal setup steam [--close-steam]
+       uncharted-universal setup relay [status|nextcloud <url> <user> <password>|oauth <gdrive|dropbox>|sign-out]
 ";
 
 /// How long a connection to a hub may take to open.
@@ -109,6 +110,7 @@ pub fn run(args: &[String], cx: &Cx, progress: &mut dyn FnMut(&str)) -> Outcome 
         ["client", ..] => usage("client takes the hub's address:port and the six-digit code"),
         ["steam"] => steam(cx, false, progress),
         ["steam", "--close-steam"] => steam(cx, true, progress),
+        ["relay", rest @ ..] => relay_cmd(rest, cx),
         [other, ..] => usage(&format!("unknown step '{other}'")),
     }
 }
@@ -347,6 +349,59 @@ fn message(err: &Error) -> String {
     }
 }
 
+fn relay_cmd(args: &[&str], cx: &Cx) -> Outcome {
+    use uncharted_core::relay::{CloudService, DesktopRelay, RelaySetup};
+    let relay = DesktopRelay {
+        program: cx
+            .app_exe
+            .with_file_name(format!("save-relay{}", std::env::consts::EXE_SUFFIX)),
+        manifests: cx
+            .app_exe
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("save-relay-manifests"),
+    };
+    match args {
+        [] | ["status"] => match relay.status() {
+            Ok(s) => done(format!(
+                "configured: {}\nservice: {}\naccount: {}\n",
+                if s.configured { "yes" } else { "no" },
+                s.service.map(|sv| sv.name()).unwrap_or("none"),
+                s.account.as_deref().unwrap_or("none"),
+            )),
+            Err(e) => fail(e.to_string()),
+        },
+        ["nextcloud", url, user, password] => match relay.sign_in_nextcloud(url, user, password) {
+            Ok(s) => done(format!(
+                "signed in to Nextcloud as {}\n",
+                s.account.as_deref().unwrap_or(user)
+            )),
+            Err(e) => fail(e.to_string()),
+        },
+        ["oauth", svc] => {
+            let Some(service) = CloudService::from_id(svc).filter(|s| *s != CloudService::Nextcloud)
+            else {
+                return usage("oauth takes gdrive or dropbox");
+            };
+            match relay.start_oauth(service) {
+                Ok(ch) => {
+                    let mut out = format!("open: {}\n", ch.verification_url);
+                    if let Some(code) = ch.user_code {
+                        let _ = writeln!(out, "code: {code}");
+                    }
+                    done(out)
+                }
+                Err(e) => fail(e.to_string()),
+            }
+        }
+        ["sign-out"] => match relay.sign_out() {
+            Ok(()) => done("signed out of Save Relay\n".to_owned()),
+            Err(e) => fail(e.to_string()),
+        },
+        _ => usage("relay takes status, nextcloud <url> <user> <password>, oauth <gdrive|dropbox>, or sign-out"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +560,21 @@ mod tests {
             run_quiet(&["--help"], &cx(&temp.0, &|| false)).stdout,
             USAGE
         );
+    }
+
+    #[test]
+    fn relay_setup_reports_usage_and_never_writes_passwords() {
+        let temp = Temp::new();
+        let c = cx(&temp.0, &|| false);
+        assert_eq!(run_quiet(&["relay", "unknown"], &c).code, 2);
+        assert_eq!(run_quiet(&["relay", "oauth", "box"], &c).code, 2);
+        let out = run_quiet(
+            &["relay", "nextcloud", "https://nc.example", "u", "secret-pw"],
+            &c,
+        );
+        // Without a save-relay binary in temp, it fails cleanly without leaking the password.
+        assert_eq!(out.code, 1);
+        assert!(!out.stdout.contains("secret-pw"));
+        assert!(!out.stderr.contains("secret-pw"));
     }
 }

@@ -384,6 +384,8 @@ fn add_to_steam_when_steam_is_closed() {
     assert_eq!(page.handle(A), Job::AddToSteam);
     assert!(page.view().busy);
     page.event(Event::Added(Ok("Added to Steam for 1 user.".into())));
+    assert_eq!(page.view().title, "Save sync");
+    assert_eq!(press(&mut page, SKIP_SYNC), Job::None);
     let view = page.view();
     assert_eq!(view.title, "All set");
     assert_eq!(view.lines, ["Added to Steam for 1 user."]);
@@ -410,6 +412,8 @@ fn steam_open_asks_to_close_it_and_start_it_again() {
         "Closing Steam, then adding the launcher..."
     );
     page.event(Event::Added(Ok("Added to Steam for 2 users.".into())));
+    assert_eq!(page.view().title, "Save sync");
+    assert_eq!(press(&mut page, SKIP_SYNC), Job::None);
     let view = page.view();
     assert_eq!(view.options, [START_STEAM, OPEN]);
     assert_eq!(view.lines.len(), 2);
@@ -427,6 +431,8 @@ fn a_failed_add_shows_why_and_not_now_finishes() {
     assert_eq!(view.title, "Add to Steam");
     assert_eq!(view.error, "Steam: no userdata folder.");
     assert_eq!(press(&mut page, NOT_NOW), Job::None);
+    assert_eq!(page.view().title, "Save sync");
+    assert_eq!(press(&mut page, SKIP_SYNC), Job::None);
     let view = page.view();
     assert_eq!(view.title, "All set");
     assert!(view.lines[0].contains("uncharted-universal setup steam"));
@@ -446,6 +452,8 @@ fn without_steam_the_last_step_is_done() {
     page.handle(A);
     page.event(Event::Prepared(vec![ok(Game::U1)]));
     press(&mut page, NEXT);
+    assert_eq!(page.view().title, "Save sync");
+    press(&mut page, SKIP_SYNC);
     let view = page.view();
     assert_eq!(view.title, "All set");
     assert_eq!(view.lines, ["Uncharted 1: ready."]);
@@ -603,4 +611,113 @@ fn cancelling_a_rejected_controller_submission_keeps_the_committed_hub() {
     assert_eq!(page.view().field_text, "192.168.1.20:47120");
     page.handle_pad(Input::Activate, "");
     assert_eq!(page.view().editor.unwrap().text, "192.168.1.20:47120");
+}
+
+#[test]
+fn save_sync_setup_walks_all_services_by_controller_and_never_leaks_credentials() {
+    use uncharted_core::relay::{CloudService, RelayAccountStatus, RelayChallenge};
+
+    let mut page = FirstRun::new(None, true);
+    // Welcome -> Hub -> PickDump -> Checked -> Prepared -> Steam
+    page.handle(A);
+    let temp = std::env::temp_dir().join(format!("uncharted-905-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&temp);
+    std::fs::create_dir_all(&temp).unwrap();
+    let settings_file = temp.join("settings.json");
+    std::fs::write(&settings_file, r#"{"language":"en"}"#).unwrap();
+
+    // Reach SaveSync via Pulled -> Steam -> Not now.
+    page.handle(B); // Welcome
+    page.handle(DOWN);
+    page.handle(A); // Client
+    page.field("192.168.1.20:47120");
+    let digits = ['1', '2', '3', '4', '5', '9'];
+    for d in digits {
+        page.handle(Key::Digit(d as u8 - b'0'));
+    }
+    page.handle(A); // PairPull
+    page.event(Event::Pulled(Ok(Pulled {
+        games: vec![Game::U2],
+        bytes: 1024,
+        peer_note: None,
+    })));
+    page.handle(A); // Next -> Steam
+    page.handle(DOWN);
+    page.handle(A); // Not now -> SaveSync
+    assert_eq!(page.view().title, "Save sync");
+    assert_eq!(
+        page.view().options,
+        ["Nextcloud", "Google Drive", "Dropbox", "Skip for now"]
+    );
+
+    // 1. Google Drive by controller presses only (Down, A).
+    page.handle(DOWN);
+    let job = page.handle(A);
+    assert_eq!(job, Job::RelayStartOAuth(CloudService::GoogleDrive));
+    page.event(Event::RelayChallenge(Ok(RelayChallenge {
+        service: CloudService::GoogleDrive,
+        verification_url: "https://example.invalid/device".into(),
+        user_code: Some("ABCD-1234".into()),
+    })));
+    assert_eq!(page.view().title, "Google Drive sign-in");
+    assert!(page.view().lines.iter().any(|l| l.contains("ABCD-1234")));
+    page.handle(DOWN);
+    page.handle(A); // Back -> SaveSync
+
+    // 2. Dropbox by controller presses only (Down, Down, A).
+    page.handle(DOWN);
+    page.handle(DOWN);
+    let job = page.handle(A);
+    assert_eq!(job, Job::RelayStartOAuth(CloudService::Dropbox));
+    page.event(Event::RelayChallenge(Ok(RelayChallenge {
+        service: CloudService::Dropbox,
+        verification_url: "https://dropbox.invalid/qr".into(),
+        user_code: None,
+    })));
+    assert_eq!(page.view().title, "Dropbox sign-in");
+    page.handle(B); // Back -> SaveSync
+
+    // 3. Nextcloud by controller presses only, and verify password never reaches view or files.
+    let secret = "super-secret-app-pw-905";
+    page.handle(A); // Nextcloud
+    assert_eq!(page.view().title, "Nextcloud sign-in");
+    page.field("https://nc.example.invalid");
+    page.handle(DOWN);
+    page.handle(A); // Account focus -> EditField
+    page.field("nathan");
+    page.handle(DOWN);
+    page.handle(A); // App password focus -> EditField
+    page.field(secret);
+    // View never exposes the raw password.
+    let view = page.view();
+    assert!(!view.field_text.contains(secret));
+    assert!(!view.error.contains(secret));
+    assert!(!view.lines.iter().any(|l| l.contains(secret)));
+
+    page.handle(DOWN);
+    let job = page.handle(A); // Sign in
+    assert_eq!(
+        job,
+        Job::RelaySignInNextcloud {
+            url: "https://nc.example.invalid".into(),
+            account: "nathan".into(),
+            password: secret.into(),
+        }
+    );
+    page.event(Event::RelaySignedIn(Ok(RelayAccountStatus {
+        service: Some(CloudService::Nextcloud),
+        account: Some("nathan".into()),
+        configured: true,
+    })));
+    assert_eq!(page.view().title, "All set");
+    assert!(page
+        .view()
+        .lines
+        .iter()
+        .any(|l| l.contains("Save sync ready (Nextcloud: nathan)")));
+    assert!(!page.view().lines.iter().any(|l| l.contains(secret)));
+    // settings.json remains untouched without any credential.
+    let saved = std::fs::read_to_string(&settings_file).unwrap();
+    assert!(!saved.contains(secret));
+    let _ = std::fs::remove_dir_all(&temp);
 }

@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 Save Relay conflict UI & setup (9.01 #163, 9.05 #440): wired `conflict_event`/`parse_conflict_event` from `uncharted-universal play` into `app/`'s `Screen::set_conflict` overlay and added `save-relay` manifests/binary bundling to `packaging/linux/package.sh` (9.01); added `RelaySetup` (`CloudService`, `RelayAccountStatus`, `RelayChallenge`), `FirstRun` Save sync setup & sign-in flow (`Nextcloud`, `Google Drive`, `Dropbox`, `Skip for now`), and `uncharted-universal setup relay` (9.05). Full workspace tests, clippy and fmt pass; device/release acceptance remains `needs-owner-device`.
+
 - 2026-11-20 Nintendo button prompts and 3.23 tests (3.23, #439): added `Style::Nintendo`, `BB_BUTTON_PROMPTS=nintendo`, and `DrawNintendo` (A/B/X/Y in Nintendo positions, L/R/ZL/ZR, -/+) to `gpu/shadps4/video_core/texture_cache/button_prompts.{h,cpp}`, extracted `prompts_for_gamepad_type` with SDL3 family unit tests in `crates/runtime/src/pad/host.rs`, and added `tests/test_button_prompts.cpp` covering `ps4_sheet` generation and `BB_BUTTON_PROMPTS=nintendo` override. Physical controller verification on AMD handheld/tablet/desktop remains `needs-owner-device` on `#439`.
 
 - 2026-11-20 `fleet` record persistence (4.04, #458): added `read_records`, `write_records`, `upsert`, and `upsert_file` to `crates/core/src/fleet.rs` for atomic `fleet.txt` persistence, wired `uncharted-universal fleet record` in `crates/cli/src/commands.rs`, and wired `app/` `load_fleet` to read `<config>/fleet.txt` when `UNCHARTED_FLEET_RECORDS` is unset. Full workspace tests, clippy and fmt pass.
