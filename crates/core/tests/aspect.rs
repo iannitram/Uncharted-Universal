@@ -2,6 +2,8 @@
 
 use uncharted_core::aspect::{fit_rect, fov, render_size, safe_area, FovMode, Rect};
 use uncharted_core::error::Error;
+use uncharted_core::games::Game;
+use uncharted_core::render_size::{automatic_size, render_target_growth};
 
 const FOLD_UNFOLDED: (u32, u32) = (2208, 1840);
 const FOLD_COVER: (u32, u32) = (2092, 1080);
@@ -173,4 +175,47 @@ fn zero_sizes_are_plain_errors() {
     refused(fit_rect(FHD, (0, 9)).map(|_| ()));
     refused(fit_rect(FHD, (16, 0)).map(|_| ()));
     refused(fit_rect((0, 0), (16, 9)).map(|_| ()));
+}
+
+#[test]
+fn automatic_sizes_keep_the_screen_shape_and_tile_alignment() {
+    for (screen, expected) in [
+        (FOLD_UNFOLDED, (2208, 1840)),
+        (FOLD_COVER, (2096, 1080)),
+        (IPAD_MINI, (2272, 1488)),
+        ((2160, 1440), (2160, 1440)),
+        (FHD, (1920, 1080)),
+        (Z13, (2560, 1600)),
+        ((1, 1), (640, 640)),
+        ((320, 180), (640, 360)),
+        ((u32::MAX, u32::MAX), (2400, 2400)),
+    ] {
+        assert_eq!(
+            automatic_size(screen, Some(Game::U3), 1200),
+            Some(expected),
+            "{screen:?}"
+        );
+    }
+    for screen in [(0, 1), (1, 0), (1, u32::MAX), (u32::MAX, 1)] {
+        assert_eq!(automatic_size(screen, None, 1200), None);
+    }
+}
+
+#[test]
+fn automatic_size_limits_render_targets_for_each_game() {
+    for (game, expected) in [
+        (Game::U1, (2880, 1620)),
+        (Game::U2, (3200, 1800)),
+        (Game::U3, (3200, 1800)),
+    ] {
+        assert_eq!(
+            automatic_size((3840, 2160), Some(game), 1200),
+            Some(expected)
+        );
+    }
+    let screen = (3840, 2400);
+    let (width, height) = automatic_size(screen, Some(Game::U2), 256).unwrap();
+    let (heap, second) = render_target_growth((width, height));
+    assert!(heap + second <= 256);
+    assert!(width.abs_diff((height * 8) / 5) <= 8);
 }

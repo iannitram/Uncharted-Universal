@@ -19,6 +19,8 @@ namespace BbMovie {
 
 // The display size movies are read with (BB_MOVIE_SIZE); false when unset.
 bool DisplaySize(std::uint32_t& width, std::uint32_t& height);
+// Non-stock guest display size for the decoder canvas and compose shader.
+bool GameResolution(std::uint32_t& width, std::uint32_t& height);
 
 // A decoded NV12 frame at base: luma width x height with pitch bytes per row, chroma after rows.
 void RecordFrame(std::uint64_t base, std::uint32_t width, std::uint32_t height, std::uint32_t pitch,

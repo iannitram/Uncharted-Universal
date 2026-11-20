@@ -57,10 +57,24 @@ fn game_resolution_preserves_explicit_heap_values_and_player_precedence() {
 }
 
 #[test]
-fn invalid_or_default_game_resolution_is_removed_from_the_launch_env() {
-    for value in ["bad", "1920x1080", "7681x4320"] {
+fn invalid_game_resolution_is_removed_from_the_launch_env() {
+    for value in ["bad", "7681x4320"] {
         let built = env(&[("BB_GAME_RES", value)]);
         assert!(!built.contains_key("BB_GAME_RES"), "{value:?}");
+    }
+}
+
+#[test]
+fn explicit_native_resolution_disables_automatic_sizing_without_patching() {
+    let built = env(&[("BB_GAME_RES", "1920×1080")]);
+    assert_eq!(built["BB_GAME_RES"], "1920x1080");
+    for key in [
+        "BB_GAME_RT_MB",
+        "BB_GAME_MOVIE_MB",
+        "BB_SCENE_SIZE",
+        "BB_MOVIE_SIZE",
+    ] {
+        assert!(!built.contains_key(key), "{key}");
     }
 }
 

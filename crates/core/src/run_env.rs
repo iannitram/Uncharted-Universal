@@ -109,7 +109,7 @@ pub fn build_env(
     }
 
     // Preserve the legacy `run.py::game_res` behavior: canonicalize a valid explicit game size,
-    // derive its heap sizes, and discard an invalid/default 1080p value. Existing numeric heap
+    // derive its heap sizes, and discard invalid values. Keep explicit 1080p. Existing numeric heap
     // overrides are passed through by `game_res_env`.
     let game_res = crate::render_size::game_res_env(&env);
     if env.contains_key("BB_GAME_RES") && !game_res.contains_key("BB_GAME_RES") {
@@ -124,7 +124,11 @@ pub fn build_env(
         }
     }
     // An explicit game size is also the scene and movie size (`render_resolution`).
-    if let Some(size) = env.get("BB_GAME_RES").filter(|v| !v.is_empty()).cloned() {
+    if let Some(size) = env
+        .get("BB_GAME_RES")
+        .filter(|v| v.as_str() != "1920x1080")
+        .cloned()
+    {
         env.insert("BB_SCENE_SIZE".to_owned(), size.clone());
         env.insert("BB_MOVIE_SIZE".to_owned(), size);
     }

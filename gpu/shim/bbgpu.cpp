@@ -194,7 +194,13 @@ std::thread g_window_thread;
 std::mutex g_window_mutex;
 std::condition_variable g_window_cv;
 bool g_window_ready;
+BbRenderSize g_startup_window_size{};
+BbRenderSize g_auto_render_size{};
 } // namespace
+
+extern "C" BbRenderSize bbgpu_auto_render_size() {
+    return g_auto_render_size;
+}
 
 u32 BbDisplayRefreshHz() {
     static const u32 hz = [] {
@@ -254,6 +260,7 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     Core::Emulator::FillElfInfo(*config);
     const std::string title = config->title ? config->title : "Uncharted";
     s32 width = config->width, height = config->height;
+    bool follow_display = config->prepare_render != nullptr;
     // bbport: BB_WINDOW_SIZE=WxH: the window's size (the game's frame is scaled to it, with
     // FSR 1 when BB_FSR1=1). Fullscreen uses the desktop's size.
     if (const char* size = std::getenv("BB_WINDOW_SIZE")) {
@@ -261,14 +268,18 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
         if (std::sscanf(size, "%dx%d", &w, &h) == 2 && w >= 640 && h >= 360 && w <= 7680 && h <= 4320) {
             width = w;
             height = h;
+            follow_display = false;
         }
     }
-    g_window_thread = std::thread([title, width, height] {
+    g_window_thread = std::thread([title, width, height, follow_display] {
         Common::SetCurrentThreadName("bb:window");
-        auto* window = new Frontend::WindowSDL(width, height, title.c_str());
+        auto* window = new Frontend::WindowSDL(width, height, title.c_str(), follow_display);
         {
             std::scoped_lock lock{g_window_mutex};
             g_window = window;
+            if (window->GetWidth() > 0 && window->GetHeight() > 0) {
+                g_startup_window_size = {u32(window->GetWidth()), u32(window->GetHeight())};
+            }
             g_window_ready = true;
         }
         g_window_cv.notify_all();
@@ -284,6 +295,11 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     {
         std::unique_lock lock{g_window_mutex};
         g_window_cv.wait(lock, [] { return g_window_ready; });
+    }
+    if (config->prepare_render && g_startup_window_size.width) {
+        g_auto_render_size = config->prepare_render(g_startup_window_size.width,
+                                                   g_startup_window_size.height,
+                                                   config->render_context);
     }
     Core::Loader::SymbolsResolver resolver;
     // GnmDriver creates the presenter that the VideoOut present thread uses.

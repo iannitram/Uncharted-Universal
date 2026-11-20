@@ -6,6 +6,7 @@
 #include <cstring>
 #include <utility>
 #include <vector>
+#include "bbport_movie.h"
 #include "common/assert.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -45,19 +46,7 @@ static void PatchMotionAddresses(std::vector<u32>& code) {
 // baked for 1920x1088: (x + 0.5) / 1920 and (y + 0.5) / 1088. With the movie fitted into a W x H
 // canvas (videodec2_impl.cpp) the constants become 1 / W and 1 / H. The shader is found by those
 // four floats, so every game and version is covered.
-static bool PatchMovieScale(std::vector<u32>& code) {
-    static const std::pair<u32, u32> size = [] {
-        unsigned w = 0, h = 0;
-        const char* res = std::getenv("BB_GAME_RES");
-        if (!res || std::sscanf(res, "%ux%u", &w, &h) != 2 || w < 640 || h < 360 ||
-            (w == 1920 && h == 1080)) {
-            return std::pair<u32, u32>{0, 0};
-        }
-        return std::pair<u32, u32>{w & ~1u, h & ~1u};
-    }();
-    if (!size.first) {
-        return false;
-    }
+static bool PatchMovieScale(std::vector<u32>& code, u32 width, u32 height) {
     const auto bits = [](float f) {
         u32 v;
         std::memcpy(&v, &f, sizeof(v));
@@ -65,8 +54,8 @@ static bool PatchMovieScale(std::vector<u32>& code) {
     };
     const u32 from[4] = {bits(1.0f / 1920.0f), bits(0.5f / 1920.0f), bits(1.0f / 1088.0f),
                          bits(0.5f / 1088.0f)};
-    const u32 to[4] = {bits(1.0f / float(size.first)), bits(0.5f / float(size.first)),
-                       bits(1.0f / float(size.second)), bits(0.5f / float(size.second))};
+    const u32 to[4] = {bits(1.0f / float(width)), bits(0.5f / float(width)),
+                       bits(1.0f / float(height)), bits(0.5f / float(height))};
     size_t found[4] = {~size_t{0}, ~size_t{0}, ~size_t{0}, ~size_t{0}};
     constexpr u32 OpConstant = 43;
     for (size_t at = 5; at < code.size();) {
@@ -95,7 +84,7 @@ static bool PatchMovieScale(std::vector<u32>& code) {
     static bool printed = false;
     if (!printed) {
         printed = true;
-        std::printf("Movie compose shader: video scale 1/%u x 1/%u\n", size.first, size.second);
+        std::printf("Movie compose shader: video scale 1/%u x 1/%u\n", width, height);
     }
     return true;
 }
@@ -119,7 +108,8 @@ vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device) {
         }
     }
     std::vector<u32> movie_patched;
-    if (code.size() > 5 && std::getenv("BB_GAME_RES")) {
+    u32 movie_width = 0, movie_height = 0;
+    if (code.size() > 5 && BbMovie::GameResolution(movie_width, movie_height)) {
         // Cheap pre-check before copying: the 1 / 1920 constant.
         float inv = 1.0f / 1920.0f;
         u32 inv_bits;
@@ -130,7 +120,7 @@ vk::ShaderModule CompileSPV(std::span<const u32> code, vk::Device device) {
         }
         if (has) {
             std::vector<u32> scaled(code.begin(), code.end());
-            if (PatchMovieScale(scaled)) {
+            if (PatchMovieScale(scaled, movie_width, movie_height)) {
                 movie_patched = std::move(scaled);
                 code = movie_patched;
             }

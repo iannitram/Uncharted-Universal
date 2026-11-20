@@ -67,9 +67,8 @@ fn a_size_below_1080p_has_no_pool_to_grow_and_no_direct_memory() {
 }
 
 #[test]
-fn nothing_is_returned_for_1080p_a_missing_a_bad_or_an_out_of_range_size() {
+fn native_size_preserves_the_override_and_invalid_sizes_are_discarded() {
     for text in [
-        "1920x1080",
         "big",
         "",
         "2560",
@@ -83,6 +82,7 @@ fn nothing_is_returned_for_1080p_a_missing_a_bad_or_an_out_of_range_size() {
     }
     assert!(game_res_env(&BTreeMap::new()).is_empty());
     assert!(game_res_env(&map(&[("BB_GAME_RT_MB", "512")])).is_empty());
+    assert_eq!(res("1920x1080"), map(&[("BB_GAME_RES", "1920x1080")]));
 }
 
 #[test]

@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "bbport_toggles.h"
+#include "../../../bbgpu.h"
 
 #include "video_core/host_shaders/camera_motion_comp.h"
 #include "video_core/host_shaders/camera_motion_debug_comp.h"
@@ -70,7 +71,11 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
         list = *end == ',' ? end + 1 : end;
     }
     velocity_mode = for_upscaler && !velocity_shaders.empty();
-    if (const char* size = std::getenv("BB_SCENE_SIZE")) {
+    const auto automatic = bbgpu_auto_render_size();
+    if (automatic.width) {
+        scene_width = automatic.width;
+        scene_height = automatic.height;
+    } else if (const char* size = std::getenv("BB_SCENE_SIZE")) {
         u32 w = 0, h = 0;
         if (std::sscanf(size, "%ux%u", &w, &h) == 2 && w && h) {
             scene_width = w;

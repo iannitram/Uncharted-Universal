@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <algorithm>
 #include <SDL3/SDL.h>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -87,13 +88,28 @@ extern "C" int bbgpu_mouse_sample(float* dx, float* dy, uint32_t* buttons, int* 
 
 namespace Frontend {
 
-WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
+WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title, bool follow_display)
+    : width{width_}, height{height_} {
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
     // Linux fork: they keep working while the window does not have the focus (issue #74; the
     // same hint as runtime_pad_hints in runtime_pad.c).
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_InitSubSystem(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         UNREACHABLE_MSG("Failed to initialize SDL video: {}", SDL_GetError());
+    }
+    const char* fullscreen = std::getenv("BB_FULLSCREEN");
+    const bool fullscreen_desktop = fullscreen && fullscreen[0] == '1';
+    if (follow_display && !fullscreen_desktop) {
+        const auto display = SDL_GetPrimaryDisplay();
+        SDL_Rect usable{};
+        const auto* mode = SDL_GetDesktopDisplayMode(display);
+        if (mode && mode->w > 0 && mode->h > 0 &&
+            SDL_GetDisplayUsableBounds(display, &usable) && usable.w > 0 && usable.h > 0) {
+            const double scale = std::min(double(std::min(width_, usable.w)) / mode->w,
+                                          double(std::min(height_, usable.h)) / mode->h);
+            width_ = std::max(1, int(mode->w * scale + 0.5));
+            height_ = std::max(1, int(mode->h * scale + 0.5));
+        }
     }
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, title);
@@ -103,8 +119,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
-    const char* fullscreen = std::getenv("BB_FULLSCREEN");
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen && fullscreen[0] == '1');
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, fullscreen_desktop);
     base_title = title;
     window = SDL_CreateWindowWithProperties(props);
     SDL_DestroyProperties(props);
