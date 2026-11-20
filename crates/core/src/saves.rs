@@ -14,7 +14,8 @@
 //! `saves_from: "launcher"`, so the folder it syncs is whatever `--saves-dir` the launcher
 //! passes, and the launcher passes [`relay_saves_dir`], the folder of the game's selected slot.
 //! The include patterns are relative to that folder, so a save has the same shape in every slot
-//! and moves between devices whichever slot each device has selected.
+//! and each slot moves only to the same numbered slot on another device. The adapter passes
+//! both this folder and `--slot <n>` so server current saves/history remain separate.
 
 use crate::error::{Error, Result};
 use crate::games::Game;

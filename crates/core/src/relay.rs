@@ -23,13 +23,25 @@ fn game_id(game: Game) -> &'static str {
 }
 
 impl DesktopRelay {
-    fn invoke(&self, phase: &str, game: Game, folder: &Path, keep: Option<Keep>) -> Result<Sync> {
+    fn invoke(
+        &self,
+        phase: &str,
+        game: Game,
+        slot: u8,
+        folder: &Path,
+        keep: Option<Keep>,
+    ) -> Result<Sync> {
+        if !(1..=crate::saves::MOST).contains(&slot) {
+            return Err(Error::Saves("Save Relay slot must be from 1 to 10.".into()));
+        }
         let id = game_id(game);
         let mut cmd = Command::new(&self.program);
         cmd.args([phase, id, "--manifest"])
             .arg(self.manifests.join(format!("{id}.json")))
             .arg("--saves-dir")
             .arg(folder)
+            .arg("--slot")
+            .arg(slot.to_string())
             .arg("--json")
             .stdin(Stdio::null())
             .stderr(Stdio::null());
@@ -45,16 +57,16 @@ impl DesktopRelay {
         let output = cmd
             .output()
             .map_err(|e| Error::Launch(format!("Could not start the bundled Save Relay: {e}")))?;
-        decode(phase, game, output.status.code(), &output.stdout)
+        decode(phase, game, slot, output.status.code(), &output.stdout)
     }
 }
 
 impl Relay for DesktopRelay {
-    fn pull(&self, game: Game, folder: &Path, keep: Option<Keep>) -> Result<Sync> {
-        self.invoke("pull", game, folder, keep)
+    fn pull(&self, game: Game, slot: u8, folder: &Path, keep: Option<Keep>) -> Result<Sync> {
+        self.invoke("pull", game, slot, folder, keep)
     }
-    fn push(&self, game: Game, folder: &Path, keep: Option<Keep>) -> Result<Sync> {
-        self.invoke("push", game, folder, keep)
+    fn push(&self, game: Game, slot: u8, folder: &Path, keep: Option<Keep>) -> Result<Sync> {
+        self.invoke("push", game, slot, folder, keep)
     }
 }
 
@@ -64,7 +76,7 @@ fn invalid() -> Error {
     )
 }
 
-fn decode(phase: &str, game: Game, code: Option<i32>, stdout: &[u8]) -> Result<Sync> {
+fn decode(phase: &str, game: Game, slot: u8, code: Option<i32>, stdout: &[u8]) -> Result<Sync> {
     // The Windows loader can terminate the image before main runs. The rc.2
     // binary imports VCRUNTIME140.dll from the Microsoft x64 C++ runtime.
     if code == Some(0xc0000135_u32 as i32) {
@@ -96,7 +108,7 @@ fn decode(phase: &str, game: Game, code: Option<i32>, stdout: &[u8]) -> Result<S
         None => return Err(invalid()),
     }
     let data = &report["data"];
-    if data["game"] != game_id(game) {
+    if data["game"] != format!("{}-slot-{slot}", game_id(game)) {
         return Err(invalid());
     }
     match (code, data["action"].as_str()) {

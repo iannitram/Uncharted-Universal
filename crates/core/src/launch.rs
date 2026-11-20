@@ -54,8 +54,13 @@ pub enum Keep {
 
 /// save-relay, as the launcher uses it.
 pub trait Relay {
-    fn pull(&self, game: Game, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
-    fn push(&self, game: Game, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
+    /// Unbundled/local-only builds do not need a relay-compatible save mapping.
+    fn requires_save_mapping(&self) -> bool {
+        true
+    }
+
+    fn pull(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
+    fn push(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
 }
 
 /// The runtime, started as a child process.
@@ -279,10 +284,30 @@ pub fn play(
     choose: &dyn Fn(&str, &SideBySide) -> Result<Keep>,
 ) -> Result<Played> {
     run_collection(game, session, |title, env, guest| {
-        let folder = saves::mapped_save_dir(title, env)?;
-        let pulled = sync(|keep| relay.pull(title, &folder, keep), choose, "pull")?;
+        let user = env
+            .iter()
+            .find(|(key, _)| key == "BB_USER_DIR")
+            .map(|(_, value)| Path::new(value))
+            .unwrap_or(&session.paths.user_dir);
+        // Snapshot the namespace before play: changing the selection while a game runs must
+        // not upload this title's save to a different slot on exit or a conflict retry.
+        let slot = saves::selected(user, title);
+        let folder = if relay.requires_save_mapping() {
+            saves::mapped_save_dir(title, env)?
+        } else {
+            user.to_path_buf()
+        };
+        let pulled = sync(
+            |keep| relay.pull(title, slot, &folder, keep),
+            choose,
+            "pull",
+        )?;
         let exit_code = runner.run(title, env, guest)?;
-        let pushed = sync(|keep| relay.push(title, &folder, keep), choose, "push")?;
+        let pushed = sync(
+            |keep| relay.push(title, slot, &folder, keep),
+            choose,
+            "push",
+        )?;
         Ok((
             exit_code,
             Played {

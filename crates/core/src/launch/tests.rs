@@ -41,6 +41,7 @@ struct FakeRelay {
     pulls: RefCell<VecDeque<Result<Sync>>>,
     pushes: RefCell<VecDeque<Result<Sync>>>,
     calls: RefCell<Vec<Call>>,
+    targets: RefCell<Vec<(Game, u8, PathBuf)>>,
 }
 
 impl FakeRelay {
@@ -49,6 +50,7 @@ impl FakeRelay {
             pulls: RefCell::new(pulls.into()),
             pushes: RefCell::new(pushes.into()),
             calls: RefCell::default(),
+            targets: RefCell::default(),
         }
     }
 
@@ -58,7 +60,10 @@ impl FakeRelay {
 }
 
 impl Relay for FakeRelay {
-    fn pull(&self, _: Game, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+    fn pull(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+        self.targets
+            .borrow_mut()
+            .push((game, slot, saves_dir.to_path_buf()));
         self.calls.borrow_mut().push(("pull", resolve));
         self.pulls
             .borrow_mut()
@@ -66,7 +71,10 @@ impl Relay for FakeRelay {
             .expect("unexpected pull")
     }
 
-    fn push(&self, _: Game, _saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+    fn push(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync> {
+        self.targets
+            .borrow_mut()
+            .push((game, slot, saves_dir.to_path_buf()));
         self.calls.borrow_mut().push(("push", resolve));
         self.pushes
             .borrow_mut()
@@ -690,4 +698,32 @@ fn child_runner_reports_a_missing_program() {
         .unwrap_err();
     assert_eq!(err.code(), "launch");
     assert!(err.to_string().contains("could not start"));
+}
+
+#[test]
+fn a_titles_slot_stays_fixed_through_conflicts_and_exit() {
+    let fx = Fixture::new(&[]);
+    saves::select(&fx.paths.user_dir, Game::U2, 3).unwrap();
+    let relay = FakeRelay::new(
+        vec![Ok(conflict()), done("pulled")],
+        vec![Ok(conflict()), done("pushed")],
+    );
+    let runner = FakeRunner::new(vec![exit(0)]);
+    let choose = |_: &str, _: &SideBySide| {
+        // The user changes selection while this play session is active.
+        saves::select(&fx.paths.user_dir, Game::U2, 1)?;
+        Ok(Keep::Local)
+    };
+    play(&relay, &runner, Game::U2, &fx.session(Os::Windows), &choose).unwrap();
+    assert_eq!(
+        *relay.targets.borrow(),
+        vec![
+            (
+                Game::U2,
+                3,
+                saves::slot_dir(&fx.paths.user_dir, Game::U2, 3)
+            );
+            4
+        ]
+    );
 }

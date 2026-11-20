@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def response(phase, action, number=2):
-    data = {"game": f"uncharted-{number}", "action": action}
+    data = {"game": f"uncharted-{number}-slot-{3 if number == 2 else 1}", "action": action}
     if action == "conflict":
         for side, day in (("server", 12), ("local", 11)):
             data[side] = {"device": side, "time": f"2026-11-{day}T00:00:00Z", "revision": day}
@@ -61,7 +61,7 @@ def test_package(archive, tmp):
     for n in range(1, 4):
         manifest = stage / f"save-relay-manifests/uncharted-{n}.json"
         result = subprocess.run([relay, "pull", f"uncharted-{n}", "--manifest", manifest,
-                                 "--saves-dir", user / str(n), "--json"], env=env,
+                                 "--saves-dir", user / str(n), "--slot", "1", "--json"], env=env,
                                 capture_output=True, text=True, timeout=15)
         assert result.returncode == 4 and json.loads(result.stdout)["error"]["code"] == "not_set_up", result
     run = subprocess.run(play, env=env, capture_output=True, text=True, timeout=15, check=True)
@@ -96,6 +96,7 @@ def test_package(archive, tmp):
     slot = user / "Save slots/Uncharted 2/Slot 3"
     for row in [rows[0], rows[1], rows[3], rows[4]]:
         assert Path(row[row.index("--saves-dir") + 1]) == slot
+        assert row[row.index("--slot") + 1] == "3"
 
     for options, answer in (([], ""), (["--relay-prompt", "stdio"], ""),
                             (["--relay-prompt", "stdio"], "cancel\n"),
@@ -115,6 +116,32 @@ def test_package(archive, tmp):
     assert [r[0] for r in rows] == ["pull", "run", "push", "pull", "run", "push"]
     assert rows[2][1] == "uncharted-2" and Path(rows[2][5]) == slot
     assert rows[3][1] == "uncharted-3" and Path(rows[3][5]) == user / "Uncharted 3"
+    assert rows[3][rows[3].index("--slot") + 1] == "1"
+
+    # Namespace isolation across two populated slots and an empty third slot.
+    # The synthetic server uses the same explicit slot suffix as the released helper.
+    for switch in tmp.glob("*.switch"):
+        switch.unlink()
+    env["RELAY_SLOT_FIXTURE"] = "1"
+    slot1 = user / "Uncharted 2"
+    slot1.mkdir(parents=True, exist_ok=True)
+    (slot1 / "progress").write_text("chapter one")
+    def select_and_play(number):
+        (user / "save_slots.json").write_text(json.dumps({"Uncharted 2": {"selected": number}}))
+        subprocess.run(play, env=env, capture_output=True, text=True, timeout=15, check=True)
+    select_and_play(1)
+    select_and_play(3)
+    assert not (slot / "progress").exists(), "slot 1 must not seed an empty slot 3"
+    slot.mkdir(parents=True, exist_ok=True)
+    (slot / "progress").write_text("chapter three")
+    select_and_play(3)
+    select_and_play(1)
+    select_and_play(5)
+    assert (slot1 / "progress").read_text() == "chapter one"
+    assert (slot / "progress").read_text() == "chapter three"
+    assert not (user / "Save slots/Uncharted 2/Slot 5/progress").exists()
+    assert (tmp / "server/uncharted-2-slot-1").read_text() == "chapter one"
+    assert (tmp / "server/uncharted-2-slot-3").read_text() == "chapter three"
 
 
 if __name__ == "__main__":

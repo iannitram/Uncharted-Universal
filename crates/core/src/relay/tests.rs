@@ -2,13 +2,13 @@ use super::*;
 use serde_json::json;
 
 fn report(action: &str) -> Value {
-    json!({"command":"pull","ok":true,"data":{"game":"uncharted-2","action":action}})
+    json!({"command":"pull","ok":true,"data":{"game":"uncharted-2-slot-3","action":action}})
 }
 
 #[test]
 fn distinguishes_offline_deferred_retry_and_nonzero_conflicts() {
     let read = |phase, code, value: Value| {
-        decode(phase, Game::U2, Some(code), value.to_string().as_bytes())
+        decode(phase, Game::U2, 3, Some(code), value.to_string().as_bytes())
     };
     assert_eq!(read("pull", 0, report("offline")).unwrap(), Sync::Offline);
     let mut push = report("deferred");
@@ -38,20 +38,22 @@ fn distinguishes_offline_deferred_retry_and_nonzero_conflicts() {
 
 #[test]
 fn failures_never_become_success_or_leak_provider_output() {
-    assert!(decode("pull", Game::U2, Some(0xc0000135_u32 as i32), b"")
-        .unwrap_err()
-        .to_string()
-        .contains("Visual C++ x64"));
+    assert!(
+        decode("pull", Game::U2, 3, Some(0xc0000135_u32 as i32), b"")
+            .unwrap_err()
+            .to_string()
+            .contains("Visual C++ x64")
+    );
     for value in [
         report("unknown"),
         report("held"),
         json!({"ok":true,"command":"push"}),
         json!({"ok":true,"command":"pull","data":{"game":"uncharted-3","action":"noop"}}),
     ] {
-        assert!(decode("pull", Game::U2, Some(0), value.to_string().as_bytes()).is_err());
+        assert!(decode("pull", Game::U2, 3, Some(0), value.to_string().as_bytes()).is_err());
     }
     let err = json!({"ok":false,"command":"pull","error":{"code":"auth_failed","message":"sensitive-provider-detail"}});
-    let message = decode("pull", Game::U2, Some(4), err.to_string().as_bytes())
+    let message = decode("pull", Game::U2, 3, Some(4), err.to_string().as_bytes())
         .unwrap_err()
         .to_string();
     assert!(!message.contains("sensitive-provider-detail"));
@@ -59,9 +61,27 @@ fn failures_never_become_success_or_leak_provider_output() {
     let held = decode(
         "pull",
         Game::U2,
+        3,
         Some(6),
         report("held").to_string().as_bytes(),
     )
     .unwrap_err();
     assert!(held.to_string().contains("Another device"));
+}
+
+#[test]
+fn responses_cannot_alias_another_slot_or_the_legacy_namespace() {
+    for id in ["uncharted-2", "uncharted-2-slot-1", "uncharted-3-slot-3"] {
+        let mut value = report("noop");
+        value["data"]["game"] = id.into();
+        assert!(decode("pull", Game::U2, 3, Some(0), value.to_string().as_bytes()).is_err());
+    }
+    assert!(decode(
+        "pull",
+        Game::U2,
+        3,
+        Some(0),
+        report("noop").to_string().as_bytes()
+    )
+    .is_ok());
 }

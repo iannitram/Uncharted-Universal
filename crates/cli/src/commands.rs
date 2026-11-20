@@ -278,13 +278,16 @@ fn beside(exe: &Path, name: &str) -> PathBuf {
 struct UnbundledRelay;
 
 impl Relay for UnbundledRelay {
-    fn pull(&self, _: Game, _: &Path, _: Option<Keep>) -> Result<Sync> {
+    fn requires_save_mapping(&self) -> bool {
+        false
+    }
+    fn pull(&self, _: Game, _: u8, _: &Path, _: Option<Keep>) -> Result<Sync> {
         Ok(Sync::LocalOnly(
             "This platform build has no Save Relay; using local saves.",
         ))
     }
-    fn push(&self, game: Game, path: &Path, keep: Option<Keep>) -> Result<Sync> {
-        self.pull(game, path, keep)
+    fn push(&self, game: Game, slot: u8, path: &Path, keep: Option<Keep>) -> Result<Sync> {
+        self.pull(game, slot, path, keep)
     }
 }
 

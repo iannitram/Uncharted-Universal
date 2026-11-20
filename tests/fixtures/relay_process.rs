@@ -20,6 +20,24 @@ fn main() {
         .unwrap();
     if matches!(args.first().map(String::as_str), Some("pull" | "push")) {
         writeln!(log, "{}", args.join("\t")).unwrap();
+        if env::var_os("RELAY_SLOT_FIXTURE").is_some() {
+            let option = |name: &str| args.iter().position(|arg| arg == name)
+                .and_then(|at| args.get(at + 1));
+            let id = option("--slot").map_or_else(|| args[1].clone(),
+                |slot| format!("{}-slot-{slot}", args[1]));
+            let folder = PathBuf::from(option("--saves-dir").unwrap());
+            let server = dir.join("server").join(&id);
+            let local = folder.join("progress");
+            if args[0] == "push" && local.is_file() {
+                fs::create_dir_all(server.parent().unwrap()).unwrap();
+                fs::copy(&local, &server).unwrap();
+            } else if args[0] == "pull" && server.is_file() && !local.exists() {
+                fs::create_dir_all(&folder).unwrap();
+                fs::copy(&server, &local).unwrap();
+            }
+            println!("{{\"ok\":true,\"command\":\"{}\",\"data\":{{\"game\":\"{}\",\"action\":\"noop\"}}}}", args[0], id);
+            return;
+        }
         print!(
             "{}",
             fs::read_to_string(dir.join(format!("{step}.json"))).unwrap()

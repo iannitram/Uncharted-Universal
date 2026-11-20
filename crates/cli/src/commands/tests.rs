@@ -833,3 +833,31 @@ fn generate_art_writes_the_collection_art() {
     assert!(target.join("u1.jpg").is_file());
     assert_eq!(exec(&["generate-art", "a", "b"], &ctx()).code, USAGE);
 }
+
+#[test]
+fn an_unbundled_local_run_preserves_the_legacy_empty_save_mapping() {
+    struct LegacyRunner;
+    impl Runner for LegacyRunner {
+        fn run(&self, _: Game, env: &[(String, String)], _: Option<&Path>) -> Result<i32> {
+            assert!(env
+                .iter()
+                .any(|(key, value)| key == "BB_SAVEDATA_DIRS" && value.is_empty()));
+            Ok(0)
+        }
+    }
+    let dir = TempDir::new("local-legacy-mapping");
+    let mut ctx = home(dir.path());
+    ctx.env.insert("BB_SAVEDATA_DIRS".into(), String::new());
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    let played = launch::play(
+        &UnbundledRelay,
+        &LegacyRunner,
+        Game::U2,
+        &plan.session(Os::Linux),
+        &|_, _| panic!("local play cannot conflict"),
+    )
+    .unwrap();
+    assert_eq!(played.exit_code, 0);
+    assert!(matches!(played.pulled, Sync::LocalOnly(_)));
+    assert!(matches!(played.pushed, Sync::LocalOnly(_)));
+}
