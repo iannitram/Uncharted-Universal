@@ -5,6 +5,14 @@ the player's own decrypted dump. This file records where other repositories
 already provide platform work we can study or adapt. The machine-readable
 `peer:` lines remain in [SPEC.md](SPEC.md#prior-art).
 
+## Tile-mode descriptor guard (#403)
+
+Imported the `IsKnownTileMode` predicate and both texture-binding checks from
+[Mevlock/uncharted_pc-dev c1f7dedd10014227e23b7875160b2b0f20992132](https://github.com/Mevlock/uncharted_pc-dev/commit/c1f7dedd10014227e23b7875160b2b0f20992132),
+`gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`. The source file is
+GPL-2.0-or-later and retains its existing SPDX notice; the peer's root license
+is GPL-2.0. The commit's unrelated fault diagnostics were not imported.
+
 ## Shared save-sync dependency
 
 [iannitram/save-relay](https://github.com/iannitram/save-relay) owns save syncing
