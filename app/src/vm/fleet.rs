@@ -73,18 +73,23 @@ impl FleetVm {
         }
     }
 
+    /// Builds the view model from a parsed list of records (this device first).
+    pub fn from_records(records: Vec<DeviceRecord>) -> Self {
+        let mut records = records.into_iter();
+        let here = records.next();
+        Self::new(here, records.collect())
+    }
+
     /// Reads a records file: one `fleet::to_line` line per device, this device first. Blank
     /// lines are skipped; a Windows line ending is fine. Any other line is the `Error::Hub`
     /// from `fleet::from_line`.
     pub fn from_text(text: &str) -> Result<Self> {
-        let mut records = text
+        let records = text
             .lines()
             .filter(|line| !line.is_empty())
             .map(fleet::from_line)
-            .collect::<Result<Vec<_>>>()?
-            .into_iter();
-        let here = records.next();
-        Ok(Self::new(here, records.collect()))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(Self::from_records(records))
     }
 
     pub fn rows(&self) -> &[FleetRow] {

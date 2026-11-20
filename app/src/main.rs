@@ -204,23 +204,34 @@ impl Host for AppHost<'_> {
 }
 
 /// A file of fleet records (`fleet::to_line` lines, this device first) the Fleet page reads
-/// until the hub keeps real ones (roadmap 4.04); `app/fixtures/fleet.tsv` is an example.
+/// when `UNCHARTED_FLEET_RECORDS` is set, overriding `<config>/fleet.txt` (roadmap 4.04).
 const FLEET_RECORDS_VAR: &str = "UNCHARTED_FLEET_RECORDS";
+const FLEET_FILE: &str = "fleet.txt";
 
-fn load_fleet() -> FleetVm {
-    let Some(path) = std::env::var_os(FLEET_RECORDS_VAR) else {
+fn load_fleet(config: Option<&Path>) -> FleetVm {
+    if let Some(path) = std::env::var_os(FLEET_RECORDS_VAR) {
+        let read = std::fs::read_to_string(&path)
+            .map_err(|err| err.to_string())
+            .and_then(|text| FleetVm::from_text(&text).map_err(|err| err.to_string()));
+        return read.unwrap_or_else(|err| {
+            eprintln!(
+                "fleet records unreadable ({}): {err}",
+                path.to_string_lossy()
+            );
+            FleetVm::empty()
+        });
+    }
+    let Some(config) = config else {
         return FleetVm::empty();
     };
-    let read = std::fs::read_to_string(&path)
-        .map_err(|err| err.to_string())
-        .and_then(|text| FleetVm::from_text(&text).map_err(|err| err.to_string()));
-    read.unwrap_or_else(|err| {
-        eprintln!(
-            "fleet records unreadable ({}): {err}",
-            path.to_string_lossy()
-        );
-        FleetVm::empty()
-    })
+    let path = config.join(FLEET_FILE);
+    match uncharted_core::fleet::read_records(&path) {
+        Ok(records) => FleetVm::from_records(records),
+        Err(err) => {
+            eprintln!("fleet records unreadable ({}): {err}", path.display());
+            FleetVm::empty()
+        }
+    }
 }
 
 /// Copy the Fleet page's rows and texts into the window.
@@ -1261,7 +1272,7 @@ fn main() -> Result<(), slint::PlatformError> {
         prompt_choice: Cell::new(prompt_choice),
         last_pad: Cell::default(),
         about: RefCell::default(),
-        fleet: RefCell::new(FleetFocus::new(load_fleet())),
+        fleet: RefCell::new(FleetFocus::new(load_fleet(config.as_deref()))),
         crash: RefCell::default(),
         folders,
         window: window.as_weak(),
