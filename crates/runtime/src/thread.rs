@@ -855,11 +855,14 @@ unsafe extern "sysv64" fn posix_join(t: *mut c_void, r: *mut *mut c_void) -> i32
 #[no_mangle]
 pub unsafe extern "C" fn runtime_thread_spawn(
     out: *mut *mut c_void,
-    entry: Option<GuestEntry>,
+    entry: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
     argument: *mut c_void,
     stack: u64,
     name: *const c_char,
 ) -> i32 {
+    let entry: Option<GuestEntry> = entry.map(|f| unsafe {
+        mem::transmute::<unsafe extern "C" fn(*mut c_void) -> *mut c_void, GuestEntry>(f)
+    });
     let mut attr: *mut ThreadAttr = null_mut();
     let mut r = unsafe { attr_init(&mut attr) };
     if r == 0 && stack != 0 {
@@ -1023,6 +1026,10 @@ mod tests {
         }
     }
 
+    unsafe extern "C" fn worker_return_c(arg: *mut c_void) -> *mut c_void {
+        (arg as usize + 7) as *mut c_void
+    }
+
     #[test]
     fn spawn_join_and_detach_and_resolve() {
         let mut spawned: *mut c_void = null_mut();
@@ -1030,7 +1037,7 @@ mod tests {
             assert_eq!(
                 runtime_thread_spawn(
                     &mut spawned,
-                    Some(worker_return),
+                    Some(worker_return_c),
                     10usize as *mut c_void,
                     0,
                     c"coop".as_ptr(),

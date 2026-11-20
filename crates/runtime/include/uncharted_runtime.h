@@ -470,7 +470,7 @@ void runtime_set_guest_fpu(void);
 // # Safety
 // `out` must be a valid writable pointer; `name` must be null or a valid NUL-terminated C string.
 int32_t runtime_thread_spawn(void **out,
-                             Option<GuestEntry> entry,
+                             void *(*entry)(void*),
                              void *argument,
                              uint64_t stack,
                              const char *name);
