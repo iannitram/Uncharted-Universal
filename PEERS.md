@@ -19,6 +19,13 @@ The shadPS4 GPL-2.0-or-later source notices remain in each adopted file:
 The #5714 floating-point atomic fallback is deferred; this partial import does
 not close #427 or claim shader/device acceptance. Exact production pointers and
 the remaining control-flow validation are in [the work brief](docs/work-briefs/427-shader.md).
+## Tile-mode descriptor guard (#403)
+
+Imported the `IsKnownTileMode` predicate and both texture-binding checks from
+[Mevlock/uncharted_pc-dev c1f7dedd10014227e23b7875160b2b0f20992132](https://github.com/Mevlock/uncharted_pc-dev/commit/c1f7dedd10014227e23b7875160b2b0f20992132),
+`gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`. The source file is
+GPL-2.0-or-later and retains its existing SPDX notice; the peer's root license
+is GPL-2.0. The commit's unrelated fault diagnostics were not imported.
 
 ## Shared save-sync dependency
 
