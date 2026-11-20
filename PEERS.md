@@ -5,6 +5,20 @@ the player's own decrypted dump. This file records where other repositories
 already provide platform work we can study or adapt. The machine-readable
 `peer:` lines remain in [SPEC.md](SPEC.md#prior-art).
 
+## Shader scalar and conversion imports (#427, partial)
+
+The shadPS4 GPL-2.0-or-later source notices remain in each adopted file:
+
+| Source | Imported boundary |
+|---|---|
+| [#5723, abe42da9e09a86a5963f5d8699fb0d6151d3c6c2](https://github.com/shadps4-emu/shadPS4/commit/abe42da9e09a86a5963f5d8699fb0d6151d3c6c2) | `frontend/translate/scalar_alu.cpp` and `translate.h`: S_LSHR_B64 dispatch and lowering (the patch is scalar despite the PR title) |
+| [#5724, f3687cc400d77736b2a7ef1904a1302e17f9441b](https://github.com/shadps4-emu/shadPS4/commit/f3687cc400d77736b2a7ef1904a1302e17f9441b) | Same files: S_BFM_B64 dispatch and lowering |
+| [#5725, 312cfbae77821627aa511bdee8717e1b7c3c9a23](https://github.com/shadps4-emu/shadPS4/commit/312cfbae77821627aa511bdee8717e1b7c3c9a23) | `scalar_alu.cpp`: U32 shift counts for the three scalar 64-bit shifts |
+| [#5719, 1f1f4c6a5021fb656df0411c1da79b267115a327](https://github.com/shadps4-emu/shadPS4/commit/1f1f4c6a5021fb656df0411c1da79b267115a327) | `frontend/format.cpp`: U32-to-F32 metadata for VOP3 byte conversions 401–404; unrelated atomic TODO removal excluded |
+
+The #5714 floating-point atomic fallback is deferred; this partial import does
+not close #427 or claim shader/device acceptance. Exact production pointers and
+the remaining control-flow validation are in [the work brief](docs/work-briefs/427-shader.md).
 ## Tile-mode descriptor guard (#403)
 
 Imported the `IsKnownTileMode` predicate and both texture-binding checks from
@@ -167,3 +181,14 @@ Upstream issues brought in with an `Upstream:` line: #142 (DLSS probe on GPUs wi
 | [rust-random/getrandom](https://github.com/rust-random/getrandom) | OS randomness for transfer nonces, session ids and temporary filenames | Pin 0.2.16; `MIT OR Apache-2.0`; use the MIT option. |
 | [fs4](https://github.com/al8n/fs4) | Cross-platform advisory locking to serialize pulls targeting the same staging parent | Pin 1.1.0; `MIT OR Apache-2.0`; use the MIT option. |
 | [keepsimple1/mdns-sd](https://github.com/keepsimple1/mdns-sd) | Hub discovery and announce on the home network (roadmap 4.01) | Pin 0.21.7 with default features off; `Apache-2.0 OR MIT`; use the MIT option. Pure Rust; its new dependencies are flume, if-addrs (`MIT OR BSD-3-Clause`), mio, socket2, socket-pktinfo, spin and fastrand, all MIT-compatible. |
+
+## Stencil association guard (#426, 2026-11-20)
+
+Adapted [shadPS4 #5737](https://github.com/shadps4-emu/shadPS4/pull/5737),
+merge [`a267e8fd71c6ae097ac09efb7312cfe2a4031b6f`](https://github.com/shadps4-emu/shadPS4/commit/a267e8fd71c6ae097ac09efb7312cfe2a4031b6f),
+`src/video_core/texture_cache/texture_cache.cpp`, into this fork's inline
+`TextureCache::FindDepthTarget` stencil association in
+`gpu/shadps4/video_core/texture_cache/texture_cache.cpp`. The adopted file retains
+its shadPS4 copyright and GPL-2.0-or-later SPDX header. Only the four stencil
+preconditions are adapted; the existing format checks and image relookup remain.
+No upstream submission or game-data use; U1/U2/U3 gameplay acceptance remains unrun.

@@ -910,7 +910,10 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
     }
 
     // If there is a stencil attachment, link depth and stencil.
-    if (desc.info.stencil_addr != 0) {
+    // From shadPS4 #5737 (a267e8fd): ignore absent or invalid stencil attachments.
+    if (desc.info.stencil_addr != 0 &&
+        desc.info.stencil_addr != desc.info.guest_address && desc.info.props.has_stencil &&
+        desc.info.stencil_size != 0) {
         ImageId stencil_id{};
         // Only an image whose format can hold stencil (or one not given a format yet, as made below)
         // is the stencil attachment, not another image the game keeps at that address. From
