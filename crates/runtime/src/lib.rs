@@ -82,6 +82,8 @@ pub mod display;
 pub mod fiber;
 pub mod file;
 pub mod kernel;
+/// cbindgen:ignore
+pub mod loader;
 // Left out of the header: src/runtime.h declares memory's symbols (src/runtime_memory.c is
 // still the Windows build), and its constants are Rust's.
 /// cbindgen:ignore
