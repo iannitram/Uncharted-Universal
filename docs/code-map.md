@@ -4,7 +4,26 @@ The intended shape of the repo for 1.0 (`SPEC.md`, approval "not yet": M15, M16 
 
 Status per module: **present** (implemented in the tree), **partial** (only named functions/metadata exist; remaining behavior is listed), **stub** (types/signatures exist but behavior is `NotBuilt` or unimplemented), **planned** (not in the tree), **legacy** (today's C or Python, removed when its Rust replacement is present and the game boots). Synthetic tests exercise stated test seams only; they do not prove device or game behavior. "Musts" columns cite `SPEC.md` (M1-M20; the spec has no Should items); every module that replaces C or Python also serves M20. An issue that implements a module moves its status in the same PR. Integration branch: `main` (our work; `upstream-main` is a copy of Supermedo's `main`).
 
-Source baseline: production `main` at [`ef27c862`](https://github.com/iannitram/Uncharted-Universal/tree/ef27c862dd15f60e64c51a1d285b96dec1be13b9); former upstream `8b66edc` is already its ancestor. `crates/runtime` is linked into the loader as a static library with runtime ABI version 8 (`trophy`, 3.05, and `memory`, 3.12, then piece 3.01: its `build.rs` builds the NID table and `gpu/`; 3.02 moved `time` and `rtc`, then 3.04 `content` and `display`, 3.07 `audio`, 3.09 `file`, 3.03 `sync` and 3.11 `kernel` and `services`). The target architecture below includes planned work: `app/` has the Continue screen (piece 2.04: save cards, Continue and Play through the CLI, the conflict prompt and the controller path), the guided first run (2.05, #369: hub prepare, client pair and pull, Add to Steam; device check owed), the Saves and Settings pages (2.06), the Fleet page on fixture records (2.08) and About with the language button (2.09); save-relay is not built, and `android/` and `apple/` do not exist. The CLI is a skeleton; install is a stub, and preparation and linking exist in `crates/core` but are not wired to the CLI; `launch` has its flow but no save-relay adapter yet; the guided first run (preparation, pairing and the Steam shortcut together) is `uncharted-universal setup` (2.05). Rust test fixtures and source-level checks do not establish Android, Apple, or full-game execution. See the [platform readiness audit](audits/2026-11-06-universal-platforms.md) and [PEERS.md](../PEERS.md).
+Historical source baseline (retained snapshot; see the coordination checkpoint below): production `main` at [`ef27c862`](https://github.com/iannitram/Uncharted-Universal/tree/ef27c862dd15f60e64c51a1d285b96dec1be13b9); former upstream `8b66edc` is already its ancestor. `crates/runtime` is linked into the loader as a static library with runtime ABI version 8 (`trophy`, 3.05, and `memory`, 3.12, then piece 3.01: its `build.rs` builds the NID table and `gpu/`; 3.02 moved `time` and `rtc`, then 3.04 `content` and `display`, 3.07 `audio`, 3.09 `file`, 3.03 `sync` and 3.11 `kernel` and `services`). The target architecture below includes planned work: `app/` has the Continue screen (piece 2.04: save cards, Continue and Play through the CLI, the conflict prompt and the controller path), the guided first run (2.05, #369: hub prepare, client pair and pull, Add to Steam; device check owed), the Saves and Settings pages (2.06), the Fleet page on fixture records (2.08) and About with the language button (2.09); save-relay is not built, and `android/` and `apple/` do not exist. The CLI is a skeleton; install is a stub, and preparation and linking exist in `crates/core` but are not wired to the CLI; `launch` has its flow but no save-relay adapter yet; the guided first run (preparation, pairing and the Steam shortcut together) is `uncharted-universal setup` (2.05). Rust test fixtures and source-level checks do not establish Android, Apple, or full-game execution. See the [platform readiness audit](audits/2026-11-06-universal-platforms.md) and [PEERS.md](../PEERS.md).
+
+## Coordination checkpoint (2026-11-20)
+
+The lane audit starts from `main` at `69672033`; the older source-baseline paragraph
+above and module history below are historical snapshots, not a fresh platform
+acceptance audit. Current source has the Slint after-run path
+(`app/src/main.rs`, `app/src/vm/after_crash.rs`) calling `logs::append`, a CLI
+command layer in `crates/cli/src/commands.rs`, and Android dependency sources.
+An open issue alone does not establish that its implementation is absent: #185
+needs an acceptance audit before being assigned again.
+
+| Issue | Exact implementation starting point | Lane |
+|---|---|---|
+| #426 | `gpu/shadps4/video_core/texture_cache/texture_cache.cpp`, `TextureCache::FindDepthTarget` association guard; `image_info.h` supplies `stencil_addr`, `guest_address`, `props.has_stencil`, `stencil_size` | Flint; no full texture-cache rewrite |
+| #403 | `gpu/shadps4/video_core/amdgpu/tiling.h` tile-mode definition and `TexturesBindableOnHelper` and `BindTextures` descriptor guards in `gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.cpp`; compare Mevlock `c1f7dedd10` before adapting | Terra; only the pinned tile-mode hunk |
+| #432-#436 / #297 | M21a-e render selection, HUD anchoring, camera, movie fit and resize; #14's 16:10 requirements are carried by #297 | Existing resolution work first; no duplicate lane |
+
+Source checks and synthetic tests do not close the device acceptance gates. The
+coordinator records actual compiler/CI outcomes separately from agent reports.
 
 ## Merged foundations and what each still owes (2026-11-12)
 
