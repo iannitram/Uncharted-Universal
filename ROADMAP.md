@@ -113,6 +113,15 @@ relay, controller and resolution files are not parallel implementation targets.
 | Local Flint through OpenCode / LM Studio | #426: the stencil-association condition in `TextureCache::FindDepthTarget`, `gpu/shadps4/video_core/texture_cache/texture_cache.cpp`; brief `docs/work-briefs/426-flint.md` on its implementation branch | Exact upstream guard parity, hosted Linux/Windows build checks; U1/U2/U3 device runs are not claimed |
 | GPT-6.1 Terra | #403: reject unknown tile modes 27-30 in both texture-binding descriptor guards, adapting only the pinned Mevlock hunk; brief `docs/work-briefs/403-terra.md` on its implementation branch | Source provenance, focused malformed-descriptor coverage and Windows CI; checkpoint device runs are not claimed |
 
+The next local handoff is [#454 / 444b](docs/work-briefs/444-flint-next.md):
+only the CLI `play_plan` saved-settings wiring and its focused tests, after
+hosted prerequisite #453 / 444a supplies the single shared conversion and the
+controller/relay/resolution owners finish the overlapping launch paths. The
+brief includes exact baseline anchors, proposed call-site code, JSON fixtures,
+environment assertions, stop conditions and test commands. It is prepared, not
+dispatched; the coordinator refreshes the actual base/API before starting Flint.
+Parent #444 retains GUI wiring and Windows child-process acceptance.
+
 Large local-model jobs are divided before dispatch. In particular #427 is five
 separate review units under the same parent: (1) S_LSHR_B64 (the actual hunk in
 upstream #5723 despite its V_LSHR_B64 title), (2) S_BFM_B64 (#5724), (3) scalar
