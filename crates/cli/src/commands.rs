@@ -201,12 +201,29 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
     let install = AppDirs::new(&vars).install(game.key());
     let user_dir = saves::user_dir(ctx.os, &vars, &install)?;
     let saves_dir = saves::relay_saves_dir(&user_dir, game);
-    let player_env: BTreeMap<String, String> = ctx
+    let mut player_env: BTreeMap<String, String> = ctx
         .env
         .iter()
         .filter(|(name, _)| name.starts_with("BB_"))
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
+    // CLI Steam shortcuts bypass the GUI, so they must read its persisted prompt choice too.
+    // A caller's explicit environment remains authoritative; Automatic leaves detection alone.
+    if !player_env.contains_key("BB_BUTTON_PROMPTS") {
+        if let Some(choice) = fs::read(AppDirs::new(&vars).settings())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value.get("button_prompts")?.as_str().map(str::to_owned))
+            .filter(|choice| {
+                matches!(
+                    choice.as_str(),
+                    "xbox" | "playstation" | "nintendo" | "keyboard"
+                )
+            })
+        {
+            player_env.insert("BB_BUTTON_PROMPTS".into(), choice);
+        }
+    }
     let (cpu_model, os_release) = device_strings(ctx);
     let device = profile::detect_with_os_release(ctx.os, &cpu_model, &os_release);
     let paths = Paths {

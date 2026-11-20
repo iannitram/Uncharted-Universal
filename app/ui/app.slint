@@ -716,6 +716,7 @@ export component AppWindow inherits Window {
     callback editor-clicked(int, int);
     // Enter in the text field (`FirstRun::field`).
     callback field-accepted(string);
+    callback field-edited(string);
 
     // The keyboard goes to the text field (Job::EditField), or back to the page.
     public function focus-field() {
@@ -1611,6 +1612,7 @@ export component AppWindow inherits Window {
                     font-size: root.unit;
                     placeholder-text: root.fr-field;
                     text <=> root.fr-field-text;
+                    edited(text) => { root.field-edited(text); }
                     accepted(text) => {
                         root.field-accepted(text);
                         keys.focus();

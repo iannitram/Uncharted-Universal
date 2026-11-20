@@ -158,6 +158,8 @@ pub struct FirstRunView {
     pub focus: usize,
     /// The text field's placeholder; empty when the step has no field.
     pub field: String,
+    /// The committed draft for the active field, separate for folder and hub.
+    pub field_text: String,
     /// The six code boxes ("" for an empty one) and the cursor; empty when the step has none.
     pub code: Vec<String>,
     pub code_cursor: usize,
@@ -175,6 +177,8 @@ pub struct FirstRunView {
 pub struct FirstRun {
     step: Step,
     editor: Option<Editor>,
+    dump_draft: Option<String>,
+    hub_draft: Option<String>,
     focus: usize,
     error: String,
     /// The game whose card's Set up opened the page: only that one is prepared.
@@ -208,6 +212,8 @@ impl FirstRun {
         FirstRun {
             step: Step::Welcome,
             editor: None,
+            dump_draft: None,
+            hub_draft: None,
             focus: 0,
             error: String::new(),
             only,
@@ -271,7 +277,7 @@ impl FirstRun {
         if self.editor.is_none() && input == Input::Activate {
             let job = self.handle(Key::Input(input));
             if job == Job::EditField {
-                self.editor = Some(Editor::new(field_text));
+                self.editor = Some(Editor::new(self.field_draft().unwrap_or(field_text)));
                 self.error.clear();
                 return Job::None;
             }
@@ -349,8 +355,26 @@ impl FirstRun {
         self.choose(index)
     }
 
+    fn field_draft(&self) -> Option<&str> {
+        match self.step {
+            Step::PickDump { .. } => self.dump_draft.as_deref(),
+            Step::FindHub { .. } => self.hub_draft.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Physical edits become the draft; controller edits commit only on Submit.
+    pub fn edit_field(&mut self, text: &str) {
+        match self.step {
+            Step::PickDump { .. } => self.dump_draft = Some(text.to_owned()),
+            Step::FindHub { .. } => self.hub_draft = Some(text.to_owned()),
+            _ => (),
+        }
+    }
+
     /// Enter in the text field: a dump folder, or a hub's address.
     pub fn field(&mut self, text: &str) -> Job {
+        self.edit_field(text);
         let text = text.trim();
         match &self.step {
             Step::PickDump { .. } if text.is_empty() => {
@@ -808,6 +832,7 @@ impl FirstRun {
             focus: self.focus.min(options.len().saturating_sub(1)),
             options,
             field: field.to_owned(),
+            field_text: self.field_draft().unwrap_or_default().to_owned(),
             code,
             code_cursor,
             progress,

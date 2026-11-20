@@ -363,6 +363,7 @@ fn apply_first(window: &AppWindow, view: &FirstRunView) {
     window.set_fr_options(strings(&view.options));
     window.set_fr_focus(view.focus as i32);
     window.set_fr_field(view.field.as_str().into());
+    window.set_fr_field_text(view.field_text.as_str().into());
     window.set_fr_code(strings(&view.code));
     window.set_fr_code_cursor(view.code_cursor as i32);
     window.set_fr_has_progress(view.progress.is_some());
@@ -1038,6 +1039,15 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>, jobs: Rc<dyn Fn(J
             if let (Ok(row), Ok(col)) = (usize::try_from(row), usize::try_from(col)) {
                 jobs(ui.first_do(|first| first.editor_click(Grid::at(row, col))));
             }
+        }
+    });
+    window.on_field_edited({
+        let ui = ui.clone();
+        move |text| {
+            ui.first_do(|first| {
+                first.edit_field(&text);
+                Job::None
+            });
         }
     });
     window.on_field_accepted({
@@ -1833,6 +1843,37 @@ mod tests {
         window.invoke_field_accepted("192.168.1.20:47120".into());
         assert_eq!(window.get_fr_title(), "Pair with 192.168.1.20:47120");
         assert_eq!(window.get_fr_code().row_count(), 6);
+        window.invoke_input(7); // Back from pairing to the address field.
+        jobs(ui.first_do(|f| f.event(firstrun::Event::Hubs(Ok(Vec::new())))));
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47120");
+        ui.pad_input(
+            PadInput {
+                input: Input::Activate,
+                style: prompts::Style::Xbox,
+            },
+            &|_| {},
+            &|_| {},
+        );
+        assert_eq!(window.get_fr_editor_text(), "192.168.1.20:47120");
+        window.invoke_editor_clicked(4, 0); // erase final character
+        window.invoke_editor_clicked(0, 8); // append 9
+        window.invoke_editor_clicked(4, 1); // commit through production callback
+        window.invoke_input(7);
+        jobs(ui.first_do(|f| f.event(firstrun::Event::Hubs(Ok(Vec::new())))));
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47129");
+        // Cancel must not replace the committed value with the edited buffer.
+        ui.pad_input(
+            PadInput {
+                input: Input::Activate,
+                style: prompts::Style::Xbox,
+            },
+            &|_| {},
+            &|_| {},
+        );
+        window.invoke_editor_clicked(0, 0);
+        window.invoke_input(7);
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47129");
+        window.invoke_field_accepted("192.168.1.20:47120".into());
         for code in [21, 22, 23, 24, 25, 26] {
             window.invoke_input(code);
         }

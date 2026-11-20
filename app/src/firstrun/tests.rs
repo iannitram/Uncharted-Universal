@@ -552,3 +552,35 @@ fn a_pad_enters_a_manual_hub_address_and_pairing_code() {
         Job::PairPull { hub, code } if hub.addr.to_string() == address && code == "000000"
     ));
 }
+
+#[test]
+fn submitted_controller_drafts_survive_retry_and_are_separate_per_field() {
+    let mut page = FirstRun::new(None, false);
+    page.handle_pad(Input::Activate, "");
+    page.event(Event::Candidates(Vec::new()));
+    page.handle_pad(Input::Activate, "C:\\typo");
+    let footer = page.view().editor.unwrap().rows.len();
+    assert_eq!(
+        editor_press(&mut page, footer, 1),
+        Job::Check(PathBuf::from("C:\\typo"))
+    );
+    page.event(Event::Checked(
+        PathBuf::from("C:\\typo"),
+        Err("not found".into()),
+    ));
+    press(&mut page, CHOOSE_ANOTHER);
+    page.event(Event::Candidates(Vec::new()));
+    page.handle_pad(Input::Activate, "stale physical field");
+    assert_eq!(page.view().editor.unwrap().text, "C:\\typo");
+    editor_press(&mut page, 0, 0);
+    page.handle_pad(Input::Back, "");
+    page.handle_pad(Input::Activate, "");
+    assert_eq!(page.view().editor.unwrap().text, "C:\\typo");
+    page.handle_pad(Input::Back, "");
+    page.handle_pad(Input::Back, "");
+    page.handle(DOWN);
+    page.handle_pad(Input::Activate, "");
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.handle_pad(Input::Activate, "");
+    assert!(page.view().editor.unwrap().text.is_empty());
+}
