@@ -202,6 +202,56 @@ extern "C" BbRenderSize bbgpu_auto_render_size() {
     return g_auto_render_size;
 }
 
+extern "C" BbFovScale bbgpu_fov_scale() {
+    const u32 w = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;
+    const u32 h = g_auto_render_size.height ? g_auto_render_size.height : g_startup_window_size.height;
+    if (!w || !h) {
+        return {0, 1.0f, 1.0f};
+    }
+    const u64 wide = u64(w) * 9;
+    const u64 tall = u64(h) * 16;
+    const u64 diff = wide > tall ? wide - tall : tall - wide;
+    if (diff * 100 <= tall) {
+        return {0, 1.0f, 1.0f};
+    }
+    if (wide > tall) {
+        return {1, float(double(wide) / double(tall)), 1.0f};
+    }
+    return {2, 1.0f, float(double(tall) / double(wide))};
+}
+
+extern "C" BbMovieRect bbgpu_movie_fit_rect(uint32_t screen_w, uint32_t screen_h,
+                                            uint32_t movie_w, uint32_t movie_h) {
+    if (!screen_w || !screen_h || !movie_w || !movie_h) {
+        return {0, 0, 0, 0};
+    }
+    const u64 cw = screen_w, ch = screen_h, aw = movie_w, ah = movie_h;
+    const u32 width = cw * ah >= ch * aw ? u32(ch * aw / ah) : screen_w;
+    const u32 height = cw * ah >= ch * aw ? screen_h : u32(cw * ah / aw);
+    return {(screen_w - width) / 2, (screen_h - height) / 2, width, height};
+}
+
+extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
+    static u32 last_w = 0, last_h = 0;
+    const u32 sw = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;
+    const u32 sh = g_auto_render_size.height ? g_auto_render_size.height : g_startup_window_size.height;
+    if (!sw || !sh || !width || !height) {
+        return 0;
+    }
+    const u32 dw = sw > width ? sw - width : width - sw;
+    const u32 dh = sh > height ? sh - height : height - sh;
+    if (dw <= 16 && dh <= 16) {
+        return 0;
+    }
+    if (last_w != width || last_h != height) {
+        last_w = width;
+        last_h = height;
+        std::printf("Display: window resized to %ux%u (presenter rescaled); restart for a full re-render\n",
+                    width, height);
+    }
+    return 1;
+}
+
 u32 BbDisplayRefreshHz() {
     static const u32 hz = [] {
         const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());

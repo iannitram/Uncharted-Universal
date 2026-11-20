@@ -29,6 +29,19 @@ void bbnet_configure(const char *app0, const char *serial, const char *title, co
 int bbgpu_init(const BbGpuConfig *config);
 /* Dimensions applied by prepare_render, or zero for an unpatched or explicit launch. */
 BbRenderSize bbgpu_auto_render_size(void);
+/* Camera FOV mode (0 Native, 1 HorPlus, 2 VertPlus) and tangent scale factors (M21c, #434). */
+typedef struct {
+    uint32_t mode;
+    float horizontal, vertical;
+} BbFovScale;
+BbFovScale bbgpu_fov_scale(void);
+/* Centered letterbox/pillarbox rectangle for pre-rendered video/cutscenes (M21d, #435). */
+typedef struct {
+    uint32_t x, y, width, height;
+} BbMovieRect;
+BbMovieRect bbgpu_movie_fit_rect(uint32_t screen_w, uint32_t screen_h, uint32_t movie_w, uint32_t movie_h);
+/* Presenter resize notification (M21e, #436): returns 1 if a restart prompt is advised. */
+int bbgpu_notify_resize(uint32_t width, uint32_t height);
 /* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */

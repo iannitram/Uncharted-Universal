@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 M21c/d/e resolution-independence hooks and tests (3.20 #434, 3.21 #435, 3.22 #436): added `uncharted_runtime_display_fov` / `bbgpu_fov_scale` (M21c), `uncharted_runtime_movie_fit_rect` / `bbgpu_movie_fit_rect` (M21d), and `uncharted_runtime_resize_needs_restart` / `bbgpu_notify_resize` wired from `vk_presenter.cpp` (M21e), with unit tests across 6:5, 3:2, 16:9, 16:10, and Fold cover->unfold. Physical device checks remain `needs-owner-device`.
+
 - 2026-11-20 Save Relay conflict UI & setup (9.01 #163, 9.05 #440): wired `conflict_event`/`parse_conflict_event` from `uncharted-universal play` into `app/`'s `Screen::set_conflict` overlay and added `save-relay` manifests/binary bundling to `packaging/linux/package.sh` (9.01); added `RelaySetup` (`CloudService`, `RelayAccountStatus`, `RelayChallenge`), `FirstRun` Save sync setup & sign-in flow (`Nextcloud`, `Google Drive`, `Dropbox`, `Skip for now`), and `uncharted-universal setup relay` (9.05). Full workspace tests, clippy and fmt pass; device/release acceptance remains `needs-owner-device`.
 
 - 2026-11-20 Nintendo button prompts and 3.23 tests (3.23, #439): added `Style::Nintendo`, `BB_BUTTON_PROMPTS=nintendo`, and `DrawNintendo` (A/B/X/Y in Nintendo positions, L/R/ZL/ZR, -/+) to `gpu/shadps4/video_core/texture_cache/button_prompts.{h,cpp}`, extracted `prompts_for_gamepad_type` with SDL3 family unit tests in `crates/runtime/src/pad/host.rs`, and added `tests/test_button_prompts.cpp` covering `ps4_sheet` generation and `BB_BUTTON_PROMPTS=nintendo` override. Physical controller verification on AMD handheld/tablet/desktop remains `needs-owner-device` on `#439`.

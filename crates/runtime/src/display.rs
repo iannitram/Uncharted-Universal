@@ -458,6 +458,93 @@ pub struct RuntimeDisplaySize {
     pub direct_memory_mib: u32,
 }
 
+/// Camera FOV mode and half-tangent scale factors from `uncharted_core::aspect::fov` (M21c, #434).
+/// `mode`: 0 Native, 1 HorPlus, 2 VertPlus.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RuntimeDisplayFov {
+    pub mode: u32,
+    pub horizontal: f32,
+    pub vertical: f32,
+}
+
+impl Default for RuntimeDisplayFov {
+    fn default() -> Self {
+        Self {
+            mode: 0,
+            horizontal: 1.0,
+            vertical: 1.0,
+        }
+    }
+}
+
+/// Centered pixel rectangle for pre-rendered video letterbox/pillarbox (M21d, #435).
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Computes the camera FOV mode and factors for `width x height` via `aspect::fov` (M21c, #434).
+#[no_mangle]
+pub extern "C" fn uncharted_runtime_display_fov(width: u32, height: u32) -> RuntimeDisplayFov {
+    match uncharted_core::aspect::fov((width, height)) {
+        Ok(f) => RuntimeDisplayFov {
+            mode: match f.mode {
+                uncharted_core::aspect::FovMode::Native => 0,
+                uncharted_core::aspect::FovMode::HorPlus => 1,
+                uncharted_core::aspect::FovMode::VertPlus => 2,
+            },
+            horizontal: f.horizontal as f32,
+            vertical: f.vertical as f32,
+        },
+        Err(_) => RuntimeDisplayFov::default(),
+    }
+}
+
+/// Computes the centered letterbox/pillarbox rectangle for a `movie_w x movie_h` video inside a
+/// `screen_w x screen_h` container via `aspect::fit_rect` (M21d, #435).
+#[no_mangle]
+pub extern "C" fn uncharted_runtime_movie_fit_rect(
+    screen_w: u32,
+    screen_h: u32,
+    movie_w: u32,
+    movie_h: u32,
+) -> RuntimeRect {
+    match uncharted_core::aspect::fit_rect((screen_w, screen_h), (movie_w, movie_h)) {
+        Ok(r) => RuntimeRect {
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+        },
+        Err(_) => RuntimeRect::default(),
+    }
+}
+
+/// Returns true when a live window resize or fold/unfold diverges enough from `startup` (>16 px
+/// in either dimension) that a restart prompt should be offered for a full re-render (M21e, #436).
+pub fn resize_needs_restart(startup: (u32, u32), current: (u32, u32)) -> bool {
+    startup.0 > 0
+        && startup.1 > 0
+        && current.0 > 0
+        && current.1 > 0
+        && (startup.0.abs_diff(current.0) > 16 || startup.1.abs_diff(current.1) > 16)
+}
+
+#[no_mangle]
+pub extern "C" fn uncharted_runtime_resize_needs_restart(
+    start_w: u32,
+    start_h: u32,
+    cur_w: u32,
+    cur_h: u32,
+) -> bool {
+    resize_needs_restart((start_w, start_h), (cur_w, cur_h))
+}
+
 #[cfg(any(target_arch = "x86_64", test))]
 fn automatic_patch(
     image: &mut [u8],
@@ -743,6 +830,99 @@ mod tests {
         assert_eq!(chosen.direct_memory_mib, 0);
         assert_eq!(get64(&smaller, TABLE + 8) >> 20, 3967 + 64);
         assert!(chosen.width * chosen.height < store(&image, 0) * store(&image, 1));
+    }
+
+    #[test]
+    fn fov_follows_aspect_on_all_four_target_screens() {
+        // 16:9 -> Native (0)
+        let fhd = uncharted_runtime_display_fov(1920, 1080);
+        assert_eq!((fhd.mode, fhd.horizontal, fhd.vertical), (0, 1.0, 1.0));
+        // 16:10 (Deck / Strix Halo) -> VertPlus (2)
+        let deck = uncharted_runtime_display_fov(1280, 800);
+        assert_eq!(deck.mode, 2);
+        assert_eq!(deck.horizontal, 1.0);
+        assert!(deck.vertical > 1.10 && deck.vertical < 1.12);
+        // 3:2 (iPad mini) -> VertPlus (2)
+        let ipad = uncharted_runtime_display_fov(2266, 1488);
+        assert_eq!(ipad.mode, 2);
+        assert_eq!(ipad.horizontal, 1.0);
+        assert!(ipad.vertical > 1.15);
+        // 6:5 (Pixel Fold unfolded) -> VertPlus (2)
+        let fold = uncharted_runtime_display_fov(2208, 1840);
+        assert_eq!(fold.mode, 2);
+        assert!(fold.vertical > 1.45);
+        // Wider than 16:9 (Fold cover 2092x1080, Ultrawide 3440x1440) -> HorPlus (1)
+        let cover = uncharted_runtime_display_fov(2092, 1080);
+        assert_eq!(cover.mode, 1);
+        assert!(cover.horizontal > 1.08);
+        assert_eq!(cover.vertical, 1.0);
+    }
+
+    #[test]
+    fn movie_fit_rect_keeps_aspect_on_all_four_target_screens() {
+        // 16:9 movie on 16:9 -> full frame
+        assert_eq!(
+            uncharted_runtime_movie_fit_rect(1920, 1080, 1920, 1080),
+            RuntimeRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080
+            }
+        );
+        // 16:9 movie on 16:10 -> letterboxed vertically
+        assert_eq!(
+            uncharted_runtime_movie_fit_rect(2560, 1600, 1920, 1080),
+            RuntimeRect {
+                x: 0,
+                y: 80,
+                width: 2560,
+                height: 1440
+            }
+        );
+        // 16:9 movie on 3:2 (iPad mini) -> letterboxed vertically
+        let ipad = uncharted_runtime_movie_fit_rect(2266, 1488, 1920, 1080);
+        assert_eq!(ipad.x, 0);
+        assert!(ipad.y > 0 && ipad.width == 2266 && ipad.height < 1488);
+        // 16:9 movie on 6:5 (Pixel Fold unfolded) -> letterboxed vertically
+        assert_eq!(
+            uncharted_runtime_movie_fit_rect(2208, 1840, 1920, 1080),
+            RuntimeRect {
+                x: 0,
+                y: 299,
+                width: 2208,
+                height: 1242
+            }
+        );
+        // 16:9 movie on Fold cover (2092x1080) -> pillarboxed horizontally
+        assert_eq!(
+            uncharted_runtime_movie_fit_rect(2092, 1080, 1920, 1080),
+            RuntimeRect {
+                x: 86,
+                y: 0,
+                width: 1920,
+                height: 1080
+            }
+        );
+    }
+
+    #[test]
+    fn resize_and_fold_unfold_prompt_restart_when_size_changes() {
+        assert!(!uncharted_runtime_resize_needs_restart(0, 0, 2208, 1840));
+        assert!(!uncharted_runtime_resize_needs_restart(
+            1920, 1080, 1920, 1080
+        ));
+        assert!(!uncharted_runtime_resize_needs_restart(
+            1920, 1080, 1924, 1082
+        ));
+        // Fold cover -> unfolded
+        assert!(uncharted_runtime_resize_needs_restart(
+            2092, 1080, 2208, 1840
+        ));
+        // Live desktop window resize
+        assert!(uncharted_runtime_resize_needs_restart(
+            1280, 720, 1920, 1080
+        ));
     }
 
     #[test]

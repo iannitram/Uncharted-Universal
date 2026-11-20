@@ -13,6 +13,7 @@
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "bbport_overlay.h"
+#include "../../../bbgpu.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_low_latency.h"
@@ -848,6 +849,7 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last, u64 laten
     {
         const vk::Extent2D extent = swapchain.GetExtent();
         SetExpectedGameSize(s32(extent.width), s32(extent.height));
+        bbgpu_notify_resize(extent.width, extent.height);
         const vk::ImageSubresourceRange color_range{
             .aspectMask = vk::ImageAspectFlagBits::eColor,
             .baseMipLevel = 0,

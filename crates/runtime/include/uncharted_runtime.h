@@ -27,6 +27,22 @@ typedef struct RuntimeExport {
   void *function;
 } RuntimeExport;
 
+// Camera FOV mode and half-tangent scale factors from `uncharted_core::aspect::fov` (M21c, #434).
+// `mode`: 0 Native, 1 HorPlus, 2 VertPlus.
+typedef struct RuntimeDisplayFov {
+  uint32_t mode;
+  float horizontal;
+  float vertical;
+} RuntimeDisplayFov;
+
+// Centered pixel rectangle for pre-rendered video letterbox/pillarbox (M21d, #435).
+typedef struct RuntimeRect {
+  uint32_t x;
+  uint32_t y;
+  uint32_t width;
+  uint32_t height;
+} RuntimeRect;
+
 // A size already applied to the guest image, to share with the presenter and direct memory.
 // Zero dimensions mean the loader should use its existing explicit-resolution path.
 typedef struct RuntimeDisplaySize {
@@ -146,6 +162,21 @@ uintptr_t runtime_content_resolve(const char *name);
 // AppContent's references, initialization and query counters, on stdout.
 void runtime_content_report(void);
 #endif
+
+// Computes the camera FOV mode and factors for `width x height` via `aspect::fov` (M21c, #434).
+struct RuntimeDisplayFov uncharted_runtime_display_fov(uint32_t width, uint32_t height);
+
+// Computes the centered letterbox/pillarbox rectangle for a `movie_w x movie_h` video inside a
+// `screen_w x screen_h` container via `aspect::fit_rect` (M21d, #435).
+struct RuntimeRect uncharted_runtime_movie_fit_rect(uint32_t screen_w,
+                                                    uint32_t screen_h,
+                                                    uint32_t movie_w,
+                                                    uint32_t movie_h);
+
+bool uncharted_runtime_resize_needs_restart(uint32_t start_w,
+                                            uint32_t start_h,
+                                            uint32_t cur_w,
+                                            uint32_t cur_h);
 
 #if defined(__x86_64__)
 // `BB_GAME_RES`: rewrites the display configuration the game initializes, the memory
