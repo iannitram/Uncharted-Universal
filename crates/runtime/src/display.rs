@@ -19,7 +19,9 @@
 //! The patch itself, [`patch`], is plain byte work on any host; the loader calls it through
 //! [`ffi::runtime_display_patch`] (x86-64 only) with the process environment.
 
+#[cfg(any(target_arch = "x86_64", test))]
 use std::collections::BTreeMap;
+#[cfg(any(target_arch = "x86_64", test))]
 use uncharted_core::{games::Game, render_size};
 
 /// The 16:9 aspect the games store, `1.7777778f32`.
@@ -253,6 +255,7 @@ fn budget_entry(entry: &[u8], id: u32, kind: u32, min_mb: u64, max_mb: u64) -> O
 
 /// How much room the original guest GPU arena has for both render heaps. An ambiguous or
 /// incomplete table can still render at the stock pixel budget without changing that table.
+#[cfg(any(target_arch = "x86_64", test))]
 fn gpu_headroom_mib(image: &[u8]) -> u32 {
     let unique_entry = |id, kind, min, max| {
         let mut entries = image
@@ -363,8 +366,23 @@ pub fn grow_budget(
 /// - `cmp qword [r+0x10], 0x400000` (the decode path's check of the frame buffer size).
 ///
 /// Each becomes `bytes`; returns how many immediates changed.
-fn movie_slots(image: &[u8]) -> Vec<usize> {
-    let mut slots = Vec::new();
+#[derive(Default)]
+struct MovieSites {
+    offsets: Vec<usize>,
+    allocation: bool,
+    initial_offset: bool,
+    decode_check: bool,
+}
+
+impl MovieSites {
+    #[cfg(any(target_arch = "x86_64", test))]
+    fn complete(&self) -> bool {
+        self.allocation && self.initial_offset && self.decode_check
+    }
+}
+
+fn movie_slots(image: &[u8]) -> MovieSites {
+    let mut slots = MovieSites::default();
     let mut i = 0usize;
     while i + 64 < image.len() {
         let p = &image[i..];
@@ -376,7 +394,8 @@ fn movie_slots(image: &[u8]) -> Vec<usize> {
             && p[3] == 0x10
             && at(4) == Some(MOVIE_FRAME)
         {
-            slots.push(i + 4);
+            slots.offsets.push(i + 4);
+            slots.decode_check = true;
             i += 1;
             continue;
         }
@@ -398,9 +417,11 @@ fn movie_slots(image: &[u8]) -> Vec<usize> {
         let offset_before =
             p[7] & 0xf8 == 0x48 && p[8] == 0x29 && p[10] == 0xb8 && at(11) == Some(0xffff_ffff);
         if slot {
-            slots.extend([i + 3, i + 15]);
+            slots.offsets.extend([i + 3, i + 15]);
+            slots.allocation = true;
         } else if offset_before {
-            slots.push(i + 3);
+            slots.offsets.push(i + 3);
+            slots.initial_offset = true;
         }
         i += 1;
     }
@@ -409,10 +430,10 @@ fn movie_slots(image: &[u8]) -> Vec<usize> {
 
 pub fn patch_movie_slots(image: &mut [u8], bytes: u32) -> usize {
     let slots = movie_slots(image);
-    for &at in &slots {
+    for &at in &slots.offsets {
         put32(image, at, bytes);
     }
-    slots.len()
+    slots.offsets.len()
 }
 
 fn is_display_block(block: &[u8]) -> bool {
@@ -437,6 +458,7 @@ pub struct RuntimeDisplaySize {
     pub direct_memory_mib: u32,
 }
 
+#[cfg(any(target_arch = "x86_64", test))]
 fn automatic_patch(
     image: &mut [u8],
     screen: (u32, u32),
@@ -451,7 +473,13 @@ fn automatic_patch(
     // BB_RESOLUTION is the launcher's preferred size. An explicit BB_GAME_RES opts out before
     // this path; a preference uses the same memory checks as a size from the window.
     let requested = var("BB_RESOLUTION")
-        .and_then(|size| parse_size(size.as_bytes()))
+        .and_then(|size| {
+            let (width, height) = size.split_once('x')?;
+            Some((
+                width.trim().parse::<u32>().ok()?,
+                height.trim().parse::<u32>().ok()?,
+            ))
+        })
         .filter(|&(width, height)| width > 0 && height > 0)
         .unwrap_or(screen);
     if requested == render_size::OUTPUT_SIZE || !image.windows(14).any(is_display_block) {
@@ -475,7 +503,7 @@ fn automatic_patch(
         "BB_GAME_RES".to_owned(),
         format!("{width}x{height}"),
     )]));
-    if render_size::movie_slot_mib((width, height)) > 4 && movie_slots(image).len() < 4 {
+    if render_size::movie_slot_mib((width, height)) > 4 && !movie_slots(image).complete() {
         log("Display: automatic size skipped because movie frame buffers were not found");
         return None;
     }
@@ -738,6 +766,53 @@ mod tests {
             (chosen.width, chosen.height, chosen.direct_memory_mib),
             (1280, 800, 0)
         );
+    }
+
+    #[test]
+    fn automatic_movie_preflight_requires_each_operation_before_any_write() {
+        for missing in [0x10, 0x40, 0xa0] {
+            let mut image = synthetic_image();
+            let mut movie = movie_image();
+            // Duplicate an allocation sequence: raw offset counts cannot prove completeness.
+            let allocation = movie[0x40..0xa0].to_vec();
+            movie[0x140..0x1a0].copy_from_slice(&allocation);
+            movie[missing] = 0x90;
+            if missing == 0x40 {
+                movie[0x140] = 0x90;
+            }
+            image[0x2000..0x2200].copy_from_slice(&movie);
+            let original = image.clone();
+            assert_eq!(
+                automatic_patch(&mut image, (2560, 1600), &vars(&[]), &mut |_| {}),
+                None
+            );
+            assert_eq!(
+                image, original,
+                "incomplete movie operation at {missing:#x}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_preferences_use_the_measured_window() {
+        for preference in [
+            "1280x800junk",
+            "4294968576x720",
+            "1280x800x600",
+            "-1280x800",
+        ] {
+            let mut image = synthetic_image();
+            let movie = movie_image();
+            image[0x2000..0x2000 + movie.len()].copy_from_slice(&movie);
+            let chosen = automatic_patch(
+                &mut image,
+                (2560, 1600),
+                &vars(&[("BB_RESOLUTION", preference)]),
+                &mut |_| {},
+            )
+            .unwrap();
+            assert_eq!((chosen.width, chosen.height), (2560, 1600), "{preference}");
+        }
     }
 
     #[test]

@@ -27,6 +27,8 @@ Automated coverage uses synthetic windows and boot images for 6:5, about 3:2, 16
 Fold cover aspect. Real-game visuals, HUD, FOV, movies, resize behavior and upscalers still need
 their M21 checks. Projector and Strix Halo gameplay checks are `needs-owner-device`.
 
+Automatic growth beyond the original movie frame size requires all three known movie operations: allocation/stride, initial offset and decode-size check. An incomplete pattern leaves the image unchanged and uses the existing fallback. Malformed `BB_RESOLUTION` preferences fall back to measured window dimensions.
+
 ## Render resolution (`BB_GAME_RES=WxH`)
 
 The three games draw at a fixed 1920x1080. Their renderer reads one display configuration
