@@ -681,10 +681,74 @@ pub fn deck_720p_writes(elf: &[u8]) -> Result<Vec<ByteWrite>> {
 pub const RT_MIB_PER_1080P: u32 = 300;
 pub const RT2_MIB_PER_1080P: u32 = 150;
 
+/// Extra MiB for the two render-target heaps. The runtime and explicit launch settings use
+/// the same growth rule, so a size fits only if both rounded allocations fit together.
+pub fn render_target_growth((width, height): (u32, u32)) -> (u32, u32) {
+    let scale = f64::from(width) * f64::from(height) / (1920.0 * 1080.0) - 1.0;
+    let heap_size = |per_1080p: u32| {
+        let value = (scale.max(0.0) * f64::from(per_1080p)).trunc() / 64.0;
+        (value.ceil() * 64.0) as u32
+    };
+    (heap_size(RT_MIB_PER_1080P), heap_size(RT2_MIB_PER_1080P))
+}
+
+/// Movie frame-buffer size in MiB, including the decoder's row and pitch alignment.
+pub fn movie_slot_mib((width, height): (u32, u32)) -> u32 {
+    let frame_width = u64::from(width).next_multiple_of(64);
+    let frame_height = u64::from(height).next_multiple_of(64);
+    let frame_bytes = frame_width * frame_height * 3 / 2 + 65536;
+    (frame_bytes.div_ceil(2 << 20) * 2).max(4) as u32
+}
+
+/// Choose the largest aligned render at the requested aspect within the launch limits and
+/// extra memory available to the render targets. Tiny windows grow to a supported minimum.
+/// Unrepresentable aspects (and missing display sizes) have no automatic choice.
+pub fn automatic_size(
+    screen: (u32, u32),
+    game: Option<Game>,
+    extra_mib: u32,
+) -> Option<(u32, u32)> {
+    const WIDTH_STEP: u32 = 16; // U3's post-processing alignment
+    const HEIGHT_STEP: u32 = 4;
+    let fit = crate::aspect::fit_rect(MAX_SIZE, screen).ok()?;
+    if fit.width < MIN_SIZE.0 || fit.height < MIN_SIZE.1 {
+        return None;
+    }
+
+    // Grow a small window proportionally. Round height to the nearest tile so, for example,
+    // an 800-pixel-high 16:10 window stays 1280x800.
+    let min_height = (u64::from(MIN_SIZE.0) * u64::from(screen.1))
+        .div_ceil(u64::from(screen.0))
+        .max(u64::from(MIN_SIZE.1)) as u32;
+    let min_height = min_height.next_multiple_of(HEIGHT_STEP);
+    let max_height = fit.height / HEIGHT_STEP * HEIGHT_STEP;
+    if min_height > max_height {
+        return None;
+    }
+    let highest = screen.1.clamp(min_height, max_height) / HEIGHT_STEP * HEIGHT_STEP;
+    // The active runtime keeps both render heaps in the 32-bit GPU arena. Use the known
+    // per-game launch limits in addition to checking the heap budget from the actual image.
+    let max_pixels = if matches!(game, Some(Game::U2 | Game::U3)) {
+        3200 * 1800
+    } else {
+        2880 * 1620
+    };
+    (min_height..=highest)
+        .rev()
+        .step_by(HEIGHT_STEP as usize)
+        .find_map(|height| {
+            let (width, _) = crate::aspect::render_size(screen, height).ok()?;
+            let width = (width + WIDTH_STEP / 2) / WIDTH_STEP * WIDTH_STEP;
+            let (rt, rt2) = render_target_growth((width, height));
+            (width * height <= max_pixels && rt + rt2 <= extra_mib).then_some((width, height))
+        })
+}
+
 /// The variables for the game's own render size (`BB_GAME_RES`, `game_res` in `run.py`, #139).
 /// Reads `BB_GAME_RES` ("WxH", case-insensitive, `x` or the multiplication sign) from
 /// `player_env`. Returns nothing when it is missing, not a size, outside `MIN_SIZE` ..
-/// `MAX_SIZE`, or 1920x1080. Otherwise returns `BB_GAME_RES` as "<w>x<h>" and the heap
+/// `MAX_SIZE`. A value of 1920x1080 only returns `BB_GAME_RES` to retain the override. Other
+/// valid sizes return `BB_GAME_RES` as "<w>x<h>" and the heap
 /// variables `BB_GAME_RT_MB`, `BB_GAME_RT2_MB`, `BB_GAME_FREE_MB`, `BB_GAME_MOVIE_MB` and, when
 /// the pool needs it, `BB_DMEM_MB`. A heap variable the player set to digits keeps its value.
 pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
@@ -715,13 +779,10 @@ pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, S
         return BTreeMap::new();
     }
 
-    // Return empty map if it's exactly 1920x1080
-    if width == 1920 && height == 1080 {
-        return BTreeMap::new();
+    let mut result = BTreeMap::from([("BB_GAME_RES".to_string(), format!("{width}x{height}"))]);
+    if (width, height) == OUTPUT_SIZE {
+        return result;
     }
-
-    // Calculate scale factor
-    let scale = (width as f64 * height as f64) / (1920.0 * 1080.0) - 1.0;
 
     // Helper function to check if a string is all digits (optionally with leading '-')
     let is_all_digits = |s: &str| -> bool {
@@ -729,50 +790,17 @@ pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, S
         !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
     };
 
-    // Helper function to compute heap sizes with rounding to nearest multiple of 64
-    let compute_heap_size = |per_1080p: u32| -> u32 {
-        if scale <= 0.0 {
-            0
-        } else {
-            let value = (scale * per_1080p as f64).trunc() / 64.0;
-            (value.ceil() * 64.0) as u32
-        }
-    };
-
-    // Helper function to compute movie MB
-    let compute_movie_mb = |width: u32, height: u32| -> u32 {
-        // frame_width = ceil(width / 16) * 16
-        let frame_width = width.div_ceil(16) * 16;
-        // frame_height = ceil(height / 64) * 64
-        let frame_height = height.div_ceil(64) * 64;
-        // frame_bytes = frame_width * frame_height * 3 / 2 + 65536
-        let frame_bytes = (frame_width as u64 * frame_height as u64 * 3 / 2) + 65536;
-        // ceil(frame_bytes / 2097152) * 2, where 2097152 = 2^21
-        let mb = frame_bytes.div_ceil(2097152); // Use div_ceil for ceiling division
-        (mb * 2).max(4) as u32
-    };
-
-    // Build the result map
-    let mut result = BTreeMap::new();
-
-    // Always set BB_GAME_RES
-    result.insert("BB_GAME_RES".to_string(), format!("{}x{}", width, height));
+    let (rt, rt2) = render_target_growth((width, height));
 
     // Handle BB_GAME_RT_MB
     if let Some(rt_mb) = player_env.get("BB_GAME_RT_MB") {
         if is_all_digits(rt_mb) {
             result.insert("BB_GAME_RT_MB".to_string(), rt_mb.clone());
         } else {
-            result.insert(
-                "BB_GAME_RT_MB".to_string(),
-                compute_heap_size(RT_MIB_PER_1080P).to_string(),
-            );
+            result.insert("BB_GAME_RT_MB".to_string(), rt.to_string());
         }
     } else {
-        result.insert(
-            "BB_GAME_RT_MB".to_string(),
-            compute_heap_size(RT_MIB_PER_1080P).to_string(),
-        );
+        result.insert("BB_GAME_RT_MB".to_string(), rt.to_string());
     }
 
     // Handle BB_GAME_RT2_MB
@@ -780,16 +808,10 @@ pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, S
         if is_all_digits(rt2_mb) {
             result.insert("BB_GAME_RT2_MB".to_string(), rt2_mb.clone());
         } else {
-            result.insert(
-                "BB_GAME_RT2_MB".to_string(),
-                compute_heap_size(RT2_MIB_PER_1080P).to_string(),
-            );
+            result.insert("BB_GAME_RT2_MB".to_string(), rt2.to_string());
         }
     } else {
-        result.insert(
-            "BB_GAME_RT2_MB".to_string(),
-            compute_heap_size(RT2_MIB_PER_1080P).to_string(),
-        );
+        result.insert("BB_GAME_RT2_MB".to_string(), rt2.to_string());
     }
 
     // Handle BB_GAME_FREE_MB
@@ -810,13 +832,13 @@ pub fn game_res_env(player_env: &BTreeMap<String, String>) -> BTreeMap<String, S
         } else {
             result.insert(
                 "BB_GAME_MOVIE_MB".to_string(),
-                compute_movie_mb(width, height).to_string(),
+                movie_slot_mib((width, height)).to_string(),
             );
         }
     } else {
         result.insert(
             "BB_GAME_MOVIE_MB".to_string(),
-            compute_movie_mb(width, height).to_string(),
+            movie_slot_mib((width, height)).to_string(),
         );
     }
 

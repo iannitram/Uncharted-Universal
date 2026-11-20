@@ -1,8 +1,33 @@
 # Render resolution and ultrawide
 
 How the port renders above 1080p, how the games' size and aspect ratio are changed, and how
-the speaker layout reaches the games. The launcher's Display page sets all of it; the
-variables below are what it passes to the game.
+the speaker layout reaches the games. The Windows native loader can choose a render size at
+startup. The variables below also support explicit settings.
+
+## Automatic sizing on Windows (M21a)
+
+The native `bb-probe.exe` loader asks SDL for the game's initial window size in pixels before
+constructing the Vulkan presenter. Fullscreen uses the display's pixels. An explicit
+`BB_WINDOW_SIZE` sets the initial windowed size. The default window follows the primary display's
+aspect and fits inside its usable area and the previous 1920x1080 initial size.
+
+`crates/core` uses the window's aspect to select an aligned render size. A `BB_RESOLUTION` value
+requests a preferred size through the same checks. The loader checks the rounded render-heap
+growth against the executable's GPU arena, which must stay below 4096 MiB, and the available
+direct memory. It also uses the established pixel limits of 2880x1620 for Uncharted 1 (or an
+unspecified game) and 3200x1800 for Uncharted 2 and 3. If the requested size exceeds a limit,
+the render size shrinks along the same aspect. The selected dimensions drive the game's display
+block, Vulkan's scene and movie inputs, and the memory sizes.
+
+An explicit `BB_GAME_RES`, including `1920x1080`, takes precedence. The compatibility options
+`BB_RENDER_RES`, `BB_RENDER_720P` and `--patches` use their existing launch paths. Automatic sizing
+is a startup decision. The presenter fits the chosen render to later window sizes.
+
+Automated coverage uses synthetic windows and boot images for 6:5, about 3:2, 16:9, 16:10, and the
+Fold cover aspect. Real-game visuals, HUD, FOV, movies, resize behavior and upscalers still need
+their M21 checks. Projector and Strix Halo gameplay checks are `needs-owner-device`.
+
+Automatic growth beyond the original movie frame size requires all three known movie operations: allocation/stride, initial offset and decode-size check. An incomplete pattern leaves the image unchanged and uses the existing fallback. Malformed `BB_RESOLUTION` preferences fall back to measured window dimensions.
 
 ## Render resolution (`BB_GAME_RES=WxH`)
 

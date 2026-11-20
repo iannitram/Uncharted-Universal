@@ -5129,6 +5129,7 @@ dependencies = [
  "serde_json",
  "symphonia-bundle-mp3",
  "symphonia-core",
+ "uncharted_core",
  "windows-sys 0.61.2",
 ]
 

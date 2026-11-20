@@ -2,6 +2,7 @@
 // Ported from BilalReloaded's Uncharted PC port (gpu/shim/gow3_movie.cpp): movie frames at a
 // patched render resolution. See bbport_movie.h.
 #include "bbport_movie.h"
+#include "../bbgpu.h"
 
 #include <array>
 #include <atomic>
@@ -21,6 +22,10 @@ struct Size {
 
 const Size& Display() {
     static const Size size = [] {
+        const auto automatic = bbgpu_auto_render_size();
+        if (automatic.width) {
+            return Size{automatic.width, automatic.height};
+        }
         Size s;
         if (const char* env = std::getenv("BB_MOVIE_SIZE")) {
             if (std::sscanf(env, "%ux%u", &s.width, &s.height) != 2 || s.width < 64 || s.height < 64 ||
@@ -67,6 +72,25 @@ std::uint64_t FindScratch(std::uint64_t base) {
 bool DisplaySize(std::uint32_t& width, std::uint32_t& height) {
     width = Display().width;
     height = Display().height;
+    return width != 0;
+}
+
+bool GameResolution(std::uint32_t& width, std::uint32_t& height) {
+    static const Size size = [] {
+        const auto automatic = bbgpu_auto_render_size();
+        if (automatic.width) {
+            return Size{automatic.width, automatic.height};
+        }
+        unsigned w = 0, h = 0;
+        const char* res = std::getenv("BB_GAME_RES");
+        if (res && std::sscanf(res, "%ux%u", &w, &h) == 2 && w >= 640 && h >= 360 &&
+            (w != 1920 || h != 1080)) {
+            return Size{w & ~1u, h & ~1u};
+        }
+        return Size{};
+    }();
+    width = size.width;
+    height = size.height;
     return width != 0;
 }
 

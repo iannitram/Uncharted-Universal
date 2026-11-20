@@ -7,12 +7,19 @@
 extern "C" {
 #endif
 typedef struct {
+    uint32_t width, height;
+} BbRenderSize;
+
+typedef struct {
     const char *title;          /* window title */
     const char *serial;         /* CUSA id, names the pipeline cache */
     const char *user_dir;       /* pipeline cache/logs directory */
     uint32_t sdk_version;       /* from the eboot's procparam */
     uint32_t psf_attributes;    /* param.sfo ATTRIBUTE */
     int32_t width, height;      /* initial window size */
+    /* Optional: called with the initial window's pixel size before creating the presenter. */
+    BbRenderSize (*prepare_render)(uint32_t width, uint32_t height, void *context);
+    void *render_context;
 } BbGpuConfig;
 /* Registers kernel event queues (needed with or without graphics). */
 void bbgpu_register_kernel(void);
@@ -20,6 +27,8 @@ void bbgpu_register_kernel(void);
 void bbnet_configure(const char *app0, const char *serial, const char *title, const char *app_ver);
 /* Creates window, Vulkan device, presenter and GPU command processor. */
 int bbgpu_init(const BbGpuConfig *config);
+/* Dimensions applied by prepare_render, or zero for an unpatched or explicit launch. */
+BbRenderSize bbgpu_auto_render_size(void);
 /* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */

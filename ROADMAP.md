@@ -74,7 +74,7 @@ How it was made: the shadPS4 fork's `shadps4.exe --extract-pkg <pkg> --extract-d
 | M21 resolution independence | 1.14 `render_size` (done, PR #294), 1.28 `aspect` (done, #305: pure Rust aspect-math module in `crates/core` with unit tests), M21a #432 (in progress: render size chosen from the display or window), M21b #433 (HUD/menu anchoring in `gpu/`), M21c #434 (FOV rule), M21d #435 (video letter/pillarbox), M21e #436 (runtime resize, presenter-only rescale plus restart prompt for a full re-render) |
 
 Game-side pieces for M21 resolution independence (#297, carrying #14):
-- M21a (#432): render size chosen from the display or window within the memory ceiling, via `render_size` (1.14).
+- M21a (#432): the Windows native loader chooses the startup render size from SDL window pixels via `aspect` (1.28) and `render_size` (1.14), bounded by the game and direct memory budgets. Tested with synthetic windows and executable images, including incomplete movie patch patterns that must fall back without changing the image. Projector and Strix Halo gameplay checks remain `needs-owner-device`.
 - M21b (#433): HUD, menus, pause and map anchoring in `gpu/` to a safe area, not stretched.
 - M21c (#434): camera FOV rule: Hor+ for wider screens, Vert+ or kept horizontal FOV for taller screens.
 - M21d (#435): pre-rendered video and cutscenes letterboxed or pillarboxed to their own aspect, with pillarbox only as a fallback.
