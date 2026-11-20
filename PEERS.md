@@ -5,6 +5,21 @@ the player's own decrypted dump. This file records where other repositories
 already provide platform work we can study or adapt. The machine-readable
 `peer:` lines remain in [SPEC.md](SPEC.md#prior-art).
 
+## Shader scalar and conversion imports (#427, partial)
+
+The shadPS4 GPL-2.0-or-later source notices remain in each adopted file:
+
+| Source | Imported boundary |
+|---|---|
+| [#5723, abe42da9e09a86a5963f5d8699fb0d6151d3c6c2](https://github.com/shadps4-emu/shadPS4/commit/abe42da9e09a86a5963f5d8699fb0d6151d3c6c2) | `frontend/translate/scalar_alu.cpp` and `translate.h`: S_LSHR_B64 dispatch and lowering (the patch is scalar despite the PR title) |
+| [#5724, f3687cc400d77736b2a7ef1904a1302e17f9441b](https://github.com/shadps4-emu/shadPS4/commit/f3687cc400d77736b2a7ef1904a1302e17f9441b) | Same files: S_BFM_B64 dispatch and lowering |
+| [#5725, 312cfbae77821627aa511bdee8717e1b7c3c9a23](https://github.com/shadps4-emu/shadPS4/commit/312cfbae77821627aa511bdee8717e1b7c3c9a23) | `scalar_alu.cpp`: U32 shift counts for the three scalar 64-bit shifts |
+| [#5719, 1f1f4c6a5021fb656df0411c1da79b267115a327](https://github.com/shadps4-emu/shadPS4/commit/1f1f4c6a5021fb656df0411c1da79b267115a327) | `frontend/format.cpp`: U32-to-F32 metadata for VOP3 byte conversions 401–404; unrelated atomic TODO removal excluded |
+
+The #5714 floating-point atomic fallback is deferred; this partial import does
+not close #427 or claim shader/device acceptance. Exact production pointers and
+the remaining control-flow validation are in [the work brief](docs/work-briefs/427-shader.md).
+
 ## Shared save-sync dependency
 
 [iannitram/save-relay](https://github.com/iannitram/save-relay) owns save syncing
