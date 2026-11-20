@@ -884,6 +884,7 @@ fn direct_play_passes_saved_prompt_choices_to_the_runtime_child() {
         let runner = RuntimeRunner {
             program: "synthetic-runtime".into(),
             extra_args: vec![],
+            relay_prompt_stdio: false,
             host: vec![],
         };
         let cmd = runner.command(&env, None);
