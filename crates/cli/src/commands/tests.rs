@@ -140,7 +140,10 @@ fn play_plan_uses_the_selected_save_slot_the_profile_and_the_players_variables()
     let install = AppDirs::new(&vars).install("u2");
     let user_dir = saves::user_dir(ctx.os, &vars, &install).unwrap();
     assert_eq!(plan.install, install);
-    assert_eq!(plan.saves_dir, user_dir.join("Uncharted 2"));
+    assert_eq!(
+        saves::mapped_save_dir(Game::U2, &plan.session(ctx.os).env(Game::U2).unwrap()).unwrap(),
+        user_dir.join("Uncharted 2")
+    );
     assert_eq!(plan.program, dir.path().join("my-run"));
     assert_eq!(plan.paths.data_dir, install);
     assert_eq!(plan.paths.out_dir, install.join("out"));
@@ -198,6 +201,7 @@ fn the_runner_clears_ld_preload_and_passes_extra_arguments() {
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
         extra_args: vec!["--timeout".into(), "5".into()],
+        relay_prompt_stdio: false,
         host: host_env::changes(steam.os, |name| steam.var(name)),
     };
     let command = runner.command(
@@ -236,6 +240,7 @@ fn off_linux_the_runner_leaves_the_environment_alone() {
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
         extra_args: Vec::new(),
+        relay_prompt_stdio: false,
         host: host_env::changes(windows.os, |name| windows.var(name)),
     };
     assert!(runner.host.is_empty());
@@ -249,6 +254,7 @@ fn the_runner_passes_the_guest_argv_file_before_the_extra_arguments() {
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
         extra_args: vec!["--timeout".into(), "5".into()],
+        relay_prompt_stdio: false,
         host: Vec::new(),
     };
     let file = Path::new("out").join("guest-argv.txt");
@@ -271,31 +277,13 @@ fn a_missing_runtime_is_a_launch_error() {
     let runner = RuntimeRunner {
         program: dir.path().join("missing-runtime"),
         extra_args: Vec::new(),
+        relay_prompt_stdio: false,
         host: Vec::new(),
     };
     assert!(matches!(
         runner.run(Game::U1, &[], None),
         Err(Error::Launch(_))
     ));
-}
-
-#[test]
-fn the_local_relay_says_save_relay_is_not_linked() {
-    let path = Path::new("saves");
-    assert_eq!(
-        LocalRelay.pull(path, None).unwrap(),
-        Sync::Done(NO_RELAY.into())
-    );
-    assert_eq!(
-        LocalRelay.push(path, Some(Keep::Local)).unwrap(),
-        Sync::Done(NO_RELAY.into())
-    );
-}
-
-#[test]
-fn a_conflict_takes_keep_else_this_device_when_nobody_can_answer() {
-    assert_eq!(choose_keep(Some(Keep::Server), false), Keep::Server);
-    assert_eq!(choose_keep(None, false), Keep::Local);
 }
 
 #[test]
@@ -844,4 +832,32 @@ fn generate_art_writes_the_collection_art() {
     assert_eq!(out.code, OK, "{}", out.stderr);
     assert!(target.join("u1.jpg").is_file());
     assert_eq!(exec(&["generate-art", "a", "b"], &ctx()).code, USAGE);
+}
+
+#[test]
+fn an_unbundled_local_run_preserves_the_legacy_empty_save_mapping() {
+    struct LegacyRunner;
+    impl Runner for LegacyRunner {
+        fn run(&self, _: Game, env: &[(String, String)], _: Option<&Path>) -> Result<i32> {
+            assert!(env
+                .iter()
+                .any(|(key, value)| key == "BB_SAVEDATA_DIRS" && value.is_empty()));
+            Ok(0)
+        }
+    }
+    let dir = TempDir::new("local-legacy-mapping");
+    let mut ctx = home(dir.path());
+    ctx.env.insert("BB_SAVEDATA_DIRS".into(), String::new());
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    let played = launch::play(
+        &UnbundledRelay,
+        &LegacyRunner,
+        Game::U2,
+        &plan.session(Os::Linux),
+        &|_, _| panic!("local play cannot conflict"),
+    )
+    .unwrap();
+    assert_eq!(played.exit_code, 0);
+    assert!(matches!(played.pulled, Sync::LocalOnly(_)));
+    assert!(matches!(played.pushed, Sync::LocalOnly(_)));
 }

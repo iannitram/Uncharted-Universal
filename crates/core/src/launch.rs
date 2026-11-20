@@ -1,6 +1,6 @@
 //! Play (SPEC.md M7, M10, M18): pull the save, start the game with the device profile and
 //! `run_env`, wait for it to quit, push the save. save-relay does the syncing through `Relay`
-//! (implemented by `relay.rs` once save-relay's library is linked; planned, not in the tree);
+//! (the bundled desktop CLI adapter is in `relay.rs`);
 //! the game is started through `Runner`; both are traits so the flow is tested with fakes.
 //! Replaces `main` of `run.py`: the LOADEXEC loop (a game that starts another executable), the
 //! path variables it sets and the `bb-probe` command line. The shape is copied from
@@ -38,6 +38,8 @@ pub enum Sync {
     Done(String),
     /// The server is unreachable: play on (pull) or push next time (push).
     Offline,
+    /// Sync is unavailable until setup, or the platform has no packaged relay yet.
+    LocalOnly(&'static str),
     /// Both sides changed since the last sync; nothing was touched. The two cards are what the
     /// side-by-side prompt shows (boxed: a card holds a picture).
     Conflict(Box<SideBySide>),
@@ -52,8 +54,13 @@ pub enum Keep {
 
 /// save-relay, as the launcher uses it.
 pub trait Relay {
-    fn pull(&self, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
-    fn push(&self, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
+    /// Unbundled/local-only builds do not need a relay-compatible save mapping.
+    fn requires_save_mapping(&self) -> bool {
+        true
+    }
+
+    fn pull(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
+    fn push(&self, game: Game, slot: u8, saves_dir: &Path, resolve: Option<Keep>) -> Result<Sync>;
 }
 
 /// The runtime, started as a child process.
@@ -67,6 +74,8 @@ pub trait Runner {
 /// What a play session did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Played {
+    /// The final title when the collection switched executables.
+    pub game: Game,
     pub pulled: Sync,
     pub exit_code: i32,
     pub pushed: Sync,
@@ -120,7 +129,7 @@ pub struct Session<'a> {
     /// The variables the player set; a name here always keeps the player's value.
     pub player_env: &'a BTreeMap<String, String>,
     pub paths: &'a Paths,
-    /// The OS the game runs on: off Windows the runtime gets `BB_SAVEDATA_DIRS`.
+    /// The OS the game runs on.
     pub os: Os,
 }
 
@@ -129,21 +138,19 @@ impl Session<'_> {
     /// defaults, the device profile, the settings, `render_size` heaps, the player's own
     /// variables), then the path variables of `run.py` `main` the player did not set
     /// (`BB_CONFIG`, `BB_INPUT_CONFIG`, `BB_GPU_USER_DIR`, `BB_USER_DIR`, and `BB_SAVEDATA_DIRS`
-    /// off Windows), then `BB_LOADEXEC_FILE` and `BB_EXE`, which `run.py` always sets.
+    /// on desktop), then `BB_LOADEXEC_FILE` and `BB_EXE`, which `run.py` always sets.
     pub fn env(&self, game: Game) -> Result<Vec<(String, String)>> {
         let built = run_env::build_env(game, self.settings, self.profile, self.player_env)?;
         let mut env: BTreeMap<String, String> = built.into_iter().collect();
         let paths = self.paths;
         let text = |p: PathBuf| p.to_string_lossy().into_owned();
-        let mut defaults = vec![
+        let defaults = [
             ("BB_CONFIG", text(paths.data_dir.join("bbport.ini"))),
             ("BB_INPUT_CONFIG", text(paths.data_dir.join("input.ini"))),
             ("BB_GPU_USER_DIR", text(paths.user_dir.clone())),
             ("BB_USER_DIR", text(paths.user_dir.clone())),
+            ("BB_SAVEDATA_DIRS", saves::mapping(&paths.user_dir)),
         ];
-        if self.os != Os::Windows {
-            defaults.push(("BB_SAVEDATA_DIRS", saves::mapping(&paths.user_dir)));
-        }
         for (name, value) in defaults {
             env.entry(name.to_owned()).or_insert(value);
         }
@@ -192,6 +199,17 @@ pub fn parse_loadexec(text: &str) -> Result<LoadExec> {
 /// exit code, or 101 without the file, is returned as it is. The player's `BB_U1_DIRECT=1`
 /// starts U1 with the collection menu's arguments (`eboot.bin ispartofuccollection`).
 pub fn run_until_quit(runner: &dyn Runner, game: Game, session: &Session) -> Result<i32> {
+    run_collection(game, session, |title, env, guest| {
+        let code = runner.run(title, env, guest)?;
+        Ok((code, code))
+    })
+}
+
+fn run_collection<T>(
+    game: Game,
+    session: &Session,
+    mut run: impl FnMut(Game, &[(String, String)], Option<&Path>) -> Result<(i32, T)>,
+) -> Result<T> {
     let loadexec = session.paths.loadexec_file();
     let guest_file = session.paths.guest_argv_file();
     let mut game = game;
@@ -224,9 +242,9 @@ pub fn run_until_quit(runner: &dyn Runner, game: Game, session: &Session) -> Res
             }
         }
         remove_if_present(&loadexec)?;
-        let code = runner.run(game, &env, guest.as_deref())?;
+        let (code, result) = run(game, &env, guest.as_deref())?;
         if code != LOADEXEC_EXIT || !loadexec.is_file() {
-            return Ok(code);
+            return Ok(result);
         }
         let bytes = fs::read(&loadexec)?;
         let next = parse_loadexec(&String::from_utf8_lossy(&bytes))?;
@@ -262,31 +280,61 @@ pub fn play(
     relay: &dyn Relay,
     runner: &dyn Runner,
     game: Game,
-    saves_dir: &Path,
     session: &Session,
-    choose: &dyn Fn(&Sync) -> Keep,
+    choose: &dyn Fn(&str, &SideBySide) -> Result<Keep>,
 ) -> Result<Played> {
-    let pulled = sync(|resolve| relay.pull(saves_dir, resolve), choose, "pull")?;
-    let exit_code = run_until_quit(runner, game, session)?;
-    let pushed = sync(|resolve| relay.push(saves_dir, resolve), choose, "push")?;
-    Ok(Played {
-        pulled,
-        exit_code,
-        pushed,
+    run_collection(game, session, |title, env, guest| {
+        let user = env
+            .iter()
+            .find(|(key, _)| key == "BB_USER_DIR")
+            .map(|(_, value)| Path::new(value))
+            .unwrap_or(&session.paths.user_dir);
+        // Snapshot the namespace before play: changing the selection while a game runs must
+        // not upload this title's save to a different slot on exit or a conflict retry.
+        let folder = if relay.requires_save_mapping() {
+            saves::mapped_save_dir(title, env)?
+        } else {
+            user.to_path_buf()
+        };
+        // Use the runtime's snapshotted slot folder even if the selection changed since
+        // its environment was built. Custom mappings retain the explicit selection.
+        let slot = (1..=saves::MOST)
+            .find(|&number| saves::slot_dir(user, title, number) == folder)
+            .unwrap_or_else(|| saves::selected(user, title));
+        let pulled = sync(
+            |keep| relay.pull(title, slot, &folder, keep),
+            choose,
+            "pull",
+        )?;
+        let exit_code = runner.run(title, env, guest)?;
+        let pushed = sync(
+            |keep| relay.push(title, slot, &folder, keep),
+            choose,
+            "push",
+        )?;
+        Ok((
+            exit_code,
+            Played {
+                game: title,
+                pulled,
+                exit_code,
+                pushed,
+            },
+        ))
     })
 }
 
 /// One pull or push: once as it is, once more with the player's answer to a conflict.
 fn sync(
     step: impl Fn(Option<Keep>) -> Result<Sync>,
-    choose: &dyn Fn(&Sync) -> Keep,
+    choose: &dyn Fn(&str, &SideBySide) -> Result<Keep>,
     what: &str,
 ) -> Result<Sync> {
     let first = step(None)?;
-    if !matches!(first, Sync::Conflict(_)) {
+    let Sync::Conflict(cards) = first else {
         return Ok(first);
-    }
-    let keep = choose(&first);
+    };
+    let keep = choose(what, &cards)?;
     match step(Some(keep))? {
         Sync::Conflict(_) => Err(Error::Launch(format!(
             "save-relay still reports a conflict after the {what} was resolved"

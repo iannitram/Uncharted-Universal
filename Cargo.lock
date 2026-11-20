@@ -5104,6 +5104,7 @@ name = "uncharted_core"
 version = "0.3.15"
 dependencies = [
  "chacha20poly1305",
+ "chrono",
  "fs4",
  "getrandom 0.2.16",
  "hmac",

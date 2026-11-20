@@ -14,7 +14,8 @@
 //! `saves_from: "launcher"`, so the folder it syncs is whatever `--saves-dir` the launcher
 //! passes, and the launcher passes [`relay_saves_dir`], the folder of the game's selected slot.
 //! The include patterns are relative to that folder, so a save has the same shape in every slot
-//! and moves between devices whichever slot each device has selected.
+//! and each slot moves only to the same numbered slot on another device. The adapter passes
+//! both this folder and `--slot <n>` so server current saves/history remain separate.
 
 use crate::error::{Error, Result};
 use crate::games::Game;
@@ -67,6 +68,31 @@ pub fn split_saves(user_dir: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(moved)
+}
+
+/// Starting with the Windows relay package, the runtime and the relay use the
+/// selected slot together. Existing saves from the old unmapped layout become
+/// slot 1. Refuse ambiguous data before moving anything. The source and destination
+/// are both inside the user tree; a rename failure leaves that entry intact.
+pub fn migrate_windows_slots(user: &Path) -> Result<()> {
+    let mut moves = std::collections::BTreeMap::new();
+    for title in title_folders(&user.join("savedata"))? {
+        for from in sorted_all(&title)? {
+            let name = from.file_name().unwrap_or_default();
+            let Some(game) = game_of_entry(&name.to_string_lossy()) else {
+                continue;
+            };
+            let to = slot_dir(user, game, 1).join(name);
+            if to.try_exists()? || moves.insert(to, from).is_some() {
+                return Err(Error::Saves(format!("Two legacy or slot-1 saves for {} share an entry name. Keep both and resolve the duplicate before playing.", game.name())));
+            }
+        }
+    }
+    for (to, from) in moves {
+        fs::create_dir_all(to.parent().expect("a slot entry has a parent"))?;
+        fs::rename(from, to)?;
+    }
+    Ok(())
 }
 
 /// `savedata/*/*` that are folders, not hidden and not `*.memory`, in name order.
@@ -188,23 +214,56 @@ pub fn is_synced(game: Game, rel_path: &str) -> bool {
 /// save-relay). The ids are `uncharted-1`, `uncharted-2` and `uncharted-3`. The include
 /// patterns are relative to the folder of the selected save slot ([`relay_saves_dir`]).
 pub fn relay_manifest(game: Game) -> String {
-    let (id, name) = match game {
-        Game::U1 => ("uncharted-1", "Uncharted: Drake's Fortune"),
-        Game::U2 => ("uncharted-2", "Uncharted 2: Among Thieves"),
-        Game::U3 => ("uncharted-3", "Uncharted 3: Drake's Deception"),
-    };
-    format!(
-        "{{\"format\":1,\"id\":\"{id}\",\"name\":{name},\"saves\":{{}},\"saves_from\":\"launcher\",\
-         \"include\":[\"{prefix}*/**\"],\"exclude\":[\"**/*.tmp\"]}}",
-        name = Value::from(name),
-        prefix = save_prefix(game),
-    )
+    match game {
+        Game::U1 => include_str!("../../../packaging/save-relay/uncharted-1.json"),
+        Game::U2 => include_str!("../../../packaging/save-relay/uncharted-2.json"),
+        Game::U3 => include_str!("../../../packaging/save-relay/uncharted-3.json"),
+    }
+    .trim_end()
+    .to_owned()
 }
 
 /// The `--saves-dir` the launcher passes save-relay for a game: the folder of its selected
 /// slot under `user_dir`. Changing the selected slot changes what syncs.
 pub fn relay_saves_dir(user_dir: &Path, game: Game) -> PathBuf {
     slot_dir(user_dir, game, selected(user_dir, game))
+}
+
+/// Use the exact user folder and first matching prefix that the runtime receives.
+/// A custom mapping which splits this title across folders needs separate manifests.
+pub fn mapped_save_dir(game: Game, env: &[(String, String)]) -> Result<PathBuf> {
+    let get = |name| {
+        env.iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    let user = get("BB_USER_DIR")
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| Error::Saves("The runtime has no save folder.".into()))?;
+    let prefix = save_prefix(game);
+    for item in get("BB_SAVEDATA_DIRS").unwrap_or_default().split(';') {
+        let Some((key, folder)) = item.split_once('=') else {
+            continue;
+        };
+        if prefix.starts_with(key) {
+            let path = Path::new(folder);
+            if !folder.is_empty()
+                && path
+                    .components()
+                    .all(|p| matches!(p, std::path::Component::Normal(_)))
+            {
+                return Ok(Path::new(user).join(path));
+            }
+            break;
+        }
+        if key.starts_with(prefix) {
+            break;
+        }
+    }
+    Err(Error::Saves(format!(
+        "The runtime's BB_SAVEDATA_DIRS does not map all {} saves to one folder.",
+        game.name()
+    )))
 }
 
 // ---- save slots (scripts/save_slots.py, issue #71) ----

@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-19 Save Relay review fixes (#445): every pull/push/conflict retry carries its numbered slot and checks the matching server identity; a title keeps that namespace through exit. Unsynced platform builds preserve local legacy save layouts. Synthetic process coverage checks independent histories for slots 1 and 3 and an empty slot 5; shared integration safeguards tracked in save-relay#301. Hardware round trips and launcher conflict UI remain open.
+- 2026-11-19 Windows Save Relay (9.01, #163): the zip bundles v1.0.0-rc.2 and its three title manifests. Play syncs the active save folder around each title, accepts explicit conflict choices and continues offline. Launcher conflict display and release-device round trips remain open.
 - 2026-11-20 Owner instruction: fix save-relay-related defects in this build, then report the problem and implemented fix in a linked iannitram/save-relay issue; recorded in AGENTS.fork.md and the lane roadmap.
 
 - 2026-11-20 Coordination (#437): documented the owner-requested Flint and Terra lanes, bounded #427 into five review units, merged the save-relay feature id into saves, linked M21a-e to #432-#436 and carried #14 under #297. Refreshed issue feature labels and added a dated code-map checkpoint that separates current source from older snapshots. No implementation or device milestone marked complete.

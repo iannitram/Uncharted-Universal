@@ -1,0 +1,1 @@
+{"format":1,"id":"uncharted-2","name":"Uncharted 2: Among Thieves","saves":{},"saves_from":"launcher","include":["SAVEDATA02*/**"],"exclude":["**/*.tmp","**/.save-relay-*"]}

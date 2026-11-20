@@ -7,7 +7,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 # The Rust faces, with the host's (MSVC) toolchain, before CLANG64 comes first on PATH. The C
-# runtime is linked in, so a player needs no Visual C++ redistributable.
+# runtime is linked into these faces. The separately released Save Relay helper needs the x64 VC++ runtime.
 export CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS="${CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS:-} -C target-feature=+crt-static"
 # shellcheck source=packaging/rust_faces.sh
 source packaging/rust_faces.sh
@@ -31,6 +31,7 @@ done
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
     awk '/\/clang64\/bin\// {print $3}' | sort -u > out/bundled-dlls.txt
 while read -r dll; do cp -u "$dll" "$dest/bin/"; done < out/bundled-dlls.txt
+python3 packaging/windows/bundle_relay.py "$dest" out/component-cache
 cp LICENSE "$dest/"
 cp packaging/windows/README-Uncharted.txt "$dest/README.txt"
 cp packaging/windows/licenses/*.txt "$dest/licenses/" 2>/dev/null || true
