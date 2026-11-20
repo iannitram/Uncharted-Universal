@@ -11,3 +11,13 @@ This fork has its own pipeline files beside upstream's. README.md describes Unch
 7. **A failed job** gets a comment on the issue and the issue moves up one size.
 8. **No game files, ever** (#23). No private details in code, commits or PR text. Commit as the no-reply identity.
 9. **Upstream:** bug reports for solid findings are fine and say they are AI-assisted; code PRs to upstream need the owner's word. Nothing goes to shadPS4 (anti-AI).
+
+## Save Relay fixes (owner instruction, 2026-11-20)
+
+For every save-relay-related defect, first fix it in this build. Then open an issue
+in `iannitram/save-relay` explaining the observed problem, root cause, exact fix,
+validation and remaining limits, with links to the Uncharted issue and PR. Link
+the Save Relay issue back from the Uncharted work so the shared project can adopt
+the correction too. Distinguish an integration defect from a defect proven in the
+shared core, and do not claim an untested shared-core reproduction. This reporting
+step is required even when the immediate fix lands only in this build.

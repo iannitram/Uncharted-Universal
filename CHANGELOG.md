@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 Owner instruction: fix save-relay-related defects in this build, then report the problem and implemented fix in a linked iannitram/save-relay issue; recorded in AGENTS.fork.md and the lane roadmap.
+
 - 2026-11-20 Coordination (#437): documented the owner-requested Flint and Terra lanes, bounded #427 into five review units, merged the save-relay feature id into saves, linked M21a-e to #432-#436 and carried #14 under #297. Refreshed issue feature labels and added a dated code-map checkpoint that separates current source from older snapshots. No implementation or device milestone marked complete.
 
 - 2026-11-18 Launcher 1.0 minimums (owner ruling 2026-11-18, PR #425): "Minimum launcher 1.0 steps being detected button overlays, full controller support, and save relay built and incorporated should be the same for every platform of every universal app" and "Let's build the whole launcher with the relay into it now. That is all 1.0". On Linux/SteamOS, Windows, the Mac and the iPhone or iPad, 1.0 now has detected button prompts (new 3.23 #439 and 8.12 #441; #11 folds in and leaves the after-1.0 list), full controller support (3.10 #370 and 8.06 #410 tightened; new 2.12 #438, the launcher by controller) and save-relay on in every release build with setup and sign-in in the launcher (9.01 #163, 9.03 #252 and 9.04 #251 tightened; new 9.05 #440). Android stays 1.x. SPEC M16 and M18 widen and the Xbox prompts leave the Won'ts; the SPEC approval is pending the owner's re-approval. Docs only.

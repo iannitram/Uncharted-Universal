@@ -102,6 +102,9 @@ The owner requested one local Flint lane and one hosted lane (GPT-6.1 Terra, sel
 in place of Luna), with the coordinator preparing exact file-and-line briefs,
 reviewing changes, assigning focused repairs, and merging only after checks pass.
 Each lane works from an unclaimed, unblocked issue on its own branch/worktree.
+Owner instruction 2026-11-20: fix save-relay-related defects in this build, then
+open a matching `iannitram/save-relay` issue explaining the problem and fix, with
+linked evidence and tests. `AGENTS.fork.md` records this handoff requirement.
 Existing PRs #423, #445, #446 and #447 retain their owners; their build-header,
 relay, controller and resolution files are not parallel implementation targets.
 
