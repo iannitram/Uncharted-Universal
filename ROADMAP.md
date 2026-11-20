@@ -122,6 +122,18 @@ The #5714 fallback is tracked separately in #450 and needs a dependency assessme
 its control-flow/device-feature changes must not be transplanted as a small
 local-model task. This is a work breakdown, not completed code.
 
+Two further audits are preserved before implementation: [#299's FFmpeg build and
+packaging brief](docs/work-briefs/299-ffmpeg.md) separates actual staged binary
+provenance from merely shipping a license text; [#428's TSC brief](docs/work-briefs/428-tsc.md)
+splits the guest clock contract, Rust instruction rewriting, and coordinated
+guest/GPU timestamp wiring. Neither is a direct local-model import: #428's peer
+uses a different patcher, and #299 needs a reproducible build and dependency audit.
+Their parent issues remain open; no compatibility, timing or gameplay result is
+claimed from these source audits. The [#431 save-layout brief](docs/work-briefs/431-save-layout.md)
+also records why a shared save-folder option cannot be added as a core-only helper:
+folder-level listing/copy/delete assumes one game per folder. Coordinate the
+layout and manifest change with the active relay/controller launcher PRs first.
+
 The #297 resolution umbrella carries the earlier #14 16:10 requirements; its
 implementation order is #432, then #433/#434/#435, with #436 retaining the runtime
 resize gate. These are outside the first two lane assignments. Feature `saves`
