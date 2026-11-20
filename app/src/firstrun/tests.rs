@@ -584,3 +584,23 @@ fn submitted_controller_drafts_survive_retry_and_are_separate_per_field() {
     page.handle_pad(Input::Activate, "");
     assert!(page.view().editor.unwrap().text.is_empty());
 }
+
+#[test]
+fn cancelling_a_rejected_controller_submission_keeps_the_committed_hub() {
+    let mut page = FirstRun::new(None, false);
+    page.handle(DOWN);
+    page.handle(A);
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.field("192.168.1.20:47120");
+    page.handle(B);
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.handle_pad(Input::Activate, "");
+    page.editor.as_mut().unwrap().text = "invalid address".into();
+    let footer = page.view().editor.unwrap().rows.len();
+    editor_press(&mut page, footer, 1);
+    assert!(!page.view().error.is_empty());
+    page.handle_pad(Input::Back, "");
+    assert_eq!(page.view().field_text, "192.168.1.20:47120");
+    page.handle_pad(Input::Activate, "");
+    assert_eq!(page.view().editor.unwrap().text, "192.168.1.20:47120");
+}

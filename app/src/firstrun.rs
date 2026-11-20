@@ -374,16 +374,19 @@ impl FirstRun {
 
     /// Enter in the text field: a dump folder, or a hub's address.
     pub fn field(&mut self, text: &str) -> Job {
-        self.edit_field(text);
         let text = text.trim();
         match &self.step {
             Step::PickDump { .. } if text.is_empty() => {
                 self.error = "Type the folder that holds the game files.".into();
                 Job::None
             }
-            Step::PickDump { .. } => self.check(PathBuf::from(text)),
+            Step::PickDump { .. } => {
+                self.edit_field(text);
+                self.check(PathBuf::from(text))
+            }
             Step::FindHub { .. } => match client::hub_address(text) {
                 Ok(hub) => {
+                    self.edit_field(text);
                     self.go(Step::Code {
                         hub,
                         digits: Digits::default(),
