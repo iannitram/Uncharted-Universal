@@ -12,6 +12,7 @@ no_includes = true
 [defines]
 # Only x86-64 hosts run guest code (src/abi.rs).
 "target_arch = x86_64" = "__x86_64__"
+"target_os = linux" = "__linux__"
 
 [export]
 # The benchmark glue keeps its own declarations (src/runtime_benchmark.c, #173), and so does

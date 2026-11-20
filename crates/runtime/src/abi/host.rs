@@ -76,16 +76,26 @@ mod loader {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub use crate::memory::linux::{runtime_memory_report, runtime_memory_resolve};
 
+    // Rust on Linux x86-64 since 3.13 (`crate::thread`, `crate::fiber`); Windows keeps the C files.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub use crate::fiber::{runtime_fiber_report, runtime_fiber_resolve};
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub use crate::thread::{runtime_thread_report, runtime_thread_resolve};
+
     extern "C" {
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
 
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_thread_report();
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn runtime_memory_report();
+        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_fiber_report();
 
         pub fn runtime_quit(code: c_int) -> !;
@@ -142,7 +152,17 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         // SAFETY: the sync resolvers take a NUL-terminated name and only read it.
         Some(unsafe { resolve(name.as_ptr()) }).filter(|&address| address != 0)
     };
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let thread_hit = || crate::thread::resolve(name);
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    let thread_hit = || None;
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    let fiber_hit = || crate::fiber::resolve(name);
+    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    let fiber_hit = || None;
+
     ask(sync::runtime_mutex_resolve)
+        .or_else(thread_hit)
         .or_else(|| crate::content::resolve(name))
         .or_else(|| crate::time::resolve(name))
         .or_else(|| ask(sync::runtime_sema_resolve))
@@ -154,6 +174,7 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| crate::audio::resolve(name))
         .or_else(|| ask(crate::savedata::runtime_savedata_resolve))
         .or_else(|| crate::file::resolve(name))
+        .or_else(fiber_hit)
 }
 
 /// The modules' report lines, in `runtime.c`'s order.

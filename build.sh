@@ -176,11 +176,14 @@ UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf 
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-# Linux and Android build the memory module from crates/runtime (piece 3.12), so
-# src/runtime_memory.c is Windows only.
+# Linux and Android build memory (3.12) and Linux x86-64 builds fiber and thread (3.13)
+# from crates/runtime, so those C files are Windows only.
 runtime=()
 for source in src/runtime*.c; do
-    if [[ $source != src/runtime_memory.c ]]; then runtime+=("$source"); fi
+    case "$source" in
+        src/runtime_memory.c|src/runtime_fiber.c|src/runtime_thread.c) ;;
+        *) runtime+=("$source") ;;
+    esac
 done
 # Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
 # with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only

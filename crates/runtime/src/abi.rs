@@ -39,8 +39,9 @@ pub mod libc;
 /// moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09); 7:
 /// `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03);
 /// 8: `src/runtime_kernel.c` and `src/runtime_services.c` moved to [`crate::kernel`] and
-/// [`crate::services`] (3.11).
-pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 8;
+/// [`crate::services`] (3.11); 9: `src/runtime_thread.c` and `src/runtime_fiber.c` moved to
+/// [`crate::thread`] and [`crate::fiber`] on Linux (3.13).
+pub const UNCHARTED_RUNTIME_ABI_VERSION: u32 = 9;
 
 include!(concat!(env!("OUT_DIR"), "/nid_table.rs"));
 
@@ -178,7 +179,7 @@ mod tests {
 
     #[test]
     fn version_is_raised_with_each_module() {
-        assert_eq!(ffi::uncharted_runtime_version(), 8);
+        assert_eq!(ffi::uncharted_runtime_version(), 9);
         assert_eq!(
             ffi::uncharted_runtime_version(),
             UNCHARTED_RUNTIME_ABI_VERSION

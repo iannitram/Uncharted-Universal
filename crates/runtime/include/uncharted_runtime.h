@@ -16,8 +16,9 @@
 // moved to [`crate::audio`] (3.07); 6: `src/runtime_file.c` moved to [`crate::file`] (3.09); 7:
 // `src/runtime_mutex.c`, `runtime_sema.c` and `runtime_rwlock.c` moved to [`crate::sync`] (3.03);
 // 8: `src/runtime_kernel.c` and `src/runtime_services.c` moved to [`crate::kernel`] and
-// [`crate::services`] (3.11).
-#define UNCHARTED_RUNTIME_ABI_VERSION 8
+// [`crate::services`] (3.11); 9: `src/runtime_thread.c` and `src/runtime_fiber.c` moved to
+// [`crate::thread`] and [`crate::fiber`] on Linux (3.13).
+#define UNCHARTED_RUNTIME_ABI_VERSION 9
 
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
@@ -165,6 +166,21 @@ struct RuntimeDisplaySize runtime_display_auto(uint8_t *image,
                                                uint64_t image_size,
                                                uint32_t width,
                                                uint32_t height);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// For fault reports (no allocation, any thread): the guest fiber running here, or null.
+const char *runtime_fiber_name_here(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// # Safety
+// `name` must be null or a valid NUL-terminated C string.
+uintptr_t runtime_fiber_resolve(const char *name);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+void runtime_fiber_report(void);
 #endif
 
 // Maps guest mount point `guest` on host directory `host` (a mount of the same name is
@@ -419,6 +435,61 @@ uintptr_t runtime_rwlock_resolve(const char *name);
 #if defined(__x86_64__)
 // The rwlock counters, one line on stdout.
 void runtime_rwlock_report(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uint64_t align);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// # Safety
+// `name` must be null or a valid NUL-terminated C string.
+void runtime_thread_attach_host(const char *name);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+const char *runtime_thread_name_here(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+void runtime_thread_attach_main(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+int32_t *runtime_errno(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// The PS4's floating-point state for guest code on this thread (MXCSR 0x9fc0, x87 control word 0x037f).
+void runtime_set_guest_fpu(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// Co-op: guest threads started by host libraries (NP matching/signaling threads).
+//
+// # Safety
+// `out` must be a valid writable pointer; `name` must be null or a valid NUL-terminated C string.
+int32_t runtime_thread_spawn(void **out,
+                             Option<GuestEntry> entry,
+                             void *argument,
+                             uint64_t stack,
+                             const char *name);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// # Safety
+// `thread` must be a handle returned by `runtime_thread_spawn`; `result` must be null or writable.
+int32_t runtime_thread_join_spawned(void *thread, void **result);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// # Safety
+// `name` must be null or a valid NUL-terminated C string.
+uintptr_t runtime_thread_resolve(const char *name);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+void runtime_thread_report(void);
 #endif
 
 #if defined(__x86_64__)

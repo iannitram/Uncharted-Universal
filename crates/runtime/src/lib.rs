@@ -78,6 +78,8 @@ pub mod content;
 pub mod cpu_patch;
 pub mod crash;
 pub mod display;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub mod fiber;
 pub mod file;
 pub mod kernel;
 // Left out of the header: src/runtime.h declares memory's symbols (src/runtime_memory.c is
@@ -102,5 +104,7 @@ pub mod savedata;
 pub mod services;
 #[cfg(target_arch = "x86_64")]
 pub mod sync;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+pub mod thread;
 pub mod time;
 pub mod trophy;

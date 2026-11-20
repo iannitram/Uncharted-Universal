@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 `fiber` and `thread` in Rust on Linux (3.13, #362): `crates/runtime/src/fiber.rs` and `thread.rs` replace `src/runtime_fiber.c` and `src/runtime_thread.c` on Linux x86-64 (ABI version 9), keeping `runtime_ndgi_open` in `src/runtime_fault.c` and Windows on the C files until 3.17. `uncharted_runtime` tests (317 unit + header/integration), clippy and fmt pass; Linux C/GPU build and AMD handheld thread check remain owed.
+
 - 2026-11-20 Shared launch-settings policy (#453, partial #444): core owns the existing display conversion, persisted display parser and profile rules; the app delegates its parser/profile policy and test conversion. CLI wiring is #454 and GUI launch remains parent work. Three focused core tests and core clippy pass; app tests are blocked locally by missing fontconfig/pkg-config. Based on controller PR #446; no end-to-end or device claim.
 
 - 2026-11-19 Launcher controller review fixes (#446): first-run folder and hub drafts survive submission, retry and cancellation without mixing fields; physical edits and controller edits share the committed draft. Direct CLI/Steam Play also applies the saved button-prompt choice, preserving explicit runtime environment overrides. Physical controller acceptance remains open.
