@@ -727,3 +727,33 @@ fn a_titles_slot_stays_fixed_through_conflicts_and_exit() {
         ]
     );
 }
+
+#[test]
+fn a_runtime_slot_mapping_wins_over_a_changed_selection() {
+    let fx = Fixture::new(&[(
+        "BB_SAVEDATA_DIRS",
+        "SAVEDATA02=Save slots/Uncharted 2/Slot 3",
+    )]);
+    saves::select(&fx.paths.user_dir, Game::U2, 1).unwrap();
+    let relay = FakeRelay::new(vec![done("pulled")], vec![done("pushed")]);
+    let runner = FakeRunner::new(vec![exit(0)]);
+    play(
+        &relay,
+        &runner,
+        Game::U2,
+        &fx.session(Os::Windows),
+        &never_asked,
+    )
+    .unwrap();
+    assert_eq!(
+        *relay.targets.borrow(),
+        vec![
+            (
+                Game::U2,
+                3,
+                saves::slot_dir(&fx.paths.user_dir, Game::U2, 3)
+            );
+            2
+        ]
+    );
+}

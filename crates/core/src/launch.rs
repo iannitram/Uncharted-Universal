@@ -291,12 +291,16 @@ pub fn play(
             .unwrap_or(&session.paths.user_dir);
         // Snapshot the namespace before play: changing the selection while a game runs must
         // not upload this title's save to a different slot on exit or a conflict retry.
-        let slot = saves::selected(user, title);
         let folder = if relay.requires_save_mapping() {
             saves::mapped_save_dir(title, env)?
         } else {
             user.to_path_buf()
         };
+        // Use the runtime's snapshotted slot folder even if the selection changed since
+        // its environment was built. Custom mappings retain the explicit selection.
+        let slot = (1..=saves::MOST)
+            .find(|&number| saves::slot_dir(user, title, number) == folder)
+            .unwrap_or_else(|| saves::selected(user, title));
         let pulled = sync(
             |keep| relay.pull(title, slot, &folder, keep),
             choose,
