@@ -13,8 +13,8 @@
 //! and hands the result to [`SettingsVm::tuned`].
 
 use crate::focus::{Grid, Nav};
-use crate::input_settings;
 use crate::screen::Input;
+use crate::{input_settings, prompts};
 use serde_json::Value;
 use uncharted_core::profile::{self, DeviceProfile};
 use uncharted_core::run_env;
@@ -58,6 +58,7 @@ pub struct Stored {
     pub upscale_preset: String,
     /// off, fsr3, dlss: `BB_FRAME_GEN`.
     pub frame_generation: String,
+    pub button_prompts: prompts::Choice,
     /// The two raw mouse values live in `<data>/input.ini`, alongside Python's bindings.
     pub mouse: input_settings::Settings,
 }
@@ -72,6 +73,7 @@ impl Stored {
             anti_aliasing: card.anti_aliasing.clone(),
             upscale_preset: card.upscale_preset.clone(),
             frame_generation: card.frame_generation.clone(),
+            button_prompts: self.button_prompts,
             mouse: self.mouse,
         }
     }
@@ -88,6 +90,7 @@ impl Stored {
             Choice::Upscaler => &self.anti_aliasing,
             Choice::Quality => &self.upscale_preset,
             Choice::FrameGeneration => &self.frame_generation,
+            Choice::ButtonPrompts => return self.button_prompts.id().to_owned(),
             Choice::RawMouse => return u8::from(self.mouse.raw).to_string(),
             Choice::AimSensitivity => return self.mouse.sensitivity(),
         }
@@ -96,6 +99,10 @@ impl Stored {
 
     fn set(&mut self, choice: Choice, value: String) {
         match choice {
+            Choice::ButtonPrompts => {
+                self.button_prompts = prompts::Choice::from_id(&value);
+                return;
+            }
             Choice::RawMouse => {
                 self.mouse.raw = value == "1";
                 return;
@@ -114,7 +121,7 @@ impl Stored {
             Choice::Upscaler => &mut self.anti_aliasing,
             Choice::Quality => &mut self.upscale_preset,
             Choice::FrameGeneration => &mut self.frame_generation,
-            Choice::RawMouse | Choice::AimSensitivity => unreachable!(),
+            Choice::RawMouse | Choice::AimSensitivity | Choice::ButtonPrompts => unreachable!(),
         } = value;
     }
 }
@@ -263,10 +270,11 @@ pub enum Choice {
     FrameGeneration,
     RawMouse,
     AimSensitivity,
+    ButtonPrompts,
 }
 
 impl Choice {
-    pub const ALL: [Choice; 8] = [
+    pub const ALL: [Choice; 9] = [
         Choice::Profile,
         Choice::FrameRate,
         Choice::Resolution,
@@ -275,6 +283,7 @@ impl Choice {
         Choice::FrameGeneration,
         Choice::RawMouse,
         Choice::AimSensitivity,
+        Choice::ButtonPrompts,
     ];
 
     pub fn label(self) -> &'static str {
@@ -287,6 +296,7 @@ impl Choice {
             Choice::FrameGeneration => "Frame generation",
             Choice::RawMouse => "Raw mouse aiming and cover camera (Uncharted 1 and 2)",
             Choice::AimSensitivity => "Aim sensitivity (raw mouse)",
+            Choice::ButtonPrompts => "Button prompts",
         }
     }
 
@@ -301,6 +311,7 @@ impl Choice {
             Choice::FrameGeneration => "frame_generation",
             Choice::RawMouse => "mouse_raw",
             Choice::AimSensitivity => "mouse_aim_sensitivity",
+            Choice::ButtonPrompts => "button_prompts",
         }
     }
 }
@@ -349,6 +360,8 @@ pub enum SettingsCommand {
     Back,
     /// Write these settings (`settings_store::save`).
     Save(Stored),
+    /// Write the prompt choice without changing the display or mouse settings.
+    SaveButtonPrompts(prompts::Choice),
     /// Run the hardware probe and read the benchmark reports, then call [`SettingsVm::tuned`].
     Tune,
 }
@@ -492,6 +505,10 @@ impl SettingsVm {
                     .collect(),
                 frame_generation_label,
             ),
+            Choice::ButtonPrompts => prompts::Choice::ALL
+                .into_iter()
+                .map(|style| (style.id().to_owned(), style.label().to_owned()))
+                .collect(),
             Choice::RawMouse => vec![("0".into(), "0".into()), ("1".into(), "1".into())],
             Choice::AimSensitivity => (10..=300)
                 .map(|n| {
@@ -584,8 +601,11 @@ impl SettingsVm {
             return SettingsCommand::None;
         }
         self.stored.set(choice, options[next as usize].0.clone());
+        self.status.clear();
+        if choice == Choice::ButtonPrompts {
+            return SettingsCommand::SaveButtonPrompts(self.stored.button_prompts);
+        }
         self.fit();
-        self.status = String::new();
         SettingsCommand::Save(self.stored.clone())
     }
 
@@ -701,6 +721,7 @@ impl SettingsVm {
                 let value = self.stored.get(*choice);
                 let at = options.iter().position(|(v, _)| *v == value);
                 ChoiceView {
+                    choice: *choice,
                     label: choice.label().to_owned(),
                     value: at.map_or_else(|| value.to_owned(), |i| options[i].1.clone()),
                     can_prev: at.is_some_and(|i| i > 0),
@@ -816,6 +837,7 @@ pub struct TuneCard {
 /// One choice row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChoiceView {
+    pub choice: Choice,
     pub label: String,
     pub value: String,
     pub can_prev: bool,

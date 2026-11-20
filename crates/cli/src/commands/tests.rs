@@ -861,3 +861,44 @@ fn an_unbundled_local_run_preserves_the_legacy_empty_save_mapping() {
     assert!(matches!(played.pulled, Sync::LocalOnly(_)));
     assert!(matches!(played.pushed, Sync::LocalOnly(_)));
 }
+
+#[test]
+fn direct_play_passes_saved_prompt_choices_to_the_runtime_child() {
+    let dir = TempDir::new("direct-prompt-choice");
+    let mut ctx = home(dir.path());
+    let settings = AppDirs::new(&vars(&ctx).unwrap()).settings();
+    fs::create_dir_all(settings.parent().unwrap()).unwrap();
+    for (json, expected) in [
+        (r#"{"button_prompts":"nintendo"}"#, Some("nintendo")),
+        (r#"{"button_prompts":"xbox"}"#, Some("xbox")),
+        (r#"{"button_prompts":"playstation"}"#, Some("playstation")),
+        (r#"{"button_prompts":"keyboard"}"#, Some("keyboard")),
+        (r#"{"button_prompts":"automatic"}"#, None),
+        (r#"{"button_prompts":"invalid"}"#, None),
+        (r#"{"button_prompts":false}"#, None),
+        ("broken JSON", None),
+    ] {
+        fs::write(&settings, json).unwrap();
+        let plan = play_plan(Game::U2, &ctx).unwrap();
+        let env = plan.session(Os::Windows).env(Game::U2).unwrap();
+        let runner = RuntimeRunner {
+            program: "synthetic-runtime".into(),
+            extra_args: vec![],
+            host: vec![],
+        };
+        let cmd = runner.command(&env, None);
+        let actual = cmd
+            .get_envs()
+            .find(|(key, _)| *key == "BB_BUTTON_PROMPTS")
+            .and_then(|(_, value)| value)
+            .and_then(|value| value.to_str());
+        assert_eq!(actual, expected, "{json}");
+    }
+    fs::write(settings, r#"{"button_prompts":"nintendo"}"#).unwrap();
+    ctx.env
+        .insert("BB_BUTTON_PROMPTS".into(), "playstation".into());
+    assert_eq!(
+        play_plan(Game::U2, &ctx).unwrap().player_env["BB_BUTTON_PROMPTS"],
+        "playstation"
+    );
+}

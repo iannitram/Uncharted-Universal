@@ -92,7 +92,7 @@ fn state_1_no_save_for_each_game() {
         assert_eq!(view.games, ["Uncharted 1", "Uncharted 2", "Uncharted 3"]);
         assert_eq!(view.games[view.current], game.name());
         assert_eq!(view.actions, ["Play"]);
-        assert_eq!(view.action_hints, ["A"]);
+        assert_eq!(view.action_hints, [Some(Input::Activate)]);
         assert_eq!(view.focus, Focus::actions(0));
         assert_eq!(
             view.card,
@@ -123,7 +123,7 @@ fn state_2_one_save_for_each_game() {
         let screen = screen_on(game, three([1, 1, 1]));
         let view = screen.view(&clock());
         assert_eq!(view.actions, ["Continue", "Play"]);
-        assert_eq!(view.action_hints, ["A", ""]);
+        assert_eq!(view.action_hints, [Some(Input::Activate), None]);
         assert_eq!(view.focus, Focus::actions(0));
         assert_eq!(
             view.card,
@@ -148,7 +148,10 @@ fn state_3_several_saves_for_each_game() {
         let screen = screen_on(game, three([3, 3, 3]));
         let view = screen.view(&clock());
         assert_eq!(view.actions, ["Continue", "Play", "Other saves (3)"]);
-        assert_eq!(view.action_hints, ["A", "", "Y"]);
+        assert_eq!(
+            view.action_hints,
+            [Some(Input::Activate), None, Some(Input::OtherSaves)]
+        );
         assert_eq!(view.card.lines[1], "Saved today 21:14");
     }
 }

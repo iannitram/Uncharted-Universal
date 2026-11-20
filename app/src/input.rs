@@ -4,29 +4,85 @@
 //! LB / RB (L1 / R1) change game.
 
 use crate::focus::Nav;
+use crate::prompts::Style;
 use crate::screen::Input;
-use gilrs::{Axis, Button, Event, EventType, Gilrs};
+use gilrs::{Axis, Button, Event, EventType, Gamepad, Gilrs};
+use std::collections::HashMap;
 
 /// Stick deflection that counts as a push.
 const STICK_THRESHOLD: f32 = 0.6;
 
-/// Reads gilrs events and turns them into [`Input`]s. A stick push fires once until it
-/// returns to centre.
-pub struct Controller {
-    gilrs: Gilrs,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PadInput {
+    pub input: Input,
+    pub style: Style,
+}
+
+struct Pad {
+    style: Style,
     stick_x_held: bool,
     stick_y_held: bool,
 }
 
-impl Controller {
-    /// `None` when the platform has no gamepad backend (the keyboard still works).
-    pub fn new() -> Option<Controller> {
-        match Gilrs::new() {
-            Ok(gilrs) => Some(Controller {
-                gilrs,
+/// Track the normalized events separately from the backend so tests can hot-plug a fake pad.
+#[derive(Default)]
+pub struct Pads(HashMap<usize, Pad>);
+
+impl Pads {
+    pub fn connect(&mut self, id: usize, style: Style) {
+        self.0.insert(
+            id,
+            Pad {
+                style,
                 stick_x_held: false,
                 stick_y_held: false,
-            }),
+            },
+        );
+    }
+
+    pub fn disconnect(&mut self, id: usize) {
+        self.0.remove(&id);
+    }
+
+    pub fn button(&self, id: usize, button: Button) -> Option<PadInput> {
+        let pad = self.0.get(&id)?;
+        Some(PadInput {
+            input: button_input(button)?,
+            style: pad.style,
+        })
+    }
+
+    pub fn axis(&mut self, id: usize, axis: Axis, value: f32) -> Option<PadInput> {
+        let pad = self.0.get_mut(&id)?;
+        let held = match axis {
+            Axis::LeftStickX => &mut pad.stick_x_held,
+            Axis::LeftStickY => &mut pad.stick_y_held,
+            _ => return None,
+        };
+        Some(PadInput {
+            input: Input::Move(stick_push(held, axis, value)?),
+            style: pad.style,
+        })
+    }
+}
+
+/// Reads mapped gilrs events for the connected pads, including pads attached while running.
+pub struct Controller {
+    gilrs: Gilrs,
+    pads: Pads,
+}
+
+impl Controller {
+    /// The keyboard still works if a platform has no gamepad backend.
+    pub fn new() -> Option<Self> {
+        match Gilrs::new() {
+            Ok(gilrs) => {
+                let mut pads = Pads::default();
+                for (id, gamepad) in gilrs.gamepads() {
+                    pads.connect(id.into(), gamepad_style(&gamepad));
+                }
+                Some(Self { gilrs, pads })
+            }
             Err(err) => {
                 eprintln!("controller input unavailable: {err}");
                 None
@@ -34,31 +90,66 @@ impl Controller {
         }
     }
 
-    /// Drain pending events.
-    pub fn poll(&mut self) -> Vec<Input> {
+    /// Drain pending events. Connection and axis state alone do not switch the hints.
+    pub fn poll(&mut self) -> Vec<PadInput> {
         let mut inputs = Vec::new();
-        while let Some(Event { event, .. }) = self.gilrs.next_event() {
-            match event {
-                EventType::ButtonPressed(button, _) => {
-                    if let Some(input) = button_input(button) {
-                        inputs.push(input);
+        while let Some(Event { id, event, .. }) = self.gilrs.next_event() {
+            let index = id.into();
+            let input = match event {
+                EventType::Connected => {
+                    if let Some(gamepad) = self.gilrs.connected_gamepad(id) {
+                        self.pads.connect(index, gamepad_style(&gamepad));
                     }
+                    None
                 }
-                EventType::AxisChanged(axis, value, _) => {
-                    let held = match axis {
-                        Axis::LeftStickX => &mut self.stick_x_held,
-                        Axis::LeftStickY => &mut self.stick_y_held,
-                        _ => continue,
-                    };
-                    if let Some(nav) = stick_push(held, axis, value) {
-                        inputs.push(Input::Move(nav));
-                    }
+                EventType::Disconnected => {
+                    self.pads.disconnect(index);
+                    None
                 }
-                _ => {}
-            }
+                EventType::ButtonPressed(button, _) => self.pads.button(index, button),
+                EventType::AxisChanged(axis, value, _) => self.pads.axis(index, axis, value),
+                _ => None,
+            };
+            inputs.extend(input);
         }
         inputs
     }
+}
+
+fn gamepad_style(gamepad: &Gamepad<'_>) -> Style {
+    pad_style(gamepad.vendor_id(), gamepad.name(), gamepad.os_name())
+}
+
+fn pad_style(vendor: Option<u16>, mapped_name: &str, os_name: &str) -> Style {
+    match vendor {
+        Some(0x054c) => return Style::PlayStation,
+        Some(0x057e) => return Style::Nintendo,
+        Some(0x045e) => return Style::Xbox,
+        _ => {}
+    }
+    // Some backends omit hardware IDs. The mapping and operating system names may differ.
+    for name in [mapped_name, os_name] {
+        let name = name.to_ascii_lowercase();
+        if [
+            "playstation",
+            "dualshock",
+            "dualsense",
+            "ps4 controller",
+            "ps5 controller",
+        ]
+        .iter()
+        .any(|part| name.contains(part))
+        {
+            return Style::PlayStation;
+        }
+        if ["nintendo", "joy-con", "joycon", "switch pro"]
+            .iter()
+            .any(|part| name.contains(part))
+        {
+            return Style::Nintendo;
+        }
+    }
+    Style::Xbox
 }
 
 /// A stick movement: a direction when the stick crosses the threshold, then nothing until it
@@ -99,6 +190,78 @@ fn button_input(button: Button) -> Option<Input> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gilrs_identities_choose_prompt_styles() {
+        for (vendor, mapped, os, style) in [
+            (
+                Some(0x045e),
+                "Xbox One Controller",
+                "Xbox Controller",
+                Style::Xbox,
+            ),
+            (
+                Some(0x054c),
+                "PS4 Controller",
+                "Wireless Controller",
+                Style::PlayStation,
+            ),
+            (
+                Some(0x054c),
+                "Wireless Controller",
+                "DualSense Wireless Controller",
+                Style::PlayStation,
+            ),
+            (
+                Some(0x057e),
+                "Nintendo Switch Pro Controller",
+                "Pro Controller",
+                Style::Nintendo,
+            ),
+            (Some(0x057e), "Joy-Con (L)", "Joy-Con (L)", Style::Nintendo),
+            (None, "Wireless Controller", "DualSense", Style::PlayStation),
+            (None, "Unknown", "Joy-Con (R)", Style::Nintendo),
+            (None, "Generic USB Gamepad", "Unknown", Style::Xbox),
+            (
+                Some(0x045e),
+                "Nintendo emulating Xbox",
+                "Xbox Controller",
+                Style::Xbox,
+            ),
+        ] {
+            assert_eq!(pad_style(vendor, mapped, os), style);
+        }
+    }
+
+    #[test]
+    fn hotplug_and_stick_state_are_per_pad() {
+        let mut pads = Pads::default();
+        assert_eq!(pads.button(1, Button::South), None);
+        pads.connect(1, Style::PlayStation);
+        pads.connect(2, Style::Nintendo);
+        let right = Input::Move(Nav::Right);
+        assert_eq!(
+            pads.axis(1, Axis::LeftStickX, 0.9),
+            Some(PadInput {
+                input: right,
+                style: Style::PlayStation,
+            })
+        );
+        assert_eq!(
+            pads.axis(2, Axis::LeftStickX, 0.9),
+            Some(PadInput {
+                input: right,
+                style: Style::Nintendo,
+            })
+        );
+        assert_eq!(pads.axis(1, Axis::LeftStickX, 1.0), None);
+        pads.disconnect(1);
+        assert_eq!(pads.axis(1, Axis::LeftStickX, 0.9), None);
+        assert_eq!(pads.button(1, Button::South), None);
+        assert_eq!(pads.axis(2, Axis::LeftStickX, 1.0), None);
+        pads.connect(1, Style::PlayStation);
+        assert_eq!(pads.axis(1, Axis::LeftStickX, 0.9).unwrap().input, right);
+    }
 
     #[test]
     fn buttons_map() {

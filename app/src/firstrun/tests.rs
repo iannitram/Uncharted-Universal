@@ -465,3 +465,142 @@ fn sentences() {
     assert_eq!(sentence("Done."), "Done.");
     assert_eq!(sentence(" "), "");
 }
+
+fn editor_press(page: &mut FirstRun, row: usize, col: usize) -> Job {
+    let current_row = page.view().editor.unwrap().focus.row;
+    for _ in 0..current_row.abs_diff(row) {
+        page.handle(if row > current_row { DOWN } else { UP });
+    }
+    let current_col = page.view().editor.unwrap().focus.col;
+    let left = Key::Input(Input::Move(Nav::Left));
+    for _ in 0..current_col.abs_diff(col) {
+        page.handle(if col > current_col { RIGHT } else { left });
+    }
+    assert_eq!(page.view().editor.unwrap().focus, Grid::at(row, col));
+    page.handle(A)
+}
+
+#[test]
+fn a_pad_enters_a_manual_dump_folder() {
+    let mut page = FirstRun::new(None, false);
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::Scan);
+    page.event(Event::Candidates(Vec::new()));
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+
+    // An empty submission shows validation and stays in the editor.
+    let footer = page.view().editor.unwrap().rows.len();
+    assert_eq!(editor_press(&mut page, footer, 1), Job::None);
+    assert!(!page.view().error.is_empty());
+
+    // C:\x uses all three key layouts and no keyboard or pointer.
+    page.handle_pad(Input::NextGame, "");
+    editor_press(&mut page, 3, 2);
+    page.handle_pad(Input::NextGame, "");
+    editor_press(&mut page, 1, 5);
+    editor_press(&mut page, 2, 3);
+    page.handle_pad(Input::NextGame, "");
+    editor_press(&mut page, 3, 1);
+    assert_eq!(page.view().editor.unwrap().text, "C:\\x");
+    assert_eq!(
+        editor_press(&mut page, footer, 1),
+        Job::Check(PathBuf::from("C:\\x"))
+    );
+    assert!(page.view().editor.is_none());
+}
+
+#[test]
+fn a_pad_enters_a_manual_hub_address_and_pairing_code() {
+    let mut page = FirstRun::new(None, false);
+    page.handle(DOWN);
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::Discover);
+    page.event(Event::Hubs(Ok(Vec::new())));
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+    editor_press(&mut page, 0, 8);
+    assert_eq!(page.handle_pad(Input::Back, ""), Job::None);
+    assert!(page.view().editor.is_none());
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+
+    let address = "192.168.1.20:47120";
+    for key in address.bytes() {
+        match key {
+            b'.' => editor_press(&mut page, 3, 7),
+            b':' => {
+                page.handle_pad(Input::NextGame, "");
+                let job = editor_press(&mut page, 3, 8);
+                page.handle_pad(Input::PrevGame, "");
+                job
+            }
+            b'0' => editor_press(&mut page, 0, 9),
+            digit => editor_press(&mut page, 0, usize::from(digit - b'1')),
+        };
+    }
+    // Remove an extra key and submit the address.
+    editor_press(&mut page, 0, 4);
+    let footer = page.view().editor.unwrap().rows.len();
+    editor_press(&mut page, footer, 0);
+    assert_eq!(page.view().editor.unwrap().text, address);
+    assert_eq!(editor_press(&mut page, footer, 1), Job::None);
+    assert!(page.view().editor.is_none());
+    assert_eq!(page.view().code.len(), 6);
+    for index in 0..6 {
+        page.handle(UP);
+        if index < 5 {
+            page.handle(RIGHT);
+        }
+    }
+    assert!(matches!(page.handle_pad(Input::Activate, ""),
+        Job::PairPull { hub, code } if hub.addr.to_string() == address && code == "000000"
+    ));
+}
+
+#[test]
+fn submitted_controller_drafts_survive_retry_and_are_separate_per_field() {
+    let mut page = FirstRun::new(None, false);
+    page.handle_pad(Input::Activate, "");
+    page.event(Event::Candidates(Vec::new()));
+    page.handle_pad(Input::Activate, "C:\\typo");
+    let footer = page.view().editor.unwrap().rows.len();
+    assert_eq!(
+        editor_press(&mut page, footer, 1),
+        Job::Check(PathBuf::from("C:\\typo"))
+    );
+    page.event(Event::Checked(
+        PathBuf::from("C:\\typo"),
+        Err("not found".into()),
+    ));
+    press(&mut page, CHOOSE_ANOTHER);
+    page.event(Event::Candidates(Vec::new()));
+    page.handle_pad(Input::Activate, "stale physical field");
+    assert_eq!(page.view().editor.unwrap().text, "C:\\typo");
+    editor_press(&mut page, 0, 0);
+    page.handle_pad(Input::Back, "");
+    page.handle_pad(Input::Activate, "");
+    assert_eq!(page.view().editor.unwrap().text, "C:\\typo");
+    page.handle_pad(Input::Back, "");
+    page.handle_pad(Input::Back, "");
+    page.handle(DOWN);
+    page.handle_pad(Input::Activate, "");
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.handle_pad(Input::Activate, "");
+    assert!(page.view().editor.unwrap().text.is_empty());
+}
+
+#[test]
+fn cancelling_a_rejected_controller_submission_keeps_the_committed_hub() {
+    let mut page = FirstRun::new(None, false);
+    page.handle(DOWN);
+    page.handle(A);
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.field("192.168.1.20:47120");
+    page.handle(B);
+    page.event(Event::Hubs(Ok(Vec::new())));
+    page.handle_pad(Input::Activate, "");
+    page.editor.as_mut().unwrap().text = "invalid address".into();
+    let footer = page.view().editor.unwrap().rows.len();
+    editor_press(&mut page, footer, 1);
+    assert!(!page.view().error.is_empty());
+    page.handle_pad(Input::Back, "");
+    assert_eq!(page.view().field_text, "192.168.1.20:47120");
+    page.handle_pad(Input::Activate, "");
+    assert_eq!(page.view().editor.unwrap().text, "192.168.1.20:47120");
+}

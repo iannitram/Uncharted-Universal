@@ -43,6 +43,7 @@ mod lang;
 mod load;
 mod pages_io;
 mod play;
+mod prompts;
 mod screen;
 mod settings_file;
 mod settings_store;
@@ -51,12 +52,12 @@ mod work;
 
 use card::Clock;
 use firstrun::{FirstRun, FirstRunView, Job, Key};
-use focus::{AboutFocus, CrashFocus, Effect, FleetFocus, Nav};
-use input::Controller;
+use focus::{AboutFocus, CrashFocus, Effect, FleetFocus, Grid, Nav};
+use input::{Controller, PadInput};
 use lang::Texts;
 use screen::{Command, GameData, Input, OverlayView, Page, Screen, Start, View};
 use slint::{ComponentHandle, Image, ModelRc, SharedString, VecModel};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -269,7 +270,13 @@ fn strings(items: &[String]) -> ModelRc<SharedString> {
 }
 
 /// Draw `view` into the window.
-fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures) {
+fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures, style: prompts::Style) {
+    window.set_prompt_hints(PromptHints {
+        confirm: style.button(Input::Activate).into(),
+        back: style.button(Input::Back).into(),
+        prev: style.button(Input::PrevGame).into(),
+        next: style.button(Input::NextGame).into(),
+    });
     window.set_games(model(view.games.iter().map(|g| (*g).into()).collect()));
     window.set_current_game(view.current as i32);
     let picture = pictures.get(view.card.picture.as_deref());
@@ -286,7 +293,7 @@ fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures) {
             .zip(&view.action_hints)
             .map(|(label, hint)| ButtonData {
                 label: label.as_str().into(),
-                hint: (*hint).into(),
+                hint: hint.map_or("", |input| style.button(input)).into(),
             })
             .collect(),
     ));
@@ -356,12 +363,33 @@ fn apply_first(window: &AppWindow, view: &FirstRunView) {
     window.set_fr_options(strings(&view.options));
     window.set_fr_focus(view.focus as i32);
     window.set_fr_field(view.field.as_str().into());
+    window.set_fr_field_text(view.field_text.as_str().into());
     window.set_fr_code(strings(&view.code));
     window.set_fr_code_cursor(view.code_cursor as i32);
     window.set_fr_has_progress(view.progress.is_some());
+    window.set_fr_busy(view.busy);
     window.set_fr_progress(view.progress.unwrap_or(0.0));
     window.set_fr_error(view.error.as_str().into());
-    window.set_fr_hint(view.hint.as_str().into());
+    let rows = view.editor.as_ref().map_or_else(Vec::new, |editor| {
+        editor
+            .rows
+            .iter()
+            .map(|keys| EntryRow {
+                keys: strings(keys),
+            })
+            .collect()
+    });
+    window.set_fr_editor_rows(model(rows));
+    let (text, focus) = view
+        .editor
+        .as_ref()
+        .map_or(("", Grid::default()), |editor| {
+            (editor.text.as_str(), editor.focus)
+        });
+    window.set_fr_editor_text(text.into());
+    window.set_fr_editor_row(focus.row as i32);
+    window.set_fr_editor_col(focus.col as i32);
+    window.set_fr_editor_open(view.editor.is_some());
 }
 
 /// The interface language and what About shows, outside the window.
@@ -515,18 +543,21 @@ fn apply_settings(window: &AppWindow, view: &SettingsView, texts: &Texts) {
         view.choices
             .iter()
             .map(|choice| ChoiceData {
-                label: match choice.label.as_str() {
-                    "Raw mouse aiming and cover camera (Uncharted 1 and 2)" => {
-                        texts.tr("Raw mouse aiming and cover camera (Uncharted 1 and 2)")
-                    }
-                    "Aim sensitivity (raw mouse)" => texts.tr("Aim sensitivity (raw mouse)"),
-                    label => label.to_string(),
+                label: match choice.choice {
+                    vm::settings::Choice::RawMouse
+                    | vm::settings::Choice::AimSensitivity
+                    | vm::settings::Choice::ButtonPrompts => texts.tr(&choice.label),
+                    _ => choice.label.clone(),
                 }
                 .into(),
-                value: choice.value.as_str().into(),
+                value: if choice.choice == vm::settings::Choice::ButtonPrompts {
+                    texts.tr(&choice.value).into()
+                } else {
+                    choice.value.as_str().into()
+                },
                 can_prev: choice.can_prev,
                 can_next: choice.can_next,
-                checkbox: choice.label == vm::settings::Choice::RawMouse.label(),
+                checkbox: choice.choice == vm::settings::Choice::RawMouse,
                 checked: choice.value == "1",
             })
             .collect(),
@@ -578,6 +609,8 @@ struct Ui {
     screen: RefCell<Screen>,
     shown: RefCell<Shown>,
     lang: RefCell<Lang>,
+    prompt_choice: Cell<prompts::Choice>,
+    last_pad: Cell<prompts::Style>,
     /// About's focus while About is open over the Continue screen.
     about: RefCell<Option<AboutFocus>>,
     /// Fleet's records and focus; open over the Continue screen like About.
@@ -604,7 +637,8 @@ impl Ui {
             offset: &*self.offset,
         };
         let view = self.screen.borrow().view(&clock);
-        apply(&window, &view, &mut self.pictures.borrow_mut());
+        let style = self.prompt_choice.get().resolve(self.last_pad.get());
+        apply(&window, &view, &mut self.pictures.borrow_mut(), style);
         let shown = self.shown.borrow();
         match &*shown {
             Shown::Continue => {}
@@ -662,6 +696,30 @@ impl Ui {
         };
         self.redraw();
         job
+    }
+
+    fn handle_key(&self, key: Key, run: &dyn Fn(Cmd), jobs: &dyn Fn(Job)) {
+        if self.first.borrow().is_some() {
+            jobs(self.first_do(|first| first.handle(key)));
+        } else if let Key::Input(input) = key {
+            run(self.input(input));
+        }
+    }
+
+    fn pad_input(&self, event: PadInput, run: &dyn Fn(Cmd), jobs: &dyn Fn(Job)) {
+        let changed = self.last_pad.replace(event.style) != event.style;
+        if self.first.borrow().is_some() {
+            if let Some(window) = self.window.upgrade() {
+                let text = window.get_fr_field_text();
+                jobs(self.first_do(|first| first.handle_pad(event.input, &text)));
+            }
+        } else {
+            self.handle_key(Key::Input(event.input), run, jobs);
+        }
+        if changed {
+            // About, Fleet and crash focus effects can update a single widget.
+            self.redraw();
+        }
     }
 
     /// Open a page over the Continue screen.
@@ -750,7 +808,10 @@ impl Ui {
                 program,
                 start.game,
                 args,
-                &settings_file::extra(&folders.settings()),
+                &play_environment(
+                    settings_file::extra(&folders.settings()),
+                    self.prompt_choice.get(),
+                ),
                 &folders.dirs.logs(),
             ),
             None => {
@@ -907,6 +968,9 @@ impl Ui {
         match command {
             Cmd::Saves(SavesCommand::Back) => self.close(Page::Saves),
             Cmd::Settings(SettingsCommand::Back) => self.close(Page::Settings),
+            Cmd::Settings(SettingsCommand::SaveButtonPrompts(choice)) => {
+                self.prompt_choice.set(*choice)
+            }
             _ => {}
         }
         self.redraw();
@@ -948,12 +1012,8 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>, jobs: Rc<dyn Fn(J
     window.on_input({
         let (ui, run, jobs) = (ui.clone(), run.clone(), jobs.clone());
         move |code| {
-            if ui.first.borrow().is_some() {
-                if let Some(key) = Key::from_code(code) {
-                    jobs(ui.first_do(|first| first.handle(key)));
-                }
-            } else if let Some(input) = Input::from_code(code) {
-                run(ui.input(input));
+            if let Some(key) = Key::from_code(code) {
+                ui.handle_key(key, run.as_ref(), jobs.as_ref());
             }
         }
     });
@@ -971,6 +1031,23 @@ fn wire(window: &AppWindow, ui: &Rc<Ui>, run: Rc<dyn Fn(Cmd)>, jobs: Rc<dyn Fn(J
             if let Ok(index) = usize::try_from(index) {
                 jobs(ui.first_do(|first| first.click(index)));
             }
+        }
+    });
+    window.on_editor_clicked({
+        let (ui, jobs) = (ui.clone(), jobs.clone());
+        move |row, col| {
+            if let (Ok(row), Ok(col)) = (usize::try_from(row), usize::try_from(col)) {
+                jobs(ui.first_do(|first| first.editor_click(Grid::at(row, col))));
+            }
+        }
+    });
+    window.on_field_edited({
+        let ui = ui.clone();
+        move |text| {
+            ui.first_do(|first| {
+                first.edit_field(&text);
+                Job::None
+            });
         }
     });
     window.on_field_accepted({
@@ -1171,12 +1248,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let config = dirs.as_ref().map(|d| d.config.clone());
     let backups = dirs.as_ref().map(AppDirs::backups);
     let detected = pages_io::detected_profile(os);
+    let prompt_choice = config
+        .as_deref()
+        .map(|path| settings_store::load(path).button_prompts)
+        .unwrap_or_default();
     let last = config.as_deref().and_then(load::last_started);
     let screen = Screen::new(load_all(&places.borrow()), last, &status);
     let ui = Rc::new(Ui {
         screen: RefCell::new(screen),
         shown: RefCell::new(Shown::Continue),
         lang: RefCell::new(lang),
+        prompt_choice: Cell::new(prompt_choice),
+        last_pad: Cell::default(),
         about: RefCell::default(),
         fleet: RefCell::new(FleetFocus::new(load_fleet())),
         crash: RefCell::default(),
@@ -1222,6 +1305,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     .as_deref()
                     .map(settings_store::load)
                     .unwrap_or_default();
+                ui.prompt_choice.set(stored.button_prompts);
                 let mouse = ui
                     .folders
                     .as_ref()
@@ -1348,6 +1432,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 ui.redraw();
             }
+            Cmd::Settings(SettingsCommand::SaveButtonPrompts(choice)) => {
+                let result = config
+                    .as_deref()
+                    .ok_or_else(|| std::io::Error::other("no settings folder on this device"))
+                    .and_then(|path| settings_store::set_button_prompts(path, choice));
+                if let Err(err) = result {
+                    if let Shown::Settings(vm) = &mut *ui.shown.borrow_mut() {
+                        vm.set_status(&format!("Could not save the settings: {err}"));
+                    }
+                    ui.redraw();
+                }
+            }
             Cmd::Settings(SettingsCommand::Tune) => {
                 let probe = probe_tx.clone();
                 std::thread::spawn(move || {
@@ -1444,9 +1540,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             };
             for input in controller.poll() {
-                if let Some(window) = ui.window.upgrade() {
-                    window.invoke_input(input_code(input));
-                }
+                ui.pad_input(input, run.as_ref(), jobs.as_ref());
             }
         },
     );
@@ -1454,12 +1548,14 @@ fn main() -> Result<(), slint::PlatformError> {
     window.run()
 }
 
-/// The code of `input` for the window's `input` callback (the inverse of `Input::from_code`),
-/// so the controller goes the same way as the keyboard.
-fn input_code(input: Input) -> i32 {
-    (0..=10)
-        .find(|code| Input::from_code(*code) == Some(input))
-        .unwrap_or(-1)
+fn play_environment(
+    mut extra: std::collections::BTreeMap<String, String>,
+    choice: prompts::Choice,
+) -> std::collections::BTreeMap<String, String> {
+    if let prompts::Choice::Fixed(_) = choice {
+        extra.insert("BB_BUTTON_PROMPTS".into(), choice.id().into());
+    }
+    extra
 }
 
 #[cfg(test)]
@@ -1499,6 +1595,8 @@ mod tests {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
             about: RefCell::default(),
             fleet: RefCell::default(),
             crash: RefCell::default(),
@@ -1581,6 +1679,8 @@ mod tests {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
             about: RefCell::default(),
             fleet: RefCell::default(),
             crash: RefCell::default(),
@@ -1651,7 +1751,7 @@ mod tests {
         assert_eq!(cards[1].title, "Balanced 60");
         assert!(cards[1].in_use);
         let choices: Vec<_> = window.get_choices().iter().collect();
-        assert_eq!(choices.len(), 8);
+        assert_eq!(choices.len(), 9);
         assert_eq!(
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
@@ -1697,6 +1797,8 @@ mod tests {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
             about: RefCell::default(),
             fleet: RefCell::default(),
             crash: RefCell::default(),
@@ -1741,6 +1843,37 @@ mod tests {
         window.invoke_field_accepted("192.168.1.20:47120".into());
         assert_eq!(window.get_fr_title(), "Pair with 192.168.1.20:47120");
         assert_eq!(window.get_fr_code().row_count(), 6);
+        window.invoke_input(7); // Back from pairing to the address field.
+        jobs(ui.first_do(|f| f.event(firstrun::Event::Hubs(Ok(Vec::new())))));
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47120");
+        ui.pad_input(
+            PadInput {
+                input: Input::Activate,
+                style: prompts::Style::Xbox,
+            },
+            &|_| {},
+            &|_| {},
+        );
+        assert_eq!(window.get_fr_editor_text(), "192.168.1.20:47120");
+        window.invoke_editor_clicked(4, 0); // erase final character
+        window.invoke_editor_clicked(0, 8); // append 9
+        window.invoke_editor_clicked(4, 1); // commit through production callback
+        window.invoke_input(7);
+        jobs(ui.first_do(|f| f.event(firstrun::Event::Hubs(Ok(Vec::new())))));
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47129");
+        // Cancel must not replace the committed value with the edited buffer.
+        ui.pad_input(
+            PadInput {
+                input: Input::Activate,
+                style: prompts::Style::Xbox,
+            },
+            &|_| {},
+            &|_| {},
+        );
+        window.invoke_editor_clicked(0, 0);
+        window.invoke_input(7);
+        assert_eq!(window.get_fr_field_text(), "192.168.1.20:47129");
+        window.invoke_field_accepted("192.168.1.20:47120".into());
         for code in [21, 22, 23, 24, 25, 26] {
             window.invoke_input(code);
         }
@@ -1789,6 +1922,8 @@ mod tests {
                 Some(file.clone()),
                 Some("ko_KR".into()),
             )),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
             about: RefCell::default(),
             shown: RefCell::new(Shown::Continue),
             fleet: RefCell::default(),
@@ -1964,6 +2099,8 @@ mod tests {
             screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
             shown: RefCell::new(Shown::Continue),
             lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
             about: RefCell::default(),
             fleet: RefCell::default(),
             crash: RefCell::new(Some(Crash {
@@ -2025,10 +2162,203 @@ mod tests {
     }
 
     #[test]
-    fn controller_codes_round_trip() {
-        for code in 0..=10 {
-            let input = Input::from_code(code).unwrap();
-            assert_eq!(input_code(input), code);
+    fn a_pad_navigates_every_launcher_page_with_hotplug() {
+        use gilrs::Button::{
+            self, DPadDown, DPadLeft, DPadRight, East, LeftTrigger, RightTrigger, South,
+        };
+        use prompts::{Choice, Style};
+
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let mut games: Vec<_> = Game::ALL.into_iter().map(GameData::empty).collect();
+        games[1].set_up = false;
+        let fleet = FleetVm::from_text(include_str!("../fixtures/fleet.tsv")).unwrap();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("de".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
+            about: RefCell::default(),
+            fleet: RefCell::new(FleetFocus::new(fleet)),
+            crash: RefCell::default(),
+            folders: None,
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        let commands = Rc::new(RefCell::new(Vec::new()));
+        let run: Rc<dyn Fn(Cmd)> = Rc::new({
+            let (ui, commands) = (ui.clone(), commands.clone());
+            move |command| {
+                match command {
+                    Cmd::Screen(Command::Open(Page::Saves)) => {
+                        let saves = Game::ALL.into_iter().map(GameSaves::empty).collect();
+                        ui.show(Shown::Saves(SavesVm::new(saves, Game::U1, NO_RELAY)));
+                    }
+                    Cmd::Screen(Command::Open(Page::Settings)) => {
+                        let desktop = uncharted_core::profile::by_id("desktop").unwrap();
+                        ui.show(Shown::Settings(SettingsVm::new(
+                            vm::settings::Stored::default(),
+                            desktop,
+                            None,
+                        )));
+                    }
+                    Cmd::Screen(Command::SetUp(game)) => ui.open_first(Some(game), false),
+                    Cmd::Screen(Command::Start(_)) => {
+                        ui.screen.borrow_mut().running("Starting the game");
+                        ui.redraw();
+                    }
+                    _ => {}
+                }
+                commands.borrow_mut().push(command);
+            }
+        });
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let jobs: Rc<dyn Fn(Job)> = Rc::new({
+            let (ui, seen) = (ui.clone(), seen.clone());
+            move |job| {
+                if matches!(job, Job::Finish { .. }) {
+                    *ui.first.borrow_mut() = None;
+                    ui.redraw();
+                }
+                seen.borrow_mut().push(job);
+            }
+        });
+        wire(&window, &ui, run.clone(), jobs.clone());
+        let mut pads = input::Pads::default();
+        let press = |pads: &input::Pads, id, button: Button| {
+            let event = pads
+                .button(id, button)
+                .expect("mapped input from a connected pad");
+            ui.pad_input(event, run.as_ref(), jobs.as_ref());
+        };
+
+        assert_eq!(window.get_prompt_hints().confirm, "A");
+        pads.connect(1, Style::PlayStation);
+        press(&pads, 1, DPadDown);
+        press(&pads, 1, South);
+        assert_eq!(window.get_page(), 1);
+        assert_eq!(window.get_prompt_hints().confirm, "×");
+        assert_eq!(window.get_prompt_hints().next, "R1");
+        press(&pads, 1, RightTrigger);
+        assert_eq!(window.get_page_game(), 1);
+        press(&pads, 1, East);
+        assert_eq!(window.get_page(), 0);
+
+        press(&pads, 1, DPadRight);
+        press(&pads, 1, South);
+        assert_eq!(window.get_page(), 2);
+        pads.connect(2, Style::Nintendo);
+        assert_eq!(window.get_prompt_hints().confirm, "×");
+        for _ in 0..10 {
+            press(&pads, 2, DPadDown);
+        }
+        assert_eq!(window.get_page_row(), 10);
+        assert_eq!(window.get_prompt_hints().confirm, "B");
+        assert_eq!(window.get_prompt_hints().back, "A");
+        let choice = window.get_choices().row_data(8).unwrap();
+        assert_eq!(choice.label, "Tastenhinweise");
+        assert_eq!(choice.value, "Automatisch");
+
+        press(&pads, 2, South);
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&Cmd::Settings(SettingsCommand::SaveButtonPrompts(
+                Choice::Fixed(Style::Xbox)
+            )))
+        );
+        assert_eq!(window.get_prompt_hints().confirm, "A");
+        pads.disconnect(2);
+        assert!(pads.button(2, DPadRight).is_none());
+        press(&pads, 1, DPadLeft);
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&Cmd::Settings(SettingsCommand::SaveButtonPrompts(
+                Choice::Automatic
+            )))
+        );
+        assert_eq!(window.get_prompt_hints().confirm, "×");
+        press(&pads, 1, East);
+
+        press(&pads, 1, DPadRight);
+        press(&pads, 1, South);
+        assert_eq!(window.get_page(), FLEET_PAGE);
+        press(&pads, 1, DPadDown);
+        assert_eq!(window.get_fleet_focus(), 1);
+        press(&pads, 1, East);
+        press(&pads, 1, DPadRight);
+        press(&pads, 1, South);
+        assert_eq!(window.get_page(), ABOUT_PAGE);
+        press(&pads, 1, DPadDown);
+        press(&pads, 1, DPadRight);
+        assert_eq!(window.get_about_focus(), 1);
+        press(&pads, 1, South);
+        assert_eq!(window.get_page(), 0);
+
+        press(&pads, 1, RightTrigger);
+        press(&pads, 1, South);
+        assert_eq!(window.get_mode(), 1);
+        press(&pads, 1, South);
+        assert_eq!(seen.borrow().last(), Some(&Job::Scan));
+        ui.first_do(|first| first.event(firstrun::Event::Candidates(Vec::new())));
+        press(&pads, 1, South);
+        assert!(window.get_fr_editor_open());
+        press(&pads, 1, South);
+        assert_eq!(window.get_fr_editor_text(), "1");
+        press(&pads, 1, East);
+        press(&pads, 1, East);
+        press(&pads, 1, East);
+        assert_eq!(window.get_mode(), 0);
+
+        press(&pads, 1, LeftTrigger);
+        press(&pads, 1, South);
+        assert_eq!(
+            commands.borrow().last(),
+            Some(&Cmd::Screen(Command::Start(Start {
+                game: Game::U1,
+                slot: None,
+                keep: None,
+            })))
+        );
+        assert_eq!(window.get_overlay(), 5);
+        ui.screen.borrow_mut().finished("The game exited");
+        let crash = AfterCrash {
+            game: Game::U1,
+            chapter: None,
+            crash: "synthetic".into(),
+            known: None,
+        };
+        *ui.crash.borrow_mut() = Some(Crash {
+            focus: CrashFocus::new(crash.buttons().len()),
+            run: crash,
+            note: String::new(),
+        });
+        ui.redraw();
+        assert_eq!(window.get_page(), CRASH_PAGE);
+        press(&pads, 1, DPadDown);
+        assert_eq!(window.get_crash_focus(), 1);
+        press(&pads, 1, East);
+        assert_eq!(window.get_page(), 0);
+        assert_eq!(window.get_overlay(), 0);
+    }
+
+    #[test]
+    fn play_gets_only_the_manual_override() {
+        let inherited = std::collections::BTreeMap::from([
+            ("BB_OTHER".into(), "1".into()),
+            ("BB_BUTTON_PROMPTS".into(), "steamdeck".into()),
+        ]);
+        assert_eq!(
+            play_environment(inherited.clone(), prompts::Choice::Automatic),
+            inherited
+        );
+        for choice in prompts::Choice::ALL.into_iter().skip(1) {
+            let env = play_environment(inherited.clone(), choice);
+            assert_eq!(env["BB_OTHER"], "1");
+            assert_eq!(env["BB_BUTTON_PROMPTS"], choice.id());
         }
     }
 

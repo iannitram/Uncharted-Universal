@@ -4,6 +4,7 @@
 //! other key in the file, the `extra` object of `BB_*` variables among them, is kept as it was:
 //! this page owns only its own keys.
 
+use crate::prompts;
 use crate::vm::settings::Stored;
 use serde_json::{Map, Value};
 use std::fs;
@@ -41,6 +42,7 @@ pub fn load(config: &Path) -> Stored {
         anti_aliasing: get("anti_aliasing"),
         upscale_preset: get("upscale_preset"),
         frame_generation: get("frame_generation"),
+        button_prompts: prompts::Choice::from_id(&get("button_prompts")),
         ..Stored::default()
     }
 }
@@ -59,6 +61,17 @@ pub fn save(config: &Path, stored: &Stored) -> io::Result<()> {
     ] {
         map.insert(key.to_owned(), Value::from(value.as_str()));
     }
+    write(config, map)
+}
+
+/// Save the prompt choice without rewriting the other settings on the page.
+pub fn set_button_prompts(config: &Path, choice: prompts::Choice) -> io::Result<()> {
+    let mut map = read(config);
+    map.insert("button_prompts".to_owned(), Value::from(choice.id()));
+    write(config, map)
+}
+
+fn write(config: &Path, map: Map<String, Value>) -> io::Result<()> {
     fs::create_dir_all(config)?;
     let text = serde_json::to_string_pretty(&Value::Object(map)).map_err(io::Error::other)?;
     let temp = config.join("settings.json.tmp");
@@ -103,6 +116,31 @@ mod tests {
         assert_eq!(value["close_on_play"], true);
         assert_eq!(value["extra"]["BB_TOGGLE2"], "12");
         assert!(!temp.0.join("settings.json.tmp").exists());
+    }
+
+    #[test]
+    fn button_prompts_round_trip_and_preserve_other_settings() {
+        let temp = Temp::new();
+        let path = temp.0.join(FILE);
+        fs::write(
+            &path,
+            r#"{"language":"de","extra":{"BB_TOGGLE2":"12"},"button_prompts":"unknown"}"#,
+        )
+        .unwrap();
+        assert_eq!(load(&temp.0).button_prompts, prompts::Choice::Automatic);
+        for choice in prompts::Choice::ALL {
+            set_button_prompts(&temp.0, choice).unwrap();
+            assert_eq!(load(&temp.0).button_prompts, choice);
+            let value: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(value["language"], "de");
+            assert_eq!(value["extra"]["BB_TOGGLE2"], "12");
+            assert_eq!(value["button_prompts"], choice.id());
+        }
+        save(&temp.0, &Stored::default()).unwrap();
+        assert_eq!(
+            load(&temp.0).button_prompts,
+            prompts::Choice::Fixed(prompts::Style::Keyboard)
+        );
     }
 
     #[test]

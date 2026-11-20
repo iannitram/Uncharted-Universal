@@ -380,8 +380,11 @@ fn back_and_tab() {
     vm.handle(Input::Tab { back: true });
     vm.handle(Input::Tab { back: true });
     vm.handle(Input::Tab { back: true });
-    // Last row: raw aim sensitivity.
-    assert_eq!(vm.focus(), Grid::at(9, 0));
+    // Last row: button prompts.
+    assert_eq!(
+        vm.focus(),
+        Grid::at(FIRST_CHOICE + Choice::ALL.len() - 1, 0)
+    );
     // LB and RB do nothing here.
     assert_eq!(vm.handle(Input::NextGame), SettingsCommand::None);
 }

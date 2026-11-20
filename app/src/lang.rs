@@ -189,6 +189,16 @@ mod tests {
                 .chain(learned.iter())
                 .map(|item| item.role.to_owned()),
         );
+        use crate::vm::settings::Choice;
+        texts.extend(
+            [
+                Choice::RawMouse,
+                Choice::AimSensitivity,
+                Choice::ButtonPrompts,
+            ]
+            .map(|choice| choice.label().to_owned()),
+        );
+        texts.extend(crate::prompts::Choice::ALL.map(|choice| choice.label().to_owned()));
         texts
     }
 
