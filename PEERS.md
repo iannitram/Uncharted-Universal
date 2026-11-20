@@ -159,3 +159,14 @@ Upstream issues brought in with an `Upstream:` line: #142 (DLSS probe on GPUs wi
 | [rust-random/getrandom](https://github.com/rust-random/getrandom) | OS randomness for transfer nonces, session ids and temporary filenames | Pin 0.2.16; `MIT OR Apache-2.0`; use the MIT option. |
 | [fs4](https://github.com/al8n/fs4) | Cross-platform advisory locking to serialize pulls targeting the same staging parent | Pin 1.1.0; `MIT OR Apache-2.0`; use the MIT option. |
 | [keepsimple1/mdns-sd](https://github.com/keepsimple1/mdns-sd) | Hub discovery and announce on the home network (roadmap 4.01) | Pin 0.21.7 with default features off; `Apache-2.0 OR MIT`; use the MIT option. Pure Rust; its new dependencies are flume, if-addrs (`MIT OR BSD-3-Clause`), mio, socket2, socket-pktinfo, spin and fastrand, all MIT-compatible. |
+
+## Stencil association guard (#426, 2026-11-20)
+
+Adapted [shadPS4 #5737](https://github.com/shadps4-emu/shadPS4/pull/5737),
+merge [`a267e8fd71c6ae097ac09efb7312cfe2a4031b6f`](https://github.com/shadps4-emu/shadPS4/commit/a267e8fd71c6ae097ac09efb7312cfe2a4031b6f),
+`src/video_core/texture_cache/texture_cache.cpp`, into this fork's inline
+`TextureCache::FindDepthTarget` stencil association in
+`gpu/shadps4/video_core/texture_cache/texture_cache.cpp`. The adopted file retains
+its shadPS4 copyright and GPL-2.0-or-later SPDX header. Only the four stencil
+preconditions are adapted; the existing format checks and image relookup remain.
+No upstream submission or game-data use; U1/U2/U3 gameplay acceptance remains unrun.
