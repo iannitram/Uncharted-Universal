@@ -25,12 +25,12 @@ struct Patch {
 /// Whether an image of this size and format may be a known picture (checked before hashing).
 bool Candidate(u32 width, u32 height, Format format);
 
-/// What the pictures show: the game's own PlayStation buttons, the bound keys, or Xbox buttons.
-enum class Style : u8 { Original, Keyboard, Xbox };
+/// What the pictures show: the game's own PlayStation buttons, the bound keys, Xbox buttons, or
+/// Nintendo Switch buttons.
+enum class Style : u8 { Original, Keyboard, Xbox, Nintendo };
 
 /// Input thread: the device the player used last: 0 keyboard and mouse, 1 a PlayStation
-/// controller, 2 an Xbox or other controller, 3 a Nintendo controller (Switch Pro or
-/// Joy-Con; its own pictures arrive in #439, so it shows the Xbox ones until then).
+/// controller, 2 an Xbox or other controller, 3 a Nintendo controller (Switch Pro or Joy-Con).
 void SetDevice(int device);
 
 /// The style shown now (BB_BUTTON_PROMPTS can force one), and a count of the switches between

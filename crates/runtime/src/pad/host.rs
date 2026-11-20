@@ -34,6 +34,21 @@ pub const PROMPTS_PLAYSTATION: i32 = 1;
 pub const PROMPTS_XBOX: i32 = 2;
 pub const PROMPTS_NINTENDO: i32 = 3;
 
+/// Maps an SDL3 `SDL_GamepadType` value to the prompt family (`PROMPTS_PLAYSTATION`,
+/// `PROMPTS_NINTENDO`, or `PROMPTS_XBOX`). Xbox 360/One, unknown, and standard pads map to
+/// `PROMPTS_XBOX` unless `south_is_cross` is true.
+#[allow(dead_code)]
+pub(crate) const fn prompts_for_gamepad_type(kind: i32, south_is_cross: bool) -> i32 {
+    match kind {
+        // SDL_GAMEPAD_TYPE_PS3 (4), PS4 (5), PS5 (6)
+        4..=6 => PROMPTS_PLAYSTATION,
+        // SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO (7), JOYCON_LEFT (8), RIGHT (9), PAIR (10)
+        7..=10 => PROMPTS_NINTENDO,
+        _ if south_is_cross => PROMPTS_PLAYSTATION,
+        _ => PROMPTS_XBOX,
+    }
+}
+
 /// One finger of the pad's touch surface (0..1 on both axes).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Finger {
@@ -234,9 +249,7 @@ impl Host for Nothing {
 
 #[cfg(uncharted_loader)]
 mod sdl {
-    use super::{
-        Finger, Host, MouseSample, PadId, PROMPTS_NINTENDO, PROMPTS_PLAYSTATION, PROMPTS_XBOX,
-    };
+    use super::{Finger, Host, MouseSample, PadId, PROMPTS_XBOX};
     use sdl3_sys::error::SDL_GetError;
     use sdl3_sys::gamepad::*;
     use sdl3_sys::hints::{SDL_SetHint, SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS};
@@ -466,26 +479,9 @@ mod sdl {
             };
             // SAFETY: a live gamepad.
             let kind = unsafe { SDL_GetGamepadType(pad) };
-            if kind == SDL_GAMEPAD_TYPE_PS3
-                || kind == SDL_GAMEPAD_TYPE_PS4
-                || kind == SDL_GAMEPAD_TYPE_PS5
-            {
-                return PROMPTS_PLAYSTATION;
-            }
-            if kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_PRO
-                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_LEFT
-                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_RIGHT
-                || kind == SDL_GAMEPAD_TYPE_NINTENDO_SWITCH_JOYCON_PAIR
-            {
-                return PROMPTS_NINTENDO;
-            }
             // SAFETY: as above.
             let label = unsafe { SDL_GetGamepadButtonLabel(pad, SDL_GAMEPAD_BUTTON_SOUTH) };
-            if label == SDL_GAMEPAD_BUTTON_LABEL_CROSS {
-                PROMPTS_PLAYSTATION
-            } else {
-                PROMPTS_XBOX
-            }
+            super::prompts_for_gamepad_type(kind.into(), label == SDL_GAMEPAD_BUTTON_LABEL_CROSS)
         }
 
         fn sensors(&mut self, id: PadId, enable: bool) {
@@ -597,5 +593,29 @@ mod sdl {
             // SAFETY: a live gamepad and room for the three values.
             unsafe { SDL_GetGamepadSensorData(pad, kind, data.as_mut_ptr(), 3) }.then_some(data)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gamepad_type_maps_every_sdl3_family() {
+        // SDL_GAMEPAD_TYPE_* numeric values from SDL3 SDL_gamepad.h:
+        // 0 Unknown, 1 Standard, 2 Xbox360, 3 XboxOne, 4 PS3, 5 PS4, 6 PS5,
+        // 7 SwitchPro, 8 JoyconLeft, 9 JoyconRight, 10 JoyconPair
+        assert_eq!(prompts_for_gamepad_type(2, false), PROMPTS_XBOX);
+        assert_eq!(prompts_for_gamepad_type(3, false), PROMPTS_XBOX);
+        assert_eq!(prompts_for_gamepad_type(4, false), PROMPTS_PLAYSTATION);
+        assert_eq!(prompts_for_gamepad_type(5, false), PROMPTS_PLAYSTATION);
+        assert_eq!(prompts_for_gamepad_type(6, false), PROMPTS_PLAYSTATION);
+        assert_eq!(prompts_for_gamepad_type(7, false), PROMPTS_NINTENDO);
+        assert_eq!(prompts_for_gamepad_type(8, false), PROMPTS_NINTENDO);
+        assert_eq!(prompts_for_gamepad_type(9, false), PROMPTS_NINTENDO);
+        assert_eq!(prompts_for_gamepad_type(10, false), PROMPTS_NINTENDO);
+        assert_eq!(prompts_for_gamepad_type(0, false), PROMPTS_XBOX);
+        assert_eq!(prompts_for_gamepad_type(1, false), PROMPTS_XBOX);
+        assert_eq!(prompts_for_gamepad_type(1, true), PROMPTS_PLAYSTATION);
     }
 }

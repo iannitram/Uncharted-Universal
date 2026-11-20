@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 Nintendo button prompts and 3.23 tests (3.23, #439): added `Style::Nintendo`, `BB_BUTTON_PROMPTS=nintendo`, and `DrawNintendo` (A/B/X/Y in Nintendo positions, L/R/ZL/ZR, -/+) to `gpu/shadps4/video_core/texture_cache/button_prompts.{h,cpp}`, extracted `prompts_for_gamepad_type` with SDL3 family unit tests in `crates/runtime/src/pad/host.rs`, and added `tests/test_button_prompts.cpp` covering `ps4_sheet` generation and `BB_BUTTON_PROMPTS=nintendo` override. Physical controller verification on AMD handheld/tablet/desktop remains `needs-owner-device` on `#439`.
+
 - 2026-11-20 `fleet` record persistence (4.04, #458): added `read_records`, `write_records`, `upsert`, and `upsert_file` to `crates/core/src/fleet.rs` for atomic `fleet.txt` persistence, wired `uncharted-universal fleet record` in `crates/cli/src/commands.rs`, and wired `app/` `load_fleet` to read `<config>/fleet.txt` when `UNCHARTED_FLEET_RECORDS` is unset. Full workspace tests, clippy and fmt pass.
 
 - 2026-11-20 `loader` foundation in Rust (3.16, #457): added `crates/runtime/src/loader.rs` (`BBPROBE1`–`BBPROBE5` parser/validator, `missing_imports`, `ContentProfile`, masked `find_pattern`, CLI `parse_args`) and wired `--list-missing` into `uncharted-run`. Full guest execution, GPU/SDL/signal handlers remain in `src/probe.c` until 3.17.

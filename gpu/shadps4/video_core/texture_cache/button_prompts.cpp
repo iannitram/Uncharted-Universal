@@ -659,6 +659,40 @@ void DrawXbox(Canvas& c, const Slot& s) {
                  s.y1 - s.y0 - 6.0f);
 }
 
+/// Nintendo Switch button label for `icon` (A/B/X/Y in Nintendo's positions, L/R/ZL/ZR, -/+),
+/// or null for sticks and d-pad (which reuse the universal controller glyphs).
+const char* NintendoLabel(u8 icon) {
+    switch (icon) {
+    case Cross: return "B";
+    case Circle: return "A";
+    case Square: return "Y";
+    case Triangle: return "X";
+    case L1: return "L";
+    case R1: return "R";
+    case L2: return "ZL";
+    case R2: return "ZR";
+    case Options: return "+";
+    case Touchpad: return "-";
+    default: return nullptr;
+    }
+}
+
+void DrawNintendo(Canvas& c, const Font& font, const Slot& s) {
+    const char* label = NintendoLabel(s.icon);
+    if (!label) {
+        DrawXbox(c, s);
+        return;
+    }
+    const float x0 = s.x0 + 2.0f, y0 = s.y0 + 2.0f, x1 = s.x1 - 2.0f, y1 = s.y1 - 2.0f;
+    const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f;
+    const bool shoulder = s.icon == L1 || s.icon == R1 || s.icon == L2 || s.icon == R2;
+    const float radius = std::min(x1 - x0, y1 - y0) * (shoulder ? 0.30f : 0.5f);
+    DrawCap(c, x0, y0, x1, y1, [&](float x, float y) {
+        return RoundedRect(x, y, cx, cy, (x1 - x0) * 0.5f, (y1 - y0) * 0.5f, radius);
+    });
+    font.Draw(c, label, cx, cy, (x1 - x0) - 8.0f, (y1 - y0) * 0.55f);
+}
+
 Color Expand565(u16 v) {
     return {float((v >> 11) & 31) / 31.0f, float((v >> 5) & 63) / 63.0f, float(v & 31) / 31.0f};
 }
@@ -864,17 +898,22 @@ std::vector<Patch> BuildPicture(const Picture& picture, u32 levels, Style style)
             up.Blend(x, y, glow, 1.0f);
         }
     }
-    const int xbox = style == Style::Xbox && picture.shape != HudDPad ? XboxGlyph(picture.icon) : -1;
+    const char* nintendo = style == Style::Nintendo ? NintendoLabel(picture.icon) : nullptr;
+    const int glyph =
+        (style == Style::Xbox || (style == Style::Nintendo && !nintendo)) && picture.shape != HudDPad
+            ? XboxGlyph(picture.icon)
+            : -1;
+    const std::string label = nintendo ? std::string(nintendo) : bindings.keys[picture.icon];
     switch (picture.shape) {
     case RoundButton:
-        DrawRoundButton(up, font, bindings.keys[picture.icon], xbox);
+        DrawRoundButton(up, font, label, glyph);
         break;
     case Puck:
     case PressedPuck:
-        DrawPuck(up, font, bindings.keys[picture.icon], picture.shape == PressedPuck, xbox);
+        DrawPuck(up, font, label, picture.shape == PressedPuck, glyph);
         break;
     case HudDPad:
-        if (style == Style::Xbox) {
+        if (style == Style::Xbox || style == Style::Nintendo) {
             DrawXboxHudDPad(up, picture.icon);
         } else {
             DrawHudDPad(up, font, bindings, picture.icon);
@@ -1014,7 +1053,9 @@ std::vector<Patch> Build(const Sheet& sheet, u32 levels, Style style) {
     const Font font;
     Canvas canvas{sheet.width, sheet.height};
     for (const Slot& s : sheet.slots) {
-        if (style == Style::Xbox) {
+        if (style == Style::Nintendo) {
+            DrawNintendo(canvas, font, s);
+        } else if (style == Style::Xbox) {
             DrawXbox(canvas, s);
         } else if (s.icon >= DPad) {
             DrawArrows(canvas, font, s, bindings);
@@ -1075,10 +1116,10 @@ namespace {
 std::atomic<int> device_used{DeckPictures() ? 2 : 0};
 std::atomic<u32> switches{0};
 
-enum class Force : u8 { Auto, Off, Keyboard, Xbox };
+enum class Force : u8 { Auto, Off, Keyboard, Xbox, Nintendo };
 
 /// BB_BUTTON_PROMPTS: unset or auto follows the device used last; 0 (or off, playstation) keeps the
-/// game's own pictures; keyboard or xbox shows that style always.
+/// game's own pictures; keyboard, xbox, or nintendo shows that style always.
 Force Forced() {
     static const Force forced = [] {
         const char* env = std::getenv("BB_BUTTON_PROMPTS");
@@ -1091,6 +1132,9 @@ Force Forced() {
         if (!std::strcmp(env, "xbox") || !std::strcmp(env, "steamdeck")) {
             return Force::Xbox;
         }
+        if (!std::strcmp(env, "nintendo")) {
+            return Force::Nintendo;
+        }
         return !std::strcmp(env, "0") || !std::strcmp(env, "off") || !std::strcmp(env, "playstation")
                    ? Force::Off
                    : Force::Auto;
@@ -1100,14 +1144,12 @@ Force Forced() {
 } // namespace
 
 void SetDevice(int device) {
-    // 3 is a Nintendo controller (Switch Pro, Joy-Con): its own pictures arrive in #439, so it
-    // shows the Xbox ones until then, but the launcher still learns which family was used last.
     device = std::clamp(device, 0, 3);
     if (device_used.exchange(device) != device) {
         switches.fetch_add(1, std::memory_order_release);
         static constexpr const char* names[] = {
             "keyboard keys", "PlayStation controller used, PlayStation buttons",
-            "Xbox controller used, Xbox buttons", "Nintendo controller used, Xbox buttons until #439"};
+            "Xbox controller used, Xbox buttons", "Nintendo controller used, Nintendo buttons"};
         std::printf("Button prompts: %s\n", names[device]);
     }
 }
@@ -1120,16 +1162,21 @@ Style Shown() {
         return Style::Keyboard;
     case Force::Xbox:
         return Style::Xbox;
+    case Force::Nintendo:
+        return Style::Nintendo;
     case Force::Auto:
         break;
     }
     const int device = device_used.load(std::memory_order_relaxed);
-    return device == 0 ? Style::Keyboard : device == 1 ? Style::Original : Style::Xbox;
+    return device == 0 ? Style::Keyboard
+         : device == 1 ? Style::Original
+         : device == 3 ? Style::Nintendo
+                       : Style::Xbox;
 }
 
 u32 Switches() {
-    // BB_BUTTON_PROMPTS_FILE=<path>: the first word of that file (ps, xbox or keyboard) is the device
-    // used last, read twice a second; for runs without a controller (scripted runs ignore real ones).
+    // BB_BUTTON_PROMPTS_FILE=<path>: the first word of that file (ps, xbox, nintendo or keyboard)
+    // is the device used last, read twice a second; for runs without a controller.
     static const char* path = std::getenv("BB_BUTTON_PROMPTS_FILE");
     if (path && *path) {
         static auto checked = std::chrono::steady_clock::time_point{};
@@ -1139,7 +1186,10 @@ u32 Switches() {
             char word[16]{};
             if (FILE* f = std::fopen(path, "r")) {
                 if (std::fscanf(f, "%15s", word) == 1) {
-                    SetDevice(!std::strcmp(word, "ps") ? 1 : !std::strcmp(word, "xbox") ? 2 : 0);
+                    SetDevice(!std::strcmp(word, "ps")       ? 1
+                              : !std::strcmp(word, "xbox")   ? 2
+                              : !std::strcmp(word, "nintendo") ? 3
+                                                             : 0);
                 }
                 std::fclose(f);
             }
@@ -1207,7 +1257,9 @@ const std::vector<Patch>* Find(u64 hash, u32 width, u32 height, u32 levels, Form
     if (const auto it = built.find(key); it != built.end()) {
         return &it->second;
     }
-    const char* look = style == Style::Xbox ? "Xbox buttons" : "keyboard and mouse keys";
+    const char* look = style == Style::Xbox     ? "Xbox buttons"
+                     : style == Style::Nintendo ? "Nintendo buttons"
+                                                : "keyboard and mouse keys";
     if (sheet) {
         auto& patches = built[key] = Build(*sheet, levels, style);
         std::printf("Button prompts: %s button pictures drawn as %s (%zu pictures, %u mip levels)\n",
