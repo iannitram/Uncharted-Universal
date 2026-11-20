@@ -76,6 +76,34 @@ elseif (BB_PGO STREQUAL "use")
 endif()
 
 find_package(Vulkan REQUIRED)
+# Declared minimum Vulkan-Headers (1.4.x patch). v1.4.344 is the tested, bundled version
+# (docs/BUILDING_LINUX.md); newer headers such as 1.4.365 build as well. Read from the header the
+# build actually uses, so a stale system copy fails here instead of deep inside a compile.
+set(BB_VULKAN_HEADERS_MIN "1.4.344" CACHE STRING "Minimum Vulkan-Headers version (1.4.x)")
+set(bb_vk_header "${Vulkan_INCLUDE_DIR}/vulkan/vulkan_core.h")
+if (NOT EXISTS "${bb_vk_header}")
+    message(FATAL_ERROR "vulkan/vulkan_core.h not found under ${Vulkan_INCLUDE_DIR}")
+endif()
+file(STRINGS "${bb_vk_header}" bb_vk_version_line REGEX "^#define VK_HEADER_VERSION_COMPLETE")
+string(REGEX MATCH "VK_MAKE_API_VERSION\\( *0 *, *([0-9]+) *, *([0-9]+) *, *([0-9]+|VK_HEADER_VERSION) *\\)"
+       bb_vk_version_match "${bb_vk_version_line}")
+if (NOT bb_vk_version_match)
+    message(FATAL_ERROR "Cannot read VK_HEADER_VERSION_COMPLETE from ${bb_vk_header}")
+endif()
+set(bb_vk_major "${CMAKE_MATCH_1}")
+set(bb_vk_minor "${CMAKE_MATCH_2}")
+file(STRINGS "${bb_vk_header}" bb_vk_patch_line REGEX "^#define VK_HEADER_VERSION [0-9]+")
+string(REGEX MATCH "VK_HEADER_VERSION +([0-9]+)" bb_vk_patch_match "${bb_vk_patch_line}")
+if (NOT bb_vk_patch_match)
+    message(FATAL_ERROR "Cannot read VK_HEADER_VERSION from ${bb_vk_header}")
+endif()
+set(bb_vk_patch "${CMAKE_MATCH_1}")
+set(bb_vk_found "${bb_vk_major}.${bb_vk_minor}.${bb_vk_patch}")
+if (bb_vk_found VERSION_LESS BB_VULKAN_HEADERS_MIN)
+    message(FATAL_ERROR "Vulkan-Headers ${bb_vk_found} is older than the minimum "
+                        "${BB_VULKAN_HEADERS_MIN} (set BB_VULKAN_HEADERS_MIN to override)")
+endif()
+message(STATUS "Vulkan-Headers ${bb_vk_found} (minimum ${BB_VULKAN_HEADERS_MIN})")
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
 # bbport (Windows): MSYS2 has no magic_enum/miniz packages; the submodules are used instead.
