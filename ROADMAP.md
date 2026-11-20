@@ -114,11 +114,11 @@ Large local-model jobs are divided before dispatch. In particular #427 is five
 separate review units under the same parent: (1) S_LSHR_B64 (the actual hunk in
 upstream #5723 despite its V_LSHR_B64 title), (2) S_BFM_B64 (#5724), (3) scalar
 64-bit shift amount (#5725), (4) V_CVT_F32_UBYTE format (#5719), and (5) f32
-min/max fallback (#5714). The source audit found V_LSHR_B64 already dispatched
+min/max fallback (#5714, split into #450). The source audit found V_LSHR_B64 already dispatched
 and implemented; that is not evidence that the scalar fix is present. The
 coordinator first compares each source hunk to production, supplies exact symbols
 and test commands in a brief, and records already-present fixes with evidence.
-The #5714 fallback needs a separate dependency assessment before implementation;
+The #5714 fallback is tracked separately in #450 and needs a dependency assessment before implementation;
 its control-flow/device-feature changes must not be transplanted as a small
 local-model task. This is a work breakdown, not completed code.
 
