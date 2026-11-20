@@ -126,80 +126,22 @@ impl Stored {
     }
 }
 
-/// The frame rate a profile starts with (its `BB_VBLANK_HZ`), "60" when it has none.
-pub fn profile_rate(profile: &DeviceProfile) -> &'static str {
-    profile
-        .env
-        .iter()
-        .find(|(name, _)| *name == "BB_VBLANK_HZ")
-        .map_or("60", |(_, value)| value)
-}
+pub use uncharted_core::launch_settings::{profile_allows, profile_rate};
 
-/// Whether `profile` allows `value` for `setting` (a settings key). The frame rate must be one
-/// the profile offers; the AMD handheld keeps Steam Deck mode's rules (`DECK_UNAVAILABLE` in
-/// `launcher/uncharted_linux.py`): no FSR 4, FSR 4.1.1 or DLSS, and no DLSS Frame Generation.
-pub fn profile_allows(profile: &DeviceProfile, setting: &str, value: &str) -> bool {
-    match (profile.id, setting) {
-        (_, "frame_rate") => profile
-            .frame_rates
-            .iter()
-            .any(|rate| rate.to_string() == value),
-        ("amd-handheld", "anti_aliasing") => !matches!(value, "fsr4" | "fsr411" | "dlss"),
-        ("amd-handheld", "frame_generation") => value != "dlss",
-        _ => true,
-    }
-}
-
-/// The settings `build_env` starts the game with, from the saved values and the device profile:
-/// the Python launcher's mapping (`build_environment`). `BB_UPSCALER` is the upscaler, `off` for
-/// FSR 1, which is `BB_FSR1`; `BB_UPSCALE_QUALITY` is the preset, `off` with no upscaler (the game
-/// draws at the resolution). A frame rate the profile does not offer becomes its own (Steam Deck
-/// mode's 30/60 cap), and a value the profile does not allow becomes `off`.
-// The play command (roadmap 2.02) reads settings.json through this; until then only the
-// tests run it against `build_env`.
+/// Convert the app's display values through the shared launch policy.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn run_settings(stored: &Stored, profile: &DeviceProfile) -> run_env::Settings {
-    let or_off = |setting: &str, value: &str| {
-        if value.is_empty() || !profile_allows(profile, setting, value) {
-            "off".to_owned()
-        } else {
-            value.to_owned()
-        }
-    };
-    let upscaler = or_off("anti_aliasing", &stored.anti_aliasing);
-    let rate = if profile_allows(profile, "frame_rate", &stored.frame_rate) {
-        stored.frame_rate.clone()
-    } else {
-        profile_rate(profile).to_owned()
-    };
-    let mut settings = run_env::Settings {
-        resolution: (!stored.render_resolution.is_empty())
-            .then(|| stored.render_resolution.clone()),
-        upscale_quality: Some(if upscaler == "off" || stored.upscale_preset.is_empty() {
-            "off".to_owned()
-        } else {
-            stored.upscale_preset.clone()
-        }),
-        ..run_env::Settings::default()
-    };
-    let extra = &mut settings.extra;
-    extra.insert("BB_VBLANK_HZ".into(), rate);
-    if upscaler == "fsr1" {
-        extra.insert("BB_FSR1".into(), "1".into());
-    }
-    extra.insert(
-        "BB_UPSCALER".into(),
-        if upscaler == "fsr1" {
-            "off".into()
-        } else {
-            upscaler
+    uncharted_core::launch_settings::run_settings(
+        &uncharted_core::launch_settings::Display {
+            device_profile: stored.device_profile.clone(),
+            frame_rate: stored.frame_rate.clone(),
+            render_resolution: stored.render_resolution.clone(),
+            anti_aliasing: stored.anti_aliasing.clone(),
+            upscale_preset: stored.upscale_preset.clone(),
+            frame_generation: stored.frame_generation.clone(),
         },
-    );
-    extra.insert(
-        "BB_FRAME_GEN".into(),
-        or_off("frame_generation", &stored.frame_generation),
-    );
-    settings
+        profile,
+    )
 }
 
 /// The report for a device not tuned yet: an unknown GPU with no video memory known, so the

@@ -38,6 +38,7 @@ pub mod host_env;
 pub mod hub;
 pub mod language;
 pub mod launch;
+pub mod launch_settings;
 pub mod link;
 pub mod logs;
 pub mod mods;
