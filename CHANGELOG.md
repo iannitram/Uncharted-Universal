@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-20 Shared launch-settings policy (#453, partial #444): core owns the existing display conversion, persisted display parser and profile rules; the app delegates its parser/profile policy and test conversion. CLI wiring is #454 and GUI launch remains parent work. Three focused core tests and core clippy pass; app tests are blocked locally by missing fontconfig/pkg-config. Based on controller PR #446; no end-to-end or device claim.
+
 - 2026-11-19 Launcher controller review fixes (#446): first-run folder and hub drafts survive submission, retry and cancellation without mixing fields; physical edits and controller edits share the committed draft. Direct CLI/Steam Play also applies the saved button-prompt choice, preserving explicit runtime environment overrides. Physical controller acceptance remains open.
 - 2026-11-19 Launcher controller navigation (2.12, #438): shared pad input tracks hot-plug and per-controller sticks. Hints follow the last pad used for navigation and Settings saves the seven-language Button prompts choice. First-run manual dump paths and hub addresses can be entered with a controller. Physical checks on the Windows desktop, AMD handheld, Strix Halo tablet and Mac remain open.
 - 2026-11-19 Save Relay review fixes (#445): every pull/push/conflict retry carries its numbered slot and checks the matching server identity; a title keeps that namespace through exit. Unsynced platform builds preserve local legacy save layouts. Synthetic process coverage checks independent histories for slots 1 and 3 and an empty slot 5; shared integration safeguards tracked in save-relay#301. Hardware round trips and launcher conflict UI remain open.

@@ -29,20 +29,19 @@ fn read(config: &Path) -> Map<String, Value> {
 /// The stored values; a key that is missing or not a string is empty (the device default).
 pub fn load(config: &Path) -> Stored {
     let map = read(config);
-    let get = |key: &str| {
-        map.get(key)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
+    let display = uncharted_core::launch_settings::Display::from_json(&Value::Object(map.clone()));
     Stored {
-        device_profile: get("device_profile"),
-        frame_rate: get("frame_rate"),
-        render_resolution: get("render_resolution"),
-        anti_aliasing: get("anti_aliasing"),
-        upscale_preset: get("upscale_preset"),
-        frame_generation: get("frame_generation"),
-        button_prompts: prompts::Choice::from_id(&get("button_prompts")),
+        device_profile: display.device_profile,
+        frame_rate: display.frame_rate,
+        render_resolution: display.render_resolution,
+        anti_aliasing: display.anti_aliasing,
+        upscale_preset: display.upscale_preset,
+        frame_generation: display.frame_generation,
+        button_prompts: prompts::Choice::from_id(
+            map.get("button_prompts")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+        ),
         ..Stored::default()
     }
 }
