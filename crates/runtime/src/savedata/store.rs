@@ -104,14 +104,14 @@ fn file_seconds(meta: &fs::Metadata) -> Option<i64> {
     })
 }
 
-/// Writes `param.bin` in `meta` with the modification time now (a failure is ignored, as in C).
-fn write_param(meta: &str, param: &Param) {
+/// Writes `param.bin` in `meta` with the modification time now.
+fn write_param(meta: &str, param: &Param) -> std::io::Result<()> {
     let mut copy = param.clone();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(0));
     copy.set_mtime(now);
-    let _ = fs::write(Path::new(meta).join("param.bin"), copy.0);
+    fs::write(Path::new(meta).join("param.bin"), copy.0)
 }
 
 /// `param.bin` of `meta`: zeros for a missing file, a short file fills what it has, and the
@@ -153,36 +153,30 @@ pub(crate) fn valid_name(name: &[u8], max: usize) -> Option<String> {
     Some(String::from_utf8_lossy(name).into_owned())
 }
 
-/// SQL `LIKE`: `%` any run, `_` one character.
+/// SQL `LIKE`: `%` any run, `_` one character (iterative, bounded O(|s| * |p|)).
 pub(crate) fn like(s: &[u8], p: &[u8]) -> bool {
-    match p.split_first() {
-        None => s.is_empty(),
-        Some((b'%', rest)) => (0..=s.len()).any(|i| like(&s[i..], rest)),
-        Some((&c, rest)) => s
-            .split_first()
-            .is_some_and(|(&h, tail)| (c == b'_' || c == h) && like(tail, rest)),
+    let (mut si, mut pi) = (0usize, 0usize);
+    let (mut star_pi, mut star_si) = (None, 0usize);
+    while si < s.len() {
+        if pi < p.len() && p[pi] == b'%' {
+            star_pi = Some(pi);
+            star_si = si;
+            pi += 1;
+        } else if pi < p.len() && (p[pi] == b'_' || p[pi] == s[si]) {
+            si += 1;
+            pi += 1;
+        } else if let Some(sp) = star_pi {
+            star_si += 1;
+            si = star_si;
+            pi = sp + 1;
+        } else {
+            return false;
+        }
     }
-}
-
-/// `atoi`: blanks, a sign, digits; anything else ends it.
-fn atoi(text: &[u8]) -> i64 {
-    let mut rest = text;
-    while let Some((b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c, tail)) = rest.split_first() {
-        rest = tail;
+    while pi < p.len() && p[pi] == b'%' {
+        pi += 1;
     }
-    let negative = matches!(rest.first(), Some(b'-'));
-    if matches!(rest.first(), Some(b'-' | b'+')) {
-        rest = &rest[1..];
-    }
-    let mut value: i64 = 0;
-    for &c in rest.iter().take_while(|c| c.is_ascii_digit()) {
-        value = value.saturating_mul(10).saturating_add(i64::from(c - b'0'));
-    }
-    if negative {
-        -value
-    } else {
-        value
-    }
+    pi == p.len()
 }
 
 /// The game a save directory belongs to, by its `SAVEDATA0N` prefix (`u1`, `u2`, `u3`).
@@ -399,8 +393,11 @@ impl Store {
             }
             return Err(ERR_INTERNAL);
         }
-        if !exists {
-            write_param(&meta, &Param::zero());
+        if !exists && write_param(&meta, &Param::zero()).is_err() {
+            if self.vfs {
+                crate::file::unmount(point.as_bytes());
+            }
+            return Err(ERR_INTERNAL);
         }
         self.slots[slot] = Some(Slot {
             host,
@@ -417,7 +414,10 @@ impl Store {
     fn slot_of(&self, point: &[u8]) -> Option<usize> {
         let point = &point[..point.iter().position(|&b| b == 0).unwrap_or(point.len())];
         let rest = point.strip_prefix(b"/savedata")?;
-        let slot = usize::try_from(atoi(rest)).ok()?;
+        if rest.is_empty() || !rest.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        let slot = std::str::from_utf8(rest).ok()?.parse::<usize>().ok()?;
         (slot < SLOTS && self.slots[slot].is_some()).then_some(slot)
     }
 
@@ -481,7 +481,9 @@ impl Store {
             4 if data.len() >= 4 => param.0[USER_PARAM..USER_PARAM + 4].copy_from_slice(&data[..4]),
             _ => return ERR_PARAMETER,
         }
-        write_param(&entry.meta, &param);
+        if write_param(&entry.meta, &param).is_err() {
+            return ERR_INTERNAL;
+        }
         entry.dirty = true;
         0
     }
@@ -514,8 +516,14 @@ impl Store {
         if fs::metadata(&host).is_err() {
             return ERR_NOT_FOUND;
         }
-        let _ = fs::remove_dir_all(&host);
-        let _ = fs::remove_dir_all(&meta);
+        let remove_if_present = |p: &str| match fs::remove_dir_all(p) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        };
+        if remove_if_present(&host).is_err() || remove_if_present(&meta).is_err() {
+            return ERR_INTERNAL;
+        }
         0
     }
 
@@ -647,7 +655,9 @@ impl Store {
         }
         self.memory_size = size;
         if let Some(param) = param {
-            write_param(&dir, param);
+            if write_param(&dir, param).is_err() {
+                return ERR_INTERNAL;
+            }
         }
         0
     }
