@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 // The runtime's C ABI version. The loader compares [`uncharted_runtime_version`] with the value
 // its copy of the header has and refuses to start on a mismatch (a stale static library).
