@@ -1,4 +1,4 @@
-//! The launcher's seven interface languages and the setting that picks one. Replaces
+//! The launcher's eight interface languages and the setting that picks one. Replaces
 //! `LANGUAGES` and `language_code` in `launcher/uncharted_i18n.py`; the texts themselves are
 //! the app's gettext catalogues (`app/lang/<code>/LC_MESSAGES/uncharted-app.po`), not this
 //! crate's. The setting is `ui_language` in the launcher's `settings.json`, the key the Python
@@ -21,11 +21,12 @@ pub enum Language {
     German,
     Italian,
     Japanese,
+    ChineseSimplified,
 }
 
 impl Language {
     /// Every language, in the order the launcher offers them.
-    pub const ALL: [Language; 7] = [
+    pub const ALL: [Language; 8] = [
         Language::English,
         Language::Spanish,
         Language::Portuguese,
@@ -33,9 +34,10 @@ impl Language {
         Language::German,
         Language::Italian,
         Language::Japanese,
+        Language::ChineseSimplified,
     ];
 
-    /// The ISO 639-1 code; also the catalogue folder name under `app/lang/`.
+    /// The ISO 639-1 (or IETF) code; also the catalogue folder name under `app/lang/`.
     pub fn code(self) -> &'static str {
         match self {
             Language::English => "en",
@@ -45,6 +47,7 @@ impl Language {
             Language::German => "de",
             Language::Italian => "it",
             Language::Japanese => "ja",
+            Language::ChineseSimplified => "zh-CN",
         }
     }
 
@@ -58,6 +61,7 @@ impl Language {
             Language::German => "Deutsch",
             Language::Italian => "Italiano",
             Language::Japanese => "日本語",
+            Language::ChineseSimplified => "简体中文",
         }
     }
 
@@ -67,14 +71,19 @@ impl Language {
             .find(|language| language.code() == code)
     }
 
-    /// The language of a system locale ("es_ES.UTF-8", "pt-BR", "ja"), by its language part;
-    /// `None` for a language the launcher has no texts for.
+    /// The language of a system locale ("es_ES.UTF-8", "pt-BR", "zh_CN.UTF-8", "ja"), by its
+    /// language part; `None` for a language the launcher has no texts for.
     pub fn from_locale(locale: &str) -> Option<Language> {
-        let base = locale
-            .split(['_', '-', '.', '@'])
-            .next()
-            .unwrap_or("")
-            .to_ascii_lowercase();
+        let mut parts = locale.split(['_', '-', '.', '@']);
+        let base = parts.next().unwrap_or("").to_ascii_lowercase();
+        if base == "zh" {
+            let sub = parts.next().unwrap_or("").to_ascii_lowercase();
+            return if matches!(sub.as_str(), "tw" | "hk" | "mo" | "hant") {
+                None
+            } else {
+                Some(Language::ChineseSimplified)
+            };
+        }
         Language::from_code(&base)
     }
 }
@@ -164,11 +173,11 @@ mod tests {
     }
 
     #[test]
-    fn launcher_offers_the_seven_languages() {
+    fn launcher_offers_the_eight_languages() {
         // `test_launcher_offers_selected_languages` in tests/test_uncharted_i18n.py.
         assert_eq!(
             setting_choices(),
-            ["", "en", "es", "pt", "fr", "de", "it", "ja"]
+            ["", "en", "es", "pt", "fr", "de", "it", "ja", "zh-CN"]
         );
         let names: Vec<_> = Language::ALL.iter().map(|l| l.native_name()).collect();
         assert_eq!(
@@ -180,7 +189,8 @@ mod tests {
                 "Français",
                 "Deutsch",
                 "Italiano",
-                "日本語"
+                "日本語",
+                "简体中文",
             ]
         );
     }
@@ -198,6 +208,13 @@ mod tests {
         assert_eq!(resolve("", Some("pt-BR")), Language::Portuguese);
         assert_eq!(resolve("", Some("de_DE.UTF-8")), Language::German);
         assert_eq!(resolve("", Some("FR")), Language::French);
+        assert_eq!(
+            resolve("", Some("zh_CN.UTF-8")),
+            Language::ChineseSimplified
+        );
+        assert_eq!(resolve("", Some("zh-CN")), Language::ChineseSimplified);
+        assert_eq!(resolve("", Some("zh-Hans")), Language::ChineseSimplified);
+        assert_eq!(resolve("", Some("zh_TW")), Language::English);
         assert_eq!(resolve("", Some("")), Language::English);
     }
 
@@ -213,12 +230,12 @@ mod tests {
     fn next_setting_steps_through_every_choice_and_wraps() {
         let mut setting = "";
         let mut seen = vec![setting];
-        for _ in 0..7 {
+        for _ in 0..8 {
             setting = next_setting(setting);
             seen.push(setting);
         }
         assert_eq!(seen, setting_choices());
-        assert_eq!(next_setting("ja"), "");
+        assert_eq!(next_setting("zh-CN"), "");
         assert_eq!(next_setting("unknown"), "en");
     }
 

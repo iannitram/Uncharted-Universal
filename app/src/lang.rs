@@ -19,6 +19,7 @@ fn catalogue(language: Language) -> Option<&'static str> {
         Language::German => include_str!("../lang/de/LC_MESSAGES/uncharted-app.po"),
         Language::Italian => include_str!("../lang/it/LC_MESSAGES/uncharted-app.po"),
         Language::Japanese => include_str!("../lang/ja/LC_MESSAGES/uncharted-app.po"),
+        Language::ChineseSimplified => include_str!("../lang/zh-CN/LC_MESSAGES/uncharted-app.po"),
     })
 }
 
@@ -285,6 +286,7 @@ mod tests {
             (Language::German, "Zurück"),
             (Language::Italian, "Indietro"),
             (Language::Japanese, "戻る"),
+            (Language::ChineseSimplified, "返回"),
         ];
         for (language, back) in expected {
             assert_eq!(Texts::new(language).tr("Back"), back, "{language:?}");
