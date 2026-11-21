@@ -239,12 +239,14 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
         .var("BB_RUNTIME")
         .map(PathBuf::from)
         .unwrap_or_else(|| beside(&ctx.exe, "uncharted-run"));
+    let resolved =
+        uncharted_core::launch_settings::load_for_launch(&AppDirs::new(&vars).settings(), device);
     Ok(PlayPlan {
         install,
         paths,
-        profile: device,
+        profile: resolved.profile,
         player_env,
-        settings: Settings::default(),
+        settings: resolved.settings,
         program,
     })
 }
