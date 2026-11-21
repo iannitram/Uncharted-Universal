@@ -516,6 +516,7 @@ void TemporalUpscaler::OnDispatch(u64 cs_hash) {
     if (frame_generator && frame_generator->Wanted() && camera_motion.VelocityMode() &&
         !frame_gen_captured) {
         frame_gen_captured = true;
+        hudless_pending = false; // a frame not shown (its picture without UI is not this one's)
         CaptureFrameGen();
     }
     if (failed || Scaled()) {
@@ -1452,7 +1453,28 @@ void TemporalUpscaler::OnDrawRecorded(u64 ps_hash, VideoCore::ImageId color) {
         !frame_generator->Wanted()) {
         return;
     }
+    // Not here: the game's FXAA still draws into this buffer (full-screen passes, vertex shader
+    // f585649d). Taken before the first UI draw (OnDraw) or when the frame is shown
+    // (DisplayOverride), as the upscaled frames are (RunScaledVelocity).
+    hudless_pending = true;
+    hudless_color = color;
+    hudless_address = texture_cache.GetImage(color).info.guest_address;
+}
+
+void TemporalUpscaler::CaptureHudlessNow(VideoCore::ImageId color, const char* where) {
+    hudless_pending = false;
+    if (!frame_generator || !frame_generator->Wanted() || !color) {
+        return;
+    }
     auto& image = texture_cache.GetImage(color);
+    if (image.info.guest_address != hudless_address) {
+        return;
+    }
+    if (static bool noted = false; !noted) {
+        noted = true;
+        std::printf("Frame generation: the picture without UI taken after the game's full-screen "
+                    "passes (%s)\n", where);
+    }
     scheduler.EndRendering();
     runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
                     vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
@@ -1551,6 +1573,11 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         return; // the UI starts at OnComposite, not at Bloodborne's Scaleform draws
     }
     if (!Scaled() && vs_hash == ui_trigger_vs) done_this_frame = true;
+    // Frame generation's picture without UI: the finished frame, before this first UI draw.
+    if (hudless_pending && color && u32(vs_hash) != 0xf585649du &&
+        texture_cache.GetImage(color).info.guest_address == hudless_address) {
+        CaptureHudlessNow(color, "at the first UI draw");
+    }
     if (!Scaled() || !color) {
         return;
     }
@@ -2395,6 +2422,10 @@ bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
 }
 
 bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
+    // Frame generation's picture without UI of a frame without UI draws: the frame shown.
+    if (hudless_pending && address == hudless_address) {
+        CaptureHudlessNow(hudless_color, "when shown, no UI draw");
+    }
     std::scoped_lock lock{display_mutex};
     const auto it = displays.find(address);
     if (it == displays.end() || !it->second.valid) {
