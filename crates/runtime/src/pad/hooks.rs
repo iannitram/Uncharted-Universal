@@ -310,12 +310,14 @@ unsafe extern "win64" fn u1_joypad_sticks_102(
 /// U2 and U3 fill the same float state (an array of pads in U3: pad 0 first, a pad every 0x64
 /// bytes), in code of their own; the hooks sit after the stick values are stored, in each
 /// build's registers.
-unsafe extern "win64" fn u2_sticks_r14(_: u64, _: u64, _: u64, r14: u64, _: *const GuestRegs) {
+unsafe extern "win64" fn u2_sticks_r14(_: u64, _: u64, image: u64, r14: u64, _: *const GuestRegs) {
     sticks(r14, &U23_100_AIM);
+    unsafe { super::u2sniper::on_frame(image, 1) };
 }
-unsafe extern "win64" fn u2_sticks_r12(_: u64, _: u64, _: u64, _: u64, regs: *const GuestRegs) {
+unsafe extern "win64" fn u2_sticks_r12(_: u64, _: u64, image: u64, _: u64, regs: *const GuestRegs) {
     // SAFETY: the thunk's frame.
     sticks(unsafe { (*regs).r12 }, &U23_102_AIM);
+    unsafe { super::u2sniper::on_frame(image, 0) };
 }
 unsafe extern "win64" fn u3_sticks_r13(_: u64, _: u64, _: u64, _: u64, regs: *const GuestRegs) {
     // SAFETY: the thunk's frame.
@@ -657,7 +659,7 @@ unsafe extern "win64" fn u3_menu_music_into_level(
 /// tell the 1.00 and 1.02 builds of U1 apart by the displacement of a constant (unmasked), the
 /// last one is any other build (aimed like 1.02). Entries are tried in order, a site is hooked
 /// once.
-static GUEST_CALLBACKS: [GuestCallback; 36] = [
+static GUEST_CALLBACKS: [GuestCallback; 44] = [
     // U1 follow camera, build 100
     hook(c"U1 follow camera (mouse)",
         c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 28 01 00 00 \
@@ -877,6 +879,32 @@ static GUEST_CALLBACKS: [GuestCallback; 36] = [
     hook(c"U2 Chapter Select weapons: TaskActivate",
         c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 e4 e0 ff ff ff 48 81 ec a0 02 00 00 48 89 fb 48 8b 05 bb e8 5e 00 48 8b 00",
         0x0, 6, u2_chapter_activate_us),
+    // U2 Monastery invisible sniper (#430, Mevlock e8d4a6b, fc5be37, f0458df, 76781d2):
+    // hold entrance-tunnel-door-1 close until live bridge/sniper NPCs exit, and relocate late sniper-6/-7.
+    hook(c"U2 monastery sniper: spawn (1.02)",
+        c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 38 01 00 00 4c 8b 2d 35 54 d6 00",
+        0x0, 6, super::u2sniper::spawn_102),
+    hook(c"U2 monastery sniper: spawn (1.00)",
+        c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 38 01 00 00 4c 8b 2d 8d ea dd 00",
+        0x0, 6, super::u2sniper::spawn_100),
+    hook(c"U2 monastery sniper: gate closes (1.02)",
+        c"55 48 89 e5 41 56 53 85 ff 7e 43 8b 1e 31 f6 89 df e8 2a e4 2d 00",
+        0x0, 7, super::u2sniper::gate_on_102),
+    hook(c"U2 monastery sniper: gate opens (1.02)",
+        c"55 48 89 e5 41 56 53 85 ff 7e 43 8b 1e 31 f6 89 df e8 9a e4 2d 00",
+        0x0, 7, super::u2sniper::gate_off_102),
+    hook(c"U2 monastery sniper: gate closes (1.00)",
+        c"55 48 89 e5 41 56 53 85 ff 7e 43 8b 1e 31 f6 89 df e8 8a ca c2 ff",
+        0x0, 7, super::u2sniper::gate_on_100),
+    hook(c"U2 monastery sniper: gate opens (1.00)",
+        c"55 48 89 e5 41 56 53 85 ff 7e 43 8b 1e 31 f6 89 df e8 2a ca c2 ff",
+        0x0, 7, super::u2sniper::gate_off_100),
+    hook(c"U2 monastery sniper: gate animate (1.02)",
+        c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 68 01 00 00 49 89 f7 4c",
+        0x0, 6, super::u2sniper::animate_102),
+    hook(c"U2 monastery sniper: gate animate (1.00)",
+        c"55 48 89 e5 41 57 41 56 41 55 41 54 53 48 81 ec 68 01 00 00 41 89 d4 49",
+        0x0, 6, super::u2sniper::animate_100),
 ];
 
 /// `const RuntimeGuestCallback *runtime_guest_callbacks(size_t *count)`.

@@ -21,6 +21,7 @@ pub mod hooks;
 pub mod host;
 pub mod input;
 pub mod read;
+pub mod u2sniper;
 
 #[cfg(test)]
 mod device_tests;
