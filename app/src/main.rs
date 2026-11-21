@@ -2061,7 +2061,7 @@ mod tests {
         assert!(!shows(&window, &heading));
 
         // Every language switches without an error.
-        for _ in 0..6 {
+        for _ in 0..7 {
             window.invoke_input(6);
         }
         assert_eq!(language::read_setting(&file), "");

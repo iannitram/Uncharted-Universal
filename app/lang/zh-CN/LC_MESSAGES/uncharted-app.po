@@ -1,0 +1,203 @@
+# Simplified Chinese (zh-CN) texts of the Uncharted Universal launcher (app/).
+# English is the source: each msgid is the text as written in ui/app.slint (@tr) or src/ (texts.tr).
+# src/lang.rs tests that this file has every text the app shows, and nothing else.
+msgid ""
+msgstr ""
+"Project-Id-Version: uncharted-app\n"
+"Language: zh-CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "About"
+msgstr "关于"
+
+msgid "Fleet"
+msgstr "设备"
+
+msgid "Version {}"
+msgstr "版本 {}"
+
+msgid "Uncharted Universal is free software under the GNU General Public License, version 2 only."
+msgstr "Uncharted Universal 是仅在 GNU 通用公共许可证第 2 版下发布的自由软件。"
+
+msgid "Patches"
+msgstr "补丁"
+
+msgid "No patches yet: the patches of a prepared game are listed here."
+msgstr "暂无补丁：已准备游戏的补丁将在此处列出。"
+
+msgid "Licences"
+msgstr "许可证"
+
+msgid "Each bundled library's licence text is in the licenses folder next to the app."
+msgstr "各随附库的许可证文本位于应用程序旁的 licenses 文件夹中。"
+
+msgid "Learned from"
+msgstr "参考项目"
+
+msgid "Studied for how they work; no code was copied from them."
+msgstr "仅用于研究其工作原理；未从中复制任何代码。"
+
+msgid "Built with Slint"
+msgstr "使用 Slint 构建"
+
+msgid "This application is built with Slint, used under the Slint Royalty-free Desktop, Mobile, and Web Applications licence (https://slint.dev)."
+msgstr "本应用程序使用 Slint 构建，遵循 Slint 免版税桌面、移动和 Web 应用程序许可证 (https://slint.dev)。"
+
+msgid "Back"
+msgstr "返回"
+
+msgid "Up and down scroll. {} chooses, {} goes back."
+msgstr "上下滚动。{} 选择，{} 返回。"
+
+msgid "Language: {}"
+msgstr "语言：{}"
+
+msgid "Automatic ({})"
+msgstr "自动 ({})"
+
+msgid "No licence stated"
+msgstr "未注明许可证"
+
+msgid "This patch is for a different title, executable or revision."
+msgstr "此补丁适用于不同的游戏、可执行文件或版本。"
+
+msgid "This patch has no supported literal writes."
+msgstr "此补丁不包含受支持的字面量写入。"
+
+msgid "Not available: {}"
+msgstr "不可用：{}"
+
+msgid "On"
+msgstr "开"
+
+msgid "Off"
+msgstr "关"
+
+msgid "by {}"
+msgstr "作者：{}"
+
+msgid "Graphics engine (our fork, in gpu/)"
+msgstr "图形引擎（我们的分支，位于 gpu/）"
+
+msgid "The C and C++ port this one grew from"
+msgstr "本移植版所基于的 C/C++ 版本"
+
+msgid "Targeted fixes for bugs with the same cause"
+msgstr "针对相同原因缺陷的定向修复"
+
+msgid "The launcher's interface"
+msgstr "启动器界面"
+
+msgid "Input, window and audio in the game"
+msgstr "游戏内的输入、窗口与音频"
+
+msgid "Controller input in the launcher"
+msgstr "启动器中的手柄输入"
+
+msgid "Reading patch files"
+msgstr "读取补丁文件"
+
+msgid "Settings and record files"
+msgstr "设置与记录文件"
+
+msgid "Finding the system language"
+msgstr "检测系统语言"
+
+msgid "Platform, Steam, bundle and save card modules, copied with credit"
+msgstr "平台、Steam、打包与存档卡模块（已署名借鉴）"
+
+msgid "Launcher profiles and settings"
+msgstr "启动器配置与设置"
+
+msgid "Release packaging"
+msgstr "发布打包"
+
+msgid "Android device notes"
+msgstr "Android 设备说明"
+
+msgid "The iOS app's layout"
+msgstr "iOS 应用结构"
+
+msgid "Mac packaging"
+msgstr "Mac 打包"
+
+msgid "Raw mouse aiming and cover camera (Uncharted 1 and 2)"
+msgstr "原始鼠标瞄准与掩体视角（《神秘海域》1 与 2）"
+
+msgid "Aim sensitivity (raw mouse)"
+msgstr "瞄准灵敏度（原始鼠标）"
+
+msgid "The game stopped"
+msgstr "游戏已停止"
+
+msgid "Chapter: {}"
+msgstr "章节：{}"
+
+msgid "Chapter: not known yet (no save)"
+msgstr "章节：未知（无存档）"
+
+msgid "This is a known problem: {}"
+msgstr "这是一个已知问题：{}"
+
+msgid "Fixed in version {}; update the launcher."
+msgstr "已在版本 {} 中修复；请更新启动器。"
+
+msgid "This crash is new to us. Report it and we can look into it."
+msgstr "这是一个尚未记录的崩溃。请向我们报告以便排查。"
+
+msgid "What the game said: {}"
+msgstr "游戏输出信息：{}"
+
+msgid "Turn on {} and play again"
+msgstr "开启 {} 并重新开始游戏"
+
+msgid "Play again"
+msgstr "再玩一次"
+
+msgid "Open the issue page"
+msgstr "打开问题页面"
+
+msgid "Report it"
+msgstr "报告问题"
+
+msgid "The log is copied. Paste it into the Log field of the form."
+msgstr "日志已复制。请将其粘贴到表单的 Log 栏中。"
+
+msgid "Could not save the setting: {}"
+msgstr "无法保存设置：{}"
+
+msgid "Could not start the game: {}"
+msgstr "无法启动游戏：{}"
+
+msgid "Button prompts"
+msgstr "按键提示"
+
+msgid "Automatic"
+msgstr "自动"
+
+msgid "Keyboard"
+msgstr "键盘"
+
+msgid "Space"
+msgstr "空格"
+
+msgid "Erase"
+msgstr "退格"
+
+msgid "Done"
+msgstr "完成"
+
+msgid "{}/{} Change keys   {} Choose   {} Cancel"
+msgstr "{}/{} 切换按键   {} 选择   {} 取消"
+
+msgid "Xbox"
+msgstr "Xbox"
+
+msgid "PlayStation"
+msgstr "PlayStation"
+
+msgid "Nintendo"
+msgstr "Nintendo"
