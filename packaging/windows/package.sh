@@ -27,9 +27,17 @@ for face in "${faces[@]}"; do cp "$faces_dir/$face.exe" "$dest/"; done
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
 done
-# Every DLL the executables load from the CLANG64 tree (SDL3, FFmpeg, Vulkan loader, ...).
+# Every DLL the executables load from the CLANG64 tree (SDL3, Vulkan loader, ...).
+# FFmpeg (and x264/x265) are omitted by default (#299) because MSYS2 builds FFmpeg with
+# --enable-version3 (GPL-3.0), which cannot ship with a GPL-2.0-only project; set
+# BB_BUNDLE_FFMPEG=1 only with an LGPL or GPL-2.0-compatible build (checked by licence_check.py).
 ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
     awk '/\/clang64\/bin\// {print $3}' | sort -u > out/bundled-dlls.txt
+if [[ ${BB_BUNDLE_FFMPEG:-0} != 1 ]]; then
+    grep -viE '/(avcodec|avformat|avutil|swscale|swresample|postproc|libx264|libx265)(-[0-9]+)?\.dll$' \
+        out/bundled-dlls.txt > out/bundled-dlls.filtered.txt || true
+    mv out/bundled-dlls.filtered.txt out/bundled-dlls.txt
+fi
 while read -r dll; do cp -u "$dll" "$dest/bin/"; done < out/bundled-dlls.txt
 python3 packaging/windows/bundle_relay.py "$dest" out/component-cache
 cp LICENSE "$dest/"
