@@ -101,22 +101,16 @@ bool CanBlitToSwapchain(const vk::PhysicalDevice physical_device, vk::Format for
 
 static vk::Rect2D FitImage(s32 frame_width, s32 frame_height, s32 swapchain_width,
                            s32 swapchain_height) {
-    float frame_aspect = static_cast<float>(frame_width) / frame_height;
-    float swapchain_aspect = static_cast<float>(swapchain_width) / swapchain_height;
-
-    u32 dst_width = swapchain_width;
-    u32 dst_height = swapchain_height;
-
-    if (frame_aspect > swapchain_aspect) {
-        dst_height = static_cast<s32>(swapchain_width / frame_aspect);
-    } else {
-        dst_width = static_cast<s32>(swapchain_height * frame_aspect);
+    if (frame_width > 0 && frame_height > 0 && swapchain_width > 0 && swapchain_height > 0) {
+        const BbMovieRect rect = bbgpu_movie_fit_rect(
+            static_cast<u32>(swapchain_width), static_cast<u32>(swapchain_height),
+            static_cast<u32>(frame_width), static_cast<u32>(frame_height));
+        return vk::Rect2D{{static_cast<s32>(rect.x), static_cast<s32>(rect.y)},
+                          {rect.width, rect.height}};
     }
-
-    const s32 offset_x = (swapchain_width - dst_width) / 2;
-    const s32 offset_y = (swapchain_height - dst_height) / 2;
-
-    return vk::Rect2D{{offset_x, offset_y}, {dst_width, dst_height}};
+    return vk::Rect2D{{0, 0},
+                      {static_cast<u32>(std::max(0, swapchain_width)),
+                       static_cast<u32>(std::max(0, swapchain_height))}};
 }
 
 [[nodiscard]] vk::ImageBlit MakeImageBlitFit(s32 frame_width, s32 frame_height, s32 swapchain_width,
