@@ -466,3 +466,24 @@ fn relay_follows_a_custom_runtime_mapping_or_refuses_a_split_title() {
         assert!(mapped_save_dir(Game::U2, &env(spec)).is_err());
     }
 }
+
+#[test]
+fn windows_save_layout_and_relay_dir_follow_selected_mode() {
+    let temp = Temp::new();
+    let user = &temp.0;
+    select(user, Game::U2, 2).unwrap();
+
+    assert_eq!(
+        relay_saves_dir_for_layout(user, Game::U2, "CUSA02343", SaveLayout::PerGameSlots),
+        user.join("Save slots/Uncharted 2/Slot 2")
+    );
+    assert!(mapping_for_layout(user, SaveLayout::PerGameSlots)
+        .unwrap()
+        .contains("SAVEDATA02=Save slots/Uncharted 2/Slot 2"));
+
+    assert_eq!(
+        relay_saves_dir_for_layout(user, Game::U2, "CUSA02343", SaveLayout::SameAsWindows),
+        user.join("savedata/1/CUSA02343")
+    );
+    assert_eq!(mapping_for_layout(user, SaveLayout::SameAsWindows), None);
+}
