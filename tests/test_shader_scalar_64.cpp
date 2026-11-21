@@ -2,10 +2,18 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <array>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
+#include "shader_recompiler/backend/bindings.h"
+#include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/frontend/decode.h"
 #include "shader_recompiler/frontend/translate/translate.h"
+#include "shader_recompiler/ir/basic_block.h"
+#include "shader_recompiler/ir/ir_emitter.h"
+#include "shader_recompiler/ir/passes/ir_passes.h"
+#include "shader_recompiler/ir/program.h"
 #include "shader_recompiler/profile.h"
 
 int main() {
@@ -77,5 +85,89 @@ int main() {
             return 6;
         }
     }
+
+    // Verify branching float atomic min/max fallback (#450 / shadPS4 #5714) vs native path.
+    const auto emit_atomics = [](bool native_fminmax) -> std::vector<u32> {
+        Info info{};
+        RuntimeInfo runtime{};
+        runtime.Initialize(HwStage::Compute, SwStage::Compute);
+        BufferResource buf{};
+        buf.used_types = IR::Type::U32 | IR::Type::F32;
+        buf.buffer_type = BufferType::Guest;
+        buf.is_written = true;
+        info.buffers.push_back(buf);
+
+        ImageResource img{};
+        img.is_written = true;
+        img.is_atomic = true;
+        info.images.push_back(img);
+
+        Profile profile{};
+        profile.supports_buffer_fp32_atomic_min_max = native_fminmax;
+        profile.supports_image_fp32_atomic_min_max = native_fminmax;
+
+        Common::ObjectPool<IR::Inst> inst_pool;
+        IR::Block entry(inst_pool);
+        IR::IREmitter ir(entry, entry.end());
+        const auto buf_handle = ir.Imm32(0u);
+        const auto img_handle = ir.Imm32(0u);
+        const auto coord = ir.CompositeConstruct(ir.Imm32(0u), ir.Imm32(0u));
+        const auto neg_val = ir.Imm32(-1.5f);
+        const auto pos_val = ir.Imm32(2.5f);
+        (void)ir.BufferAtomicFMin(buf_handle, ir.Imm32(0u), neg_val, {});
+        (void)ir.BufferAtomicFMax(buf_handle, ir.Imm32(4u), pos_val, {});
+        (void)ir.ImageAtomicFMin(img_handle, coord, neg_val, {});
+        (void)ir.ImageAtomicFMax(img_handle, coord, pos_val, {});
+
+        IR::Program program{info};
+        IR::AbstractSyntaxNode block_node{};
+        block_node.type = IR::AbstractSyntaxNode::Type::Block;
+        block_node.data.block = &entry;
+        IR::AbstractSyntaxNode ret_node{};
+        ret_node.type = IR::AbstractSyntaxNode::Type::Return;
+        program.syntax_list = {block_node, ret_node};
+        program.blocks = {&entry};
+        program.post_order_blocks = {&entry};
+        Optimization::CollectShaderInfoPass(program, profile);
+        Backend::Bindings bindings{};
+        return Backend::SPIRV::EmitSPIRV(profile, runtime, program, bindings);
+    };
+
+    const auto count_opcodes = [](const std::vector<u32>& spv) {
+        std::unordered_map<u16, u32> counts;
+        if (spv.size() < 5 || spv[0] != 0x07230203u) {
+            return counts;
+        }
+        for (size_t i = 5; i < spv.size();) {
+            const u32 wc = spv[i] >> 16;
+            const u16 op = static_cast<u16>(spv[i] & 0xffffu);
+            if (wc == 0 || i + wc > spv.size()) {
+                counts.clear();
+                return counts;
+            }
+            ++counts[op];
+            i += wc;
+        }
+        return counts;
+    };
+
+    // SPIR-V opcodes: OpSelectionMerge=247, OpBranchConditional=250, OpPhi=245,
+    // OpAtomicSMin=236, OpAtomicSMax=237, OpAtomicUMin=238, OpAtomicUMax=239,
+    // OpAtomicFMinEXT=5614, OpAtomicFMaxEXT=5615.
+    const auto fallback_counts = count_opcodes(emit_atomics(false));
+    if (fallback_counts.empty() || fallback_counts.at(247) != 4 ||
+        fallback_counts.at(250) != 4 || fallback_counts.at(245) < 4 ||
+        fallback_counts.at(236) != 2 || fallback_counts.at(237) != 2 ||
+        fallback_counts.at(238) != 2 || fallback_counts.at(239) != 2 ||
+        fallback_counts.contains(5614) || fallback_counts.contains(5615)) {
+        return 7;
+    }
+
+    const auto native_counts = count_opcodes(emit_atomics(true));
+    if (native_counts.empty() || native_counts.at(5614) != 2 || native_counts.at(5615) != 2 ||
+        native_counts.contains(247) || native_counts.contains(250)) {
+        return 8;
+    }
+
     return 0;
 }
