@@ -859,6 +859,30 @@ mod tests {
     }
 
     #[test]
+    fn fov_scale_matches_patched_display_aspect_on_target_screens() {
+        let native_aspect = 16.0_f32 / 9.0;
+        for (w, h, expected_mode) in [
+            (1920, 1080, 0_u32),
+            (1280, 800, 2),
+            (2266, 1488, 2),
+            (2208, 1840, 2),
+            (2092, 1080, 1),
+        ] {
+            let mut image = synthetic_image();
+            let _ = run(&mut image, &[("BB_GAME_RES", &format!("{w}x{h}"))]);
+            let patched_aspect = f32::from_bits(store(&image, 5));
+            let fov = uncharted_runtime_display_fov(w, h);
+            assert_eq!(fov.mode, expected_mode);
+            match fov.mode {
+                0 => assert!((patched_aspect - native_aspect).abs() < 1e-5),
+                1 => assert!((patched_aspect / native_aspect - fov.horizontal).abs() < 1e-4),
+                2 => assert!((native_aspect / patched_aspect - fov.vertical).abs() < 1e-4),
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
     fn movie_fit_rect_keeps_aspect_on_all_four_target_screens() {
         // 16:9 movie on 16:9 -> full frame
         assert_eq!(
