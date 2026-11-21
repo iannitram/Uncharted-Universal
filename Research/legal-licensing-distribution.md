@@ -591,4 +591,12 @@ The Linux package ships the Debian `copyright` file of each bundled library's pa
 a library with no owning package or no licence file fails the package step and is named. The rule
 lives in `packaging/licence_check.py` and is tested with fake inputs (`tests/test_licence_check.py`).
 This covers FFmpeg, x264, x265, SDL3 and libc++ texts only as far as MSYS2 and Debian provide them.
-Choosing a GPL-2.0-compatible FFmpeg build is still open in #299.
+
+## Update 2026-11-20: FFmpeg distribution choice (#299)
+
+Because MSYS2's `mingw-w64-ffmpeg` is built with `--enable-gpl --enable-version3` (GPL-3.0-or-later),
+which is incompatible with this project's GPL-2.0-only licence, `packaging/windows/package.sh` now
+omits FFmpeg, x264, and x265 DLLs by default (`BB_BUNDLE_FFMPEG=0`) so users supply their own
+LGPL or GPL-2.0-compatible FFmpeg build. `packaging/licence_check.py` also fails closed if any
+GPL-3.0 FFmpeg library is passed to the packager (`BB_BUNDLE_FFMPEG=1`), and
+`packaging/windows/README-Uncharted.txt` carries the GPL source offer and user-installed FFmpeg note.

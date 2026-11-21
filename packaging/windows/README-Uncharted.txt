@@ -67,3 +67,6 @@ Port by SuperMedo.
 
 Shared saves
 Save Relay v1.0.0-rc.2 ships beside the launcher and requires the Microsoft Visual C++ x64 Redistributable. Microsoft provides it at https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist. Once configured, Play syncs your selected slot before starting each game and after it quits. Without setup or while offline, your saves stay available locally. Until launcher sign-in is available, use the bundled save-relay.exe setup. A console Play session shows both sides of a conflict. The launcher leaves an unanswered conflict pending.
+
+Licence and source offer
+This project is licensed under the GNU General Public License, version 2 only (GPL-2.0-only; see LICENSE). Third-party library licence texts are in licenses\. Complete corresponding source code is available at https://github.com/iannitram/Uncharted-Universal (and for any bundled GPL/LGPL components, from the upstream packages named in licenses\). FFmpeg DLLs are not bundled by default (#299); place a user-installed LGPL or GPL-2.0-compatible (without --enable-version3) FFmpeg build in bin\ or on PATH for pre-rendered video playback.
