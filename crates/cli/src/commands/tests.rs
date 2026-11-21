@@ -283,6 +283,55 @@ fn play_plan_handles_missing_malformed_and_unknown_profile() {
 }
 
 #[test]
+fn play_plan_windows_prefers_packaged_bb_probe_over_uncharted_run() {
+    let dir = TempDir::new("play-win-pkg-スペース");
+    let pkg = dir.path().join("Uncharted Universal");
+    fs::create_dir_all(pkg.join("bin")).unwrap();
+    fs::write(pkg.join("uncharted-run.exe"), b"probe").unwrap();
+    fs::write(pkg.join("bin").join("bb-probe.exe"), b"native").unwrap();
+
+    let mut ctx = home(dir.path());
+    ctx.os = Os::Windows;
+    ctx.exe = pkg.join("uncharted-universal.exe");
+
+    let plan = play_plan(Game::U1, &ctx).unwrap();
+    assert_eq!(plan.program, pkg.join("bin").join("bb-probe.exe"));
+
+    // BB_RUNTIME override still wins over packaged bb-probe.exe.
+    let custom = pkg.join("custom loader.exe");
+    let ctx_override = set(ctx, "BB_RUNTIME", &custom);
+    let override_plan = play_plan(Game::U1, &ctx_override).unwrap();
+    assert_eq!(override_plan.program, custom);
+}
+
+#[test]
+fn runtime_runner_missing_loader_fails_actionably_and_preserves_guest_argv() {
+    let dir = TempDir::new("runner-missing");
+    let missing = dir.path().join("bin").join("bb-probe.exe");
+    let guest_argv = dir.path().join("guest argv.txt");
+    let runner = RuntimeRunner {
+        program: missing.clone(),
+        extra_args: vec!["--flag".into()],
+        relay_prompt_stdio: false,
+        host: Vec::new(),
+    };
+    let cmd = runner.command(&[], Some(&guest_argv));
+    let cmd_args: Vec<_> = cmd
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        cmd_args,
+        vec!["--guest-argv", &guest_argv.display().to_string(), "--flag"]
+    );
+    let err = runner.run(Game::U1, &[], None).unwrap_err();
+    assert!(
+        err.to_string().contains("could not start"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn play_plan_finds_the_runtime_beside_this_program() {
     let dir = TempDir::new("play-beside");
     let mut ctx = home(dir.path());

@@ -238,7 +238,7 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
     let program = ctx
         .var("BB_RUNTIME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| beside(&ctx.exe, "uncharted-run"));
+        .unwrap_or_else(|| resolve_runtime(&ctx.exe, ctx.os));
     let resolved =
         uncharted_core::launch_settings::load_for_launch(&AppDirs::new(&vars).settings(), device);
     Ok(PlayPlan {
@@ -282,6 +282,24 @@ fn device_strings(ctx: &Ctx) -> (String, String) {
         .unwrap_or_default();
     let release = fs::read_to_string("/etc/os-release").unwrap_or_default();
     (cpu, release)
+}
+
+/// While `uncharted-run.exe` is still a probe until 3.17 (#443), Windows Play prefers the
+/// packaged native loader (`bin/bb-probe.exe` or `bb-probe.exe` beside `exe`) when present.
+fn resolve_runtime(exe: &Path, os: Os) -> PathBuf {
+    if os == Os::Windows {
+        if let Some(dir) = exe.parent().filter(|d| !d.as_os_str().is_empty()) {
+            for candidate in [
+                dir.join("bin").join("bb-probe.exe"),
+                dir.join("bb-probe.exe"),
+            ] {
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    beside(exe, "uncharted-run")
 }
 
 /// A program in the same folder as `exe`, with the OS's executable suffix.
