@@ -182,8 +182,11 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
 CameraMotion::~CameraMotion() = default;
 
 float CameraMotion::VerticalFov() const noexcept {
+    const auto fov = bbgpu_fov_scale();
+    const float vert_scale = fov.vertical > 0.0f ? fov.vertical : 1.0f;
     if (current.proj[1] == 0.0f) {
-        return 1.0f; // no camera constants (velocity mode): a typical 57 degrees
+        // No camera constants (velocity mode): scale the typical 57-degree (1 rad) FOV by Vert+.
+        return 2.0f * std::atan(vert_scale * std::tan(0.5f));
     }
     return 2.0f * std::atan(1.0f / current.proj[1]);
 }
