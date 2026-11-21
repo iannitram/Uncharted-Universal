@@ -52,8 +52,6 @@ msgstr "Zurück"
 msgid "Up and down scroll. {} chooses, {} goes back."
 msgstr "Nach oben oder unten scrollen. {} wählt aus, {} geht zurück."
 
-msgid "Language: {}"
-msgstr "Sprache: {}"
 
 msgid "Automatic ({})"
 msgstr "Automatisch ({})"
@@ -201,3 +199,93 @@ msgstr "PlayStation"
 
 msgid "Nintendo"
 msgstr "Nintendo"
+
+msgid "Language"
+msgstr "Sprache"
+
+msgid "Continue"
+msgstr "Fortsetzen"
+
+msgid "Play"
+msgstr "Spielen"
+
+msgid "Other saves ({})"
+msgstr "Andere Spielstände ({})"
+
+msgid "Set up"
+msgstr "Einrichten"
+
+msgid "Saves"
+msgstr "Spielstände"
+
+msgid "Settings"
+msgstr "Einstellungen"
+
+msgid "Other saves: {}"
+msgstr "Andere Spielstände: {}"
+
+msgid "Two saves of {}. Keep which one?"
+msgstr "Zwei Spielstände für {}. Welchen behalten?"
+
+msgid "This device"
+msgstr "Dieses Gerät"
+
+msgid "Synced"
+msgstr "Synchronisiert"
+
+msgid "No save yet"
+msgstr "Noch kein Spielstand"
+
+msgid "Two saves: pick one to play"
+msgstr "Zwei Spielstände: einen zum Spielen wählen"
+
+msgid "time not known"
+msgstr "Zeit unbekannt"
+
+msgid "Slot {}"
+msgstr "Platz {}"
+
+msgid "In the game: Load"
+msgstr "Im Spiel: Laden"
+
+msgid "Build not recorded"
+msgstr "Build nicht aufgezeichnet"
+
+msgid "build {}"
+msgstr "Build {}"
+
+msgid "Quit"
+msgstr "Beenden"
+
+msgid "Backups"
+msgstr "Sicherungen"
+
+msgid "In use"
+msgstr "Aktiv"
+
+msgid "Delete"
+msgstr "Löschen"
+
+msgid "Keep"
+msgstr "Behalten"
+
+msgid "Quit the launcher?"
+msgstr "Launcher beenden?"
+
+msgid "Stay"
+msgstr "Bleiben"
+
+msgid "Continue this save"
+msgstr "Diesen Spielstand fortsetzen"
+
+msgid "Newer"
+msgstr "Neuer"
+
+msgid "Keep this save"
+msgstr "Diesen Spielstand behalten"
+
+msgid "Decide later"
+msgstr "Später entscheiden"
+
+msgid "Play anyway"
+msgstr "Trotzdem spielen"

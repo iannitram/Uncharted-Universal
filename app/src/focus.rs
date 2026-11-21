@@ -279,11 +279,9 @@ impl FocusRing {
     }
 }
 
-/// About's buttons, in focus order. The language button is on About until Settings (2.06)
-/// exists (owner ruling 2026-11-12).
-pub const LANGUAGE_BUTTON: usize = 0;
-pub const BACK_BUTTON: usize = 1;
-const ABOUT_BUTTONS: usize = 2;
+/// About's button, in focus order (the language choice moved to Settings in #379).
+pub const BACK_BUTTON: usize = 0;
+const ABOUT_BUTTONS: usize = 1;
 
 /// What the window must do after an input on About, Fleet or the after-crash screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -295,8 +293,6 @@ pub enum Effect {
     FleetFocus(usize),
     /// Scroll About by this many steps (positive is towards the top).
     Scroll(i32),
-    /// Step the interface language to the next choice.
-    NextLanguage,
     /// Draw the focus on this after-crash button.
     CrashFocus(usize),
     /// Press after-crash button `index` (`AfterCrash::buttons`).
@@ -338,7 +334,6 @@ impl AboutFocus {
     /// A or Enter on the focused button.
     pub fn activate(&self) -> Effect {
         match self.ring.index() {
-            LANGUAGE_BUTTON => Effect::NextLanguage,
             BACK_BUTTON => Effect::Close,
             _ => Effect::None,
         }
@@ -604,15 +599,12 @@ mod tests {
     #[test]
     fn about_buttons_and_scrolling() {
         let mut about = AboutFocus::default();
-        assert_eq!(about.focused(), LANGUAGE_BUTTON);
-        assert_eq!(about.activate(), Effect::NextLanguage);
+        assert_eq!(about.focused(), BACK_BUTTON);
+        assert_eq!(about.activate(), Effect::Close);
         assert_eq!(about.nav(Nav::Down), Effect::Scroll(-1));
         assert_eq!(about.nav(Nav::Up), Effect::Scroll(1));
         assert_eq!(about.nav(Nav::Right), Effect::Focus(BACK_BUTTON));
-        assert_eq!(about.activate(), Effect::Close);
-        assert_eq!(about.nav(Nav::Right), Effect::Focus(LANGUAGE_BUTTON));
         assert_eq!(about.click(BACK_BUTTON), Effect::Close);
-        assert_eq!(about.click(LANGUAGE_BUTTON), Effect::NextLanguage);
     }
 
     fn with_fleet() -> FleetFocus {

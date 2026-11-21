@@ -52,8 +52,6 @@ msgstr "Volver"
 msgid "Up and down scroll. {} chooses, {} goes back."
 msgstr "Arriba y abajo para desplazarte. {} selecciona, {} vuelve atrás."
 
-msgid "Language: {}"
-msgstr "Idioma: {}"
 
 msgid "Automatic ({})"
 msgstr "Automático ({})"
@@ -201,3 +199,93 @@ msgstr "PlayStation"
 
 msgid "Nintendo"
 msgstr "Nintendo"
+
+msgid "Language"
+msgstr "Idioma"
+
+msgid "Continue"
+msgstr "Continuar"
+
+msgid "Play"
+msgstr "Jugar"
+
+msgid "Other saves ({})"
+msgstr "Otras partidas ({})"
+
+msgid "Set up"
+msgstr "Configurar"
+
+msgid "Saves"
+msgstr "Partidas"
+
+msgid "Settings"
+msgstr "Ajustes"
+
+msgid "Other saves: {}"
+msgstr "Otras partidas: {}"
+
+msgid "Two saves of {}. Keep which one?"
+msgstr "Hay dos partidas de {}. ¿Cuál conservar?"
+
+msgid "This device"
+msgstr "Este dispositivo"
+
+msgid "Synced"
+msgstr "Sincronizada"
+
+msgid "No save yet"
+msgstr "Aún no hay partida"
+
+msgid "Two saves: pick one to play"
+msgstr "Dos partidas: elige una para jugar"
+
+msgid "time not known"
+msgstr "hora desconocida"
+
+msgid "Slot {}"
+msgstr "Ranura {}"
+
+msgid "In the game: Load"
+msgstr "En el juego: Cargar"
+
+msgid "Build not recorded"
+msgstr "Compilación no registrada"
+
+msgid "build {}"
+msgstr "compilación {}"
+
+msgid "Quit"
+msgstr "Salir"
+
+msgid "Backups"
+msgstr "Copias de seguridad"
+
+msgid "In use"
+msgstr "En uso"
+
+msgid "Delete"
+msgstr "Eliminar"
+
+msgid "Keep"
+msgstr "Conservar"
+
+msgid "Quit the launcher?"
+msgstr "¿Salir del lanzador?"
+
+msgid "Stay"
+msgstr "Quedarse"
+
+msgid "Continue this save"
+msgstr "Continuar esta partida"
+
+msgid "Newer"
+msgstr "Más reciente"
+
+msgid "Keep this save"
+msgstr "Conservar esta partida"
+
+msgid "Decide later"
+msgstr "Decidir más tarde"
+
+msgid "Play anyway"
+msgstr "Jugar de todos modos"

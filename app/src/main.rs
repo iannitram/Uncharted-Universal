@@ -308,7 +308,7 @@ fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures, style: prompt
             })
             .collect(),
     ));
-    window.set_pages(model(view.pages.iter().map(|p| (*p).into()).collect()));
+    window.set_pages(strings(&view.pages));
     window.set_focus_row(view.focus.row.code());
     window.set_focus_index(view.focus.index as i32);
     window.set_status(view.status.as_str().into());
@@ -450,9 +450,9 @@ impl Lang {
         }
     }
 
-    /// Step to the next choice, save it, and switch the texts.
-    fn next_language(&mut self) {
-        self.setting = language::next_setting(&self.setting).to_owned();
+    /// Set the interface language choice, save it, and switch the texts.
+    fn set_language(&mut self, setting: &str) {
+        self.setting = setting.to_owned();
         if let Some(file) = &self.settings_file {
             if let Err(err) = language::write_setting(file, &self.setting) {
                 eprintln!("could not save the interface language: {err}");
@@ -467,7 +467,6 @@ impl Lang {
         if let Err(err) = slint::select_bundled_translation(self.language().code()) {
             eprintln!("could not select the interface language: {err}");
         }
-        window.set_language_name(self.language_name().into());
         window.set_version(env!("CARGO_PKG_VERSION").into());
         let patches: Vec<PatchRow> =
             vm::about::patch_rows(&self.patches, &self.target, &self.selection, &self.texts)
@@ -539,7 +538,8 @@ fn apply_saves(window: &AppWindow, view: &SavesView) {
 }
 
 /// Draw the Settings page.
-fn apply_settings(window: &AppWindow, view: &SettingsView, texts: &Texts) {
+fn apply_settings(window: &AppWindow, view: &SettingsView, lang: &Lang) {
+    let texts = &lang.texts;
     window.set_tune_cards(model(
         view.cards
             .iter()
@@ -557,14 +557,17 @@ fn apply_settings(window: &AppWindow, view: &SettingsView, texts: &Texts) {
                 label: match choice.choice {
                     vm::settings::Choice::RawMouse
                     | vm::settings::Choice::AimSensitivity
-                    | vm::settings::Choice::ButtonPrompts => texts.tr(&choice.label),
+                    | vm::settings::Choice::ButtonPrompts
+                    | vm::settings::Choice::Language => texts.tr(&choice.label),
                     _ => choice.label.clone(),
                 }
                 .into(),
-                value: if choice.choice == vm::settings::Choice::ButtonPrompts {
-                    texts.tr(&choice.value).into()
-                } else {
-                    choice.value.as_str().into()
+                value: match choice.choice {
+                    vm::settings::Choice::ButtonPrompts => texts.tr(&choice.value).into(),
+                    vm::settings::Choice::Language if choice.value.is_empty() => {
+                        lang.language_name().into()
+                    }
+                    _ => choice.value.as_str().into(),
                 },
                 can_prev: choice.can_prev,
                 can_next: choice.can_next,
@@ -647,14 +650,17 @@ impl Ui {
             now: (self.now)(),
             offset: &*self.offset,
         };
-        let view = self.screen.borrow().view(&clock);
+        let view = self
+            .screen
+            .borrow()
+            .view_in(&clock, &self.lang.borrow().texts);
         let style = self.prompt_choice.get().resolve(self.last_pad.get());
         apply(&window, &view, &mut self.pictures.borrow_mut(), style);
         let shown = self.shown.borrow();
         match &*shown {
             Shown::Continue => {}
             Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
-            Shown::Settings(vm) => apply_settings(&window, &vm.view(), &self.lang.borrow().texts),
+            Shown::Settings(vm) => apply_settings(&window, &vm.view(), &self.lang.borrow()),
         }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
@@ -982,6 +988,13 @@ impl Ui {
             Cmd::Settings(SettingsCommand::SaveButtonPrompts(choice)) => {
                 self.prompt_choice.set(*choice)
             }
+            Cmd::Settings(SettingsCommand::SaveLanguage(setting)) => {
+                let mut lang = self.lang.borrow_mut();
+                lang.set_language(setting);
+                if let Some(window) = self.window.upgrade() {
+                    lang.show(&window);
+                }
+            }
             _ => {}
         }
         self.redraw();
@@ -1000,11 +1013,6 @@ impl Ui {
             Effect::CrashFocus(index) => window.set_crash_focus(index as i32),
             Effect::Press(index) => return Cmd::Screen(self.press(index)),
             Effect::Scroll(steps) => window.invoke_scroll_about(steps),
-            Effect::NextLanguage => {
-                let mut lang = self.lang.borrow_mut();
-                lang.next_language();
-                lang.show(&window);
-            }
             Effect::Close => {
                 // B on the after-crash screen closes it alone.
                 if self.crash.borrow_mut().take().is_none() {
@@ -1311,7 +1319,9 @@ fn main() -> Result<(), slint::PlatformError> {
         move |command| match command {
             Cmd::Screen(Command::None)
             | Cmd::Saves(SavesCommand::None | SavesCommand::Back)
-            | Cmd::Settings(SettingsCommand::None | SettingsCommand::Back) => {}
+            | Cmd::Settings(
+                SettingsCommand::None | SettingsCommand::Back | SettingsCommand::SaveLanguage(_),
+            ) => {}
             Cmd::Screen(Command::Quit) => {
                 let _ = slint::quit_event_loop();
             }
@@ -1356,6 +1366,8 @@ fn main() -> Result<(), slint::PlatformError> {
                         )
                         .ok()
                     });
+                let mut stored = stored;
+                stored.ui_language = ui.lang.borrow().setting.clone();
                 let mut vm = SettingsVm::new(stored, detected, tune);
                 if let Some(err) = mouse_error {
                     vm.set_status(&err);
@@ -1786,7 +1798,7 @@ mod tests {
         assert_eq!(cards[1].title, "Balanced 60");
         assert!(cards[1].in_use);
         let choices: Vec<_> = window.get_choices().iter().collect();
-        assert_eq!(choices.len(), 9);
+        assert_eq!(choices.len(), 10);
         assert_eq!(
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
@@ -1973,12 +1985,20 @@ mod tests {
         let commands = Rc::new(RefCell::new(Vec::new()));
         let run: Rc<dyn Fn(Cmd)> = Rc::new({
             let commands = commands.clone();
-            move |c| commands.borrow_mut().push(c)
+            let ui = ui.clone();
+            move |c| {
+                commands.borrow_mut().push(c.clone());
+                if let Cmd::Screen(Command::Open(Page::Settings)) = c {
+                    let desktop = uncharted_core::profile::by_id("desktop").unwrap();
+                    let mut stored = vm::settings::Stored::default();
+                    stored.ui_language = ui.lang.borrow().setting.clone();
+                    ui.show(Shown::Settings(SettingsVm::new(stored, desktop, None)));
+                }
+            }
         });
         wire(&window, &ui, run, Rc::new(|_| {}));
 
         // Automatic with an unsupported locale is English. The Slint notice is on About only.
-        assert_eq!(window.get_language_name(), "Automatic (English)");
         assert_eq!(window.get_page(), 0);
         assert!(!shows(&window, "Built with Slint"));
         assert_eq!(
@@ -1986,7 +2006,7 @@ mod tests {
             vm::about::SHIPPED.len()
         );
 
-        // Down to the page row, right to About, A: About opens, focus on the language button.
+        // Down to the page row, right to About, A: About opens, focus on Back.
         window.invoke_input(1);
         for _ in 0..3 {
             window.invoke_input(3);
@@ -2012,22 +2032,34 @@ mod tests {
         assert!(!shows(&window, "Patches"));
         window.invoke_input(0);
         assert!(shows(&window, "Back"), "the Back button stays on screen");
-        // Right to Back, A: the Continue screen, focus still on About.
-        window.invoke_input(3);
-        assert_eq!(window.get_about_focus(), 1);
+        // A on Back: the Continue screen, focus still on About.
         window.invoke_input(6);
         assert_eq!(window.get_page(), 0);
         assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 3));
 
-        // Open it again; the language button steps English -> Spanish, Slint's own texts
-        // follow, and the choice is saved.
+        // Open Settings and move down to the Language row; Right steps Automatic -> English ->
+        // Spanish, Slint's own texts and the Continue screen follow, and the choice is saved.
+        window.invoke_input(2);
+        window.invoke_input(2);
         window.invoke_input(6);
-        window.invoke_clicked(7, 0);
-        assert_eq!(window.get_language_name(), "English");
+        assert_eq!(window.get_page(), 2);
+        for _ in 0..11 {
+            window.invoke_input(1);
+        }
+        window.invoke_input(3);
         assert_eq!(language::read_setting(&file), "en");
-        window.invoke_input(6);
-        assert_eq!(window.get_language_name(), "Español");
+        window.invoke_input(3);
         assert_eq!(language::read_setting(&file), "es");
+        // Back to Continue screen, then open About to verify Slint texts are in Spanish.
+        window.invoke_input(7);
+        assert_eq!(window.get_page(), 0);
+        assert!(
+            shows(&window, "Ajustes") || shows(&window, "Jugar") || shows(&window, "Configuración")
+        );
+        window.invoke_input(3);
+        window.invoke_input(3);
+        window.invoke_input(6);
+        assert_eq!(window.get_page(), ABOUT_PAGE);
         assert!(shows(&window, "Volver"), "Slint texts are in Spanish");
         assert!(!shows(&window, "Back"));
         let roles = window.get_shipped_licences();
@@ -2060,15 +2092,29 @@ mod tests {
         assert_eq!(window.get_page(), ABOUT_PAGE);
         assert!(!shows(&window, &heading));
 
-        // Every language switches without an error.
-        for _ in 0..7 {
-            window.invoke_input(6);
-        }
-        assert_eq!(language::read_setting(&file), "");
-        assert_eq!(window.get_language_name(), "Automatic (English)");
-        // B goes back.
+        // B closes About.
         window.invoke_input(7);
         assert_eq!(window.get_page(), 0);
+        // Back to Settings, step Language through every remaining choice back to Automatic.
+        window.invoke_input(2);
+        window.invoke_input(2);
+        window.invoke_input(6);
+        for _ in 0..11 {
+            window.invoke_input(1);
+        }
+        for _ in 0..6 {
+            window.invoke_input(3);
+        }
+        assert_eq!(language::read_setting(&file), "zh-CN");
+        for _ in 0..8 {
+            window.invoke_input(2);
+        }
+        assert_eq!(language::read_setting(&file), "");
+        window.invoke_input(7);
+        assert_eq!(window.get_page(), 0);
+        // Move focus back to About on the page row for the Fleet check below.
+        window.invoke_input(3);
+        window.invoke_input(3);
 
         // Fleet from the page row: with no records it shows the empty state on Back, and B
         // returns to the Continue screen with the focus still on Fleet.
@@ -2328,8 +2374,7 @@ mod tests {
         press(&pads, 1, South);
         assert_eq!(window.get_page(), ABOUT_PAGE);
         press(&pads, 1, DPadDown);
-        press(&pads, 1, DPadRight);
-        assert_eq!(window.get_about_focus(), 1);
+        assert_eq!(window.get_about_focus(), 0);
         press(&pads, 1, South);
         assert_eq!(window.get_page(), 0);
 

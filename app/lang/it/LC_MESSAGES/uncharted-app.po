@@ -52,8 +52,6 @@ msgstr "Indietro"
 msgid "Up and down scroll. {} chooses, {} goes back."
 msgstr "Su e giù per scorrere. {} seleziona, {} torna indietro."
 
-msgid "Language: {}"
-msgstr "Lingua: {}"
 
 msgid "Automatic ({})"
 msgstr "Automatica ({})"
@@ -201,3 +199,93 @@ msgstr "PlayStation"
 
 msgid "Nintendo"
 msgstr "Nintendo"
+
+msgid "Language"
+msgstr "Lingua"
+
+msgid "Continue"
+msgstr "Continua"
+
+msgid "Play"
+msgstr "Gioca"
+
+msgid "Other saves ({})"
+msgstr "Altri salvataggi ({})"
+
+msgid "Set up"
+msgstr "Configura"
+
+msgid "Saves"
+msgstr "Salvataggi"
+
+msgid "Settings"
+msgstr "Impostazioni"
+
+msgid "Other saves: {}"
+msgstr "Altri salvataggi: {}"
+
+msgid "Two saves of {}. Keep which one?"
+msgstr "Due salvataggi di {}. Quale tenere?"
+
+msgid "This device"
+msgstr "Questo dispositivo"
+
+msgid "Synced"
+msgstr "Sincronizzato"
+
+msgid "No save yet"
+msgstr "Nessun salvataggio"
+
+msgid "Two saves: pick one to play"
+msgstr "Due salvataggi: scegline uno"
+
+msgid "time not known"
+msgstr "ora sconosciuta"
+
+msgid "Slot {}"
+msgstr "Slot {}"
+
+msgid "In the game: Load"
+msgstr "Nel gioco: Carica"
+
+msgid "Build not recorded"
+msgstr "Build non registrata"
+
+msgid "build {}"
+msgstr "build {}"
+
+msgid "Quit"
+msgstr "Esci"
+
+msgid "Backups"
+msgstr "Backup"
+
+msgid "In use"
+msgstr "In uso"
+
+msgid "Delete"
+msgstr "Elimina"
+
+msgid "Keep"
+msgstr "Tieni"
+
+msgid "Quit the launcher?"
+msgstr "Uscire dal launcher?"
+
+msgid "Stay"
+msgstr "Resta"
+
+msgid "Continue this save"
+msgstr "Continua questo salvataggio"
+
+msgid "Newer"
+msgstr "Più recente"
+
+msgid "Keep this save"
+msgstr "Tieni questo salvataggio"
+
+msgid "Decide later"
+msgstr "Decidi dopo"
+
+msgid "Play anyway"
+msgstr "Gioca comunque"
