@@ -25,6 +25,31 @@ PACMAN_PREFIX = 'mingw-w64-clang-x86_64-'
 LICENSE_ROOT = '/clang64/share/licenses/'
 
 
+FFMPEG_STEMS = ('avcodec', 'avdevice', 'avfilter', 'avformat', 'avutil', 'postproc', 'swresample', 'swscale')
+_GPL3_MARKERS = ('gplv3', 'gpl-3.0', 'gnu general public license\n                       version 3', 'version 3, 29 june 2007')
+
+
+def is_ffmpeg_library(name):
+    lower = Path(name).name.lower()
+    return any(lower.startswith(stem) or lower.startswith(f'lib{stem}') for stem in FFMPEG_STEMS)
+
+
+def check_ffmpeg_compatibility(entries):
+    """Fail closed when a bundled FFmpeg library carries GPL-3.0 / LGPL-3.0 notices (#299)."""
+    problems = []
+    for name, _package, files in entries:
+        if not is_ffmpeg_library(name):
+            continue
+        for item in files:
+            path = Path(item)
+            lower_name = path.name.lower()
+            text = path.read_text(encoding='utf-8', errors='ignore').lower() if path.is_file() else ''
+            if any(m in lower_name for m in ('gplv3', 'gpl-3.0')) or any(m in text for m in _GPL3_MARKERS):
+                problems.append(f'{name}: FFmpeg licence {path.name} is GPL-3.0/LGPL-3.0 (incompatible with GPL-2.0-only)')
+                break
+    return problems
+
+
 def check_licences(entries):
     """entries: (library file name, owning package or None, licence files found).
 
