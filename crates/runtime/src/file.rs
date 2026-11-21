@@ -252,6 +252,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 struct Mount {
     guest: Vec<u8>,
     host: Vec<u8>,
+    read_only: bool,
 }
 
 static MOUNTS: Mutex<Vec<Mount>> = Mutex::new(Vec::new());
@@ -262,9 +263,16 @@ static USER_ROOT: AtomicPtr<c_char> = AtomicPtr::new(c"user".as_ptr().cast_mut()
 /// mount of the same name. `false` when the table is full (32) or a name is too long (63 bytes
 /// for `guest`, 511 for `host`).
 pub fn mount(guest: &[u8], host: &[u8]) -> bool {
+    mount_with_mode(guest, host, false)
+}
+
+/// Maps guest mount point `guest` on host directory `host` with explicit read-only
+/// enforcement (`EROFS` on writes, creations, removals, renames, and truncates).
+pub fn mount_with_mode(guest: &[u8], host: &[u8], read_only: bool) -> bool {
     let mut mounts = lock(&MOUNTS);
     if let Some(existing) = mounts.iter_mut().find(|m| m.guest == guest) {
         existing.host = host[..host.len().min(HOST_ROOT_MAX - 1)].to_vec();
+        existing.read_only = read_only;
         return true;
     }
     if mounts.len() == MAX_MOUNTS || guest.len() >= GUEST_MOUNT_MAX || host.len() >= HOST_ROOT_MAX {
@@ -273,6 +281,7 @@ pub fn mount(guest: &[u8], host: &[u8]) -> bool {
     mounts.push(Mount {
         guest: guest.to_vec(),
         host: host.to_vec(),
+        read_only,
     });
     true
 }
@@ -437,6 +446,21 @@ fn game_path(guest: &[u8]) -> bool {
     let under =
         |root: &[u8]| guest.starts_with(root) && guest.get(root.len()).is_none_or(|&c| c == b'/');
     !guest.is_empty() && (guest[0] != b'/' || under(b"/app0") || under(b"/hostapp"))
+}
+
+/// True when `guest` targets a read-only area (game paths or a read-only mount).
+fn read_only_mount(guest: &[u8]) -> bool {
+    if game_path(guest) {
+        return true;
+    }
+    let mounts = lock(&MOUNTS);
+    mounts
+        .iter()
+        .filter(|m| {
+            guest.starts_with(&m.guest) && guest.get(m.guest.len()).is_none_or(|&c| c == b'/')
+        })
+        .max_by_key(|m| m.guest.len())
+        .is_some_and(|m| m.read_only)
 }
 
 // ---- the descriptor table ----
@@ -612,8 +636,8 @@ fn not_found(guest: &[u8], error: Errno) -> Errno {
 /// Opens guest path `guest` with guest `flags` (and `mode` when it creates a file); the new
 /// descriptor (3..1023).
 pub fn open(guest: &[u8], flags: c_int, mode: c_int) -> Result<c_int> {
-    let game = game_path(guest);
-    if game && flags & (O_ACCMODE | O_APPEND | O_TRUNC | O_EXCL) != 0 {
+    let ro = read_only_mount(guest);
+    if ro && flags & (O_ACCMODE | O_APPEND | O_TRUNC | O_EXCL) != 0 {
         return Err(Errno::EROFS);
     }
     let host = translate(guest)?;
@@ -621,7 +645,7 @@ pub fn open(guest: &[u8], flags: c_int, mode: c_int) -> Result<c_int> {
     let mut flags = flags;
     // O_CREAT on a read-only mount opens an existing file for reading, as FreeBSD does (the
     // games read their sound configuration this way); only creating a new file fails.
-    if game && flags & O_CREAT != 0 {
+    if ro && flags & O_CREAT != 0 {
         if fs::metadata(&path).is_err() {
             return Err(Errno::EROFS);
         }
@@ -1307,7 +1331,7 @@ pub enum PathOp {
 }
 
 pub fn path_op(guest: &[u8], op: PathOp) -> Result<()> {
-    if game_path(guest) {
+    if read_only_mount(guest) {
         return Err(Errno::EROFS);
     }
     let path = host_path(&translate(guest)?);
@@ -1321,9 +1345,9 @@ pub fn path_op(guest: &[u8], op: PathOp) -> Result<()> {
     Ok(())
 }
 
-/// Renames `from` to `to`, replacing an existing `to` (POSIX `rename`, on Windows too).
+/// Renames `from` to `to`, replacing an existing `to`, on writable mounts.
 pub fn rename(from: &[u8], to: &[u8]) -> Result<()> {
-    if game_path(from) || game_path(to) {
+    if read_only_mount(from) || read_only_mount(to) {
         return Err(Errno::EROFS);
     }
     let from = translate(from)?;
@@ -1348,7 +1372,7 @@ pub fn ftruncate(fd: c_int, size: i64) -> Result<()> {
 }
 
 pub fn truncate(guest: &[u8], size: i64) -> Result<()> {
-    if game_path(guest) {
+    if read_only_mount(guest) {
         return Err(Errno::EROFS);
     }
     let path = host_path(&translate(guest)?);

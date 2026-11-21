@@ -889,3 +889,49 @@ fn guest_calls_resolve_by_nid_and_keep_their_conventions() {
         assert_eq!(ffi::runtime_file_resolve(std::ptr::null()), 0);
     }
 }
+
+#[test]
+fn read_only_mount_rejects_writes() {
+    let s = Scratch::new("rdonly-save");
+    let save_dir = s.user("save");
+    fs::create_dir_all(&save_dir).unwrap();
+    fs::write(save_dir.join("data.bin"), b"save").unwrap();
+
+    assert!(mount_with_mode(b"/savedata0", bytes(&save_dir), true));
+
+    // Existing file can be opened read-only (including with O_CREAT, FreeBSD style).
+    let fd = open(b"/savedata0/data.bin", 0, 0).unwrap();
+    close(fd).unwrap();
+    let fd = open(b"/savedata0/data.bin", O_CREAT, 0o644).unwrap();
+    close(fd).unwrap();
+
+    // Mutating operations and creating missing files fail with EROFS.
+    assert_eq!(open(b"/savedata0/data.bin", 1, 0), Err(Errno::EROFS));
+    assert_eq!(open(b"/savedata0/data.bin", 2, 0), Err(Errno::EROFS));
+    assert_eq!(open(b"/savedata0/data.bin", O_APPEND, 0), Err(Errno::EROFS));
+    assert_eq!(open(b"/savedata0/data.bin", O_TRUNC, 0), Err(Errno::EROFS));
+    assert_eq!(
+        open(b"/savedata0/new.bin", O_CREAT, 0o644),
+        Err(Errno::EROFS)
+    );
+    assert_eq!(
+        path_op(b"/savedata0/data.bin", PathOp::Unlink),
+        Err(Errno::EROFS)
+    );
+    assert_eq!(
+        path_op(b"/savedata0/sub", PathOp::Mkdir(0)),
+        Err(Errno::EROFS)
+    );
+    assert_eq!(path_op(b"/savedata0/sub", PathOp::Rmdir), Err(Errno::EROFS));
+    assert_eq!(
+        rename(b"/savedata0/data.bin", b"/savedata0/other.bin"),
+        Err(Errno::EROFS)
+    );
+    assert_eq!(truncate(b"/savedata0/data.bin", 0), Err(Errno::EROFS));
+
+    // Remounting read-write restores write access.
+    assert!(mount_with_mode(b"/savedata0", bytes(&save_dir), false));
+    assert!(truncate(b"/savedata0/data.bin", 1).is_ok());
+
+    unmount(b"/savedata0");
+}
