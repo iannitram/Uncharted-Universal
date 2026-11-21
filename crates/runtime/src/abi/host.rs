@@ -72,9 +72,9 @@ pub(crate) fn err(text: &str) {
 mod loader {
     use std::ffi::{c_char, c_int};
 
-    // Rust on Linux and Android since 3.12 (`crate::memory`); Windows keeps the C file.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub use crate::memory::linux::{runtime_memory_report, runtime_memory_resolve};
+    // Rust on Linux, Android (3.12) and Windows (3.17) (`crate::memory::abi`).
+    #[cfg(any(target_os = "linux", target_os = "android", windows))]
+    pub use crate::memory::abi::{runtime_memory_report, runtime_memory_resolve};
 
     // Rust on Linux x86-64 since 3.13 (`crate::thread`, `crate::fiber`); Windows keeps the C files.
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -85,7 +85,7 @@ mod loader {
     extern "C" {
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
@@ -93,7 +93,7 @@ mod loader {
 
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_thread_report();
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         pub fn runtime_memory_report();
         #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
         pub fn runtime_fiber_report();

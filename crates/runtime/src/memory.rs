@@ -20,8 +20,12 @@
 //! addresses, so host-default `0x7f...` addresses would not fit. The port changes no behaviour:
 //! the same error codes, search order, block layout and log lines as the C.
 
+#[cfg(any(target_os = "linux", target_os = "android", windows))]
+pub mod abi;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux;
+#[cfg(windows)]
+pub mod windows;
 
 use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::VecDeque;
