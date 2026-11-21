@@ -7,6 +7,7 @@ use crate::card::{self, Clock};
 use crate::focus::{Focus, Nav, Row};
 use crate::lang::Texts;
 use uncharted_core::games::Game;
+#[cfg(test)]
 use uncharted_core::language::Language;
 use uncharted_core::launch::Keep;
 use uncharted_core::savecard::{SaveCard, SideBySide};
@@ -552,6 +553,7 @@ impl Screen {
     }
 
     /// What to draw now (in English, for tests).
+    #[cfg(test)]
     pub fn view(&self, clock: &Clock) -> View {
         self.view_in(clock, &Texts::new(Language::English))
     }

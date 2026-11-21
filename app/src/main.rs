@@ -584,6 +584,7 @@ fn apply_settings(window: &AppWindow, view: &SettingsView, lang: &Lang) {
 }
 
 /// What the window shows over the Continue screen.
+#[allow(clippy::large_enum_variant)]
 enum Shown {
     Continue,
     Saves(SavesVm),
@@ -1366,7 +1367,6 @@ fn main() -> Result<(), slint::PlatformError> {
                         )
                         .ok()
                     });
-                let mut stored = stored;
                 stored.ui_language = ui.lang.borrow().setting.clone();
                 let mut vm = SettingsVm::new(stored, detected, tune);
                 if let Some(err) = mouse_error {
@@ -1990,8 +1990,10 @@ mod tests {
                 commands.borrow_mut().push(c.clone());
                 if let Cmd::Screen(Command::Open(Page::Settings)) = c {
                     let desktop = uncharted_core::profile::by_id("desktop").unwrap();
-                    let mut stored = vm::settings::Stored::default();
-                    stored.ui_language = ui.lang.borrow().setting.clone();
+                    let stored = vm::settings::Stored {
+                        ui_language: ui.lang.borrow().setting.clone(),
+                        ..Default::default()
+                    };
                     ui.show(Shown::Settings(SettingsVm::new(stored, desktop, None)));
                 }
             }
