@@ -78,7 +78,10 @@ pub mod content;
 pub mod cpu_patch;
 pub mod crash;
 pub mod display;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    target_arch = "x86_64"
+))]
 pub mod fiber;
 pub mod file;
 pub mod kernel;
@@ -106,7 +109,10 @@ pub mod savedata;
 pub mod services;
 #[cfg(target_arch = "x86_64")]
 pub mod sync;
-#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+#[cfg(all(
+    any(target_os = "linux", target_os = "windows"),
+    target_arch = "x86_64"
+))]
 pub mod thread;
 pub mod time;
 pub mod trophy;
