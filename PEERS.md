@@ -15,10 +15,9 @@ The shadPS4 GPL-2.0-or-later source notices remain in each adopted file:
 | [#5724, f3687cc400d77736b2a7ef1904a1302e17f9441b](https://github.com/shadps4-emu/shadPS4/commit/f3687cc400d77736b2a7ef1904a1302e17f9441b) | Same files: S_BFM_B64 dispatch and lowering |
 | [#5725, 312cfbae77821627aa511bdee8717e1b7c3c9a23](https://github.com/shadps4-emu/shadPS4/commit/312cfbae77821627aa511bdee8717e1b7c3c9a23) | `scalar_alu.cpp`: U32 shift counts for the three scalar 64-bit shifts |
 | [#5719, 1f1f4c6a5021fb656df0411c1da79b267115a327](https://github.com/shadps4-emu/shadPS4/commit/1f1f4c6a5021fb656df0411c1da79b267115a327) | `frontend/format.cpp`: U32-to-F32 metadata for VOP3 byte conversions 401–404; unrelated atomic TODO removal excluded |
+| [#5714, f048bb748f5cda15bd12ea3a1690a9d260f8c482](https://github.com/shadps4-emu/shadPS4/commit/f048bb748f5cda15bd12ea3a1690a9d260f8c482) | `backend/spirv/emit_spirv_atomic.cpp`: branching float atomic min/max fallback (`FMinMaxFallback`) for buffer and image atomics (#450) |
 
-The #5714 floating-point atomic fallback is deferred; this partial import does
-not close #427 or claim shader/device acceptance. Exact production pointers and
-the remaining control-flow validation are in [the work brief](docs/work-briefs/427-shader.md).
+Synthetic regression coverage for all five imports lives in `tests/test_shader_scalar_64.cpp` (`shader-scalar-64-test`).
 ## Tile-mode descriptor guard (#403)
 
 Imported the `IsKnownTileMode` predicate and both texture-binding checks from
