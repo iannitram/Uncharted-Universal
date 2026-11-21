@@ -964,9 +964,10 @@ fn fleet_record_persists_updates_and_reports_drift() {
         &home(dir.path()),
     );
     assert_eq!(first.code, OK, "{}", first.stderr);
-    assert!(first
-        .stdout
-        .contains("Desktop  linux  build b1  patch level 3"));
+    assert!(first.stdout.contains(&format!(
+        "Desktop  {}  build b1  patch level 3",
+        Os::current().key()
+    )));
     assert!(first.stdout.contains("(this device)"));
 
     let second = exec(
