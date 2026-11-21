@@ -163,6 +163,126 @@ fn play_plan_uses_the_selected_save_slot_the_profile_and_the_players_variables()
 }
 
 #[test]
+fn play_plan_applies_saved_display_settings() {
+    let dir = TempDir::new("play-plan-saved-display");
+    let ctx = home(dir.path());
+    let settings_path = AppDirs::new(&vars(&ctx).unwrap()).settings();
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(
+        &settings_path,
+        r#"{"device_profile":"desktop","frame_rate":"30","render_resolution":"1280x720","anti_aliasing":"fsr1","upscale_preset":"quality","frame_generation":"off"}"#,
+    )
+    .unwrap();
+
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    assert_eq!(plan.profile.id, "desktop");
+    let env = plan.session(ctx.os).env(Game::U2).unwrap();
+    let get = |name: &str| env.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+    assert_eq!(get("BB_VBLANK_HZ"), Some("30"));
+    assert_eq!(get("BB_RESOLUTION"), Some("1280x720"));
+    assert_eq!(get("BB_FSR1"), Some("1"));
+    assert_eq!(get("BB_UPSCALER"), Some("off"));
+    assert_eq!(get("BB_UPSCALE_QUALITY"), Some("quality"));
+    assert_eq!(get("BB_FRAME_GEN"), Some("off"));
+}
+
+#[test]
+fn play_plan_rereads_saved_settings_on_next_call() {
+    let dir = TempDir::new("play-plan-reread");
+    let ctx = home(dir.path());
+    let settings_path = AppDirs::new(&vars(&ctx).unwrap()).settings();
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(
+        &settings_path,
+        r#"{"device_profile":"desktop","frame_rate":"30"}"#,
+    )
+    .unwrap();
+
+    let first = play_plan(Game::U2, &ctx).unwrap();
+    fs::write(
+        &settings_path,
+        r#"{"device_profile":"desktop","frame_rate":"60"}"#,
+    )
+    .unwrap();
+    let second = play_plan(Game::U2, &ctx).unwrap();
+
+    let first_env = first.session(ctx.os).env(Game::U2).unwrap();
+    let second_env = second.session(ctx.os).env(Game::U2).unwrap();
+    let find = |env: &[(String, String)], key: &str| {
+        env.iter()
+            .find(|(n, _)| n == key)
+            .map(|(_, v)| v.as_str().to_owned())
+    };
+    assert_eq!(find(&first_env, "BB_VBLANK_HZ").as_deref(), Some("30"));
+    assert_eq!(find(&second_env, "BB_VBLANK_HZ").as_deref(), Some("60"));
+}
+
+#[test]
+fn play_plan_preserves_extra_and_process_env_precedence() {
+    let dir = TempDir::new("play-plan-extra-precedence");
+    let ctx = home(dir.path());
+    let settings_path = AppDirs::new(&vars(&ctx).unwrap()).settings();
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    fs::write(
+        &settings_path,
+        r#"{"device_profile":"desktop","frame_rate":"30","extra":{"BB_VBLANK_HZ":"60","BB_RESOLUTION_U2":"960x540"}}"#,
+    )
+    .unwrap();
+
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    let env = plan.session(ctx.os).env(Game::U2).unwrap();
+    let get = |name: &str| env.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str());
+    assert_eq!(get("BB_VBLANK_HZ"), Some("60"));
+    assert_eq!(get("BB_RESOLUTION_U2"), Some("960x540"));
+
+    let ctx_override = set(ctx, "BB_VBLANK_HZ", "120");
+    let override_plan = play_plan(Game::U2, &ctx_override).unwrap();
+    let override_env = override_plan
+        .session(ctx_override.os)
+        .env(Game::U2)
+        .unwrap();
+    let get_override = |name: &str| {
+        override_env
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+    };
+    assert_eq!(get_override("BB_VBLANK_HZ"), Some("120"));
+}
+
+#[test]
+fn play_plan_handles_missing_malformed_and_unknown_profile() {
+    let dir = TempDir::new("play-plan-malformed");
+    let ctx = home(dir.path());
+    let settings_path = AppDirs::new(&vars(&ctx).unwrap()).settings();
+    let baseline = play_plan(Game::U2, &ctx).unwrap();
+    let baseline_env = baseline.session(ctx.os).env(Game::U2).unwrap();
+    assert_eq!(baseline.settings, Settings::default());
+
+    fs::create_dir_all(settings_path.parent().unwrap()).unwrap();
+    for bad in ["null", "[]", "{broken"] {
+        fs::write(&settings_path, bad).unwrap();
+        let plan = play_plan(Game::U2, &ctx).unwrap();
+        assert_eq!(plan.profile.id, baseline.profile.id, "{bad}");
+        assert_eq!(plan.settings, Settings::default(), "{bad}");
+        assert_eq!(
+            plan.session(ctx.os).env(Game::U2).unwrap(),
+            baseline_env,
+            "{bad}"
+        );
+    }
+
+    fs::write(&settings_path, r#"{"device_profile":"unknown"}"#).unwrap();
+    let unknown_plan = play_plan(Game::U2, &ctx).unwrap();
+    assert_eq!(unknown_plan.profile.id, baseline.profile.id);
+    assert_eq!(unknown_plan.settings, Settings::default());
+    assert_eq!(
+        unknown_plan.session(ctx.os).env(Game::U2).unwrap(),
+        baseline_env
+    );
+}
+
+#[test]
 fn play_plan_finds_the_runtime_beside_this_program() {
     let dir = TempDir::new("play-beside");
     let mut ctx = home(dir.path());
