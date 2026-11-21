@@ -2475,4 +2475,76 @@ mod tests {
             "Keeping this device's save of Uncharted 3."
         );
     }
+
+    #[test]
+    fn gui_play_settings_reach_runtime_environment() {
+        let dir = std::env::temp_dir().join(format!("uu-gui-play-env-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let settings_path = dir.join("settings.json");
+        let desktop = uncharted_core::profile::by_id("desktop").unwrap();
+
+        let build = |choice: prompts::Choice, explicit: &[(&str, &str)]| {
+            let mut player_env = play_environment(settings_file::extra(&settings_path), choice);
+            for (k, v) in explicit {
+                player_env.insert((*k).to_owned(), (*v).to_owned());
+            }
+            let resolved =
+                uncharted_core::launch_settings::load_for_launch(&settings_path, desktop);
+            let env: std::collections::BTreeMap<String, String> =
+                uncharted_core::run_env::build_env(
+                    Game::U2,
+                    &resolved.settings,
+                    resolved.profile,
+                    &player_env,
+                )
+                .unwrap()
+                .into_iter()
+                .collect();
+            (resolved.profile.id, env)
+        };
+
+        // 1. No saved settings: detected profile and defaults.
+        let (profile, baseline) = build(prompts::Choice::Automatic, &[]);
+        assert_eq!(profile, "desktop");
+        assert!(!baseline.contains_key("BB_BUTTON_PROMPTS"));
+
+        // 2. Changed persisted display settings + fixed button prompts.
+        std::fs::write(
+            &settings_path,
+            r#"{"device_profile":"amd-handheld","frame_rate":"30","render_resolution":"1280x720","anti_aliasing":"fsr1","upscale_preset":"quality","frame_generation":"off","extra":{"BB_RESOLUTION_U2":"960x540"}}"#,
+        )
+        .unwrap();
+        let (profile, env) = build(prompts::Choice::Fixed(prompts::Style::Nintendo), &[]);
+        assert_eq!(profile, "amd-handheld");
+        assert_eq!(env.get("BB_VBLANK_HZ").map(String::as_str), Some("30"));
+        assert_eq!(
+            env.get("BB_RESOLUTION").map(String::as_str),
+            Some("1280x720")
+        );
+        assert_eq!(
+            env.get("BB_RESOLUTION_U2").map(String::as_str),
+            Some("960x540")
+        );
+        assert_eq!(env.get("BB_FSR1").map(String::as_str), Some("1"));
+        assert_eq!(
+            env.get("BB_BUTTON_PROMPTS").map(String::as_str),
+            Some("nintendo")
+        );
+
+        // 3. Explicit process override wins over persisted settings.
+        let (_, overridden) = build(prompts::Choice::Automatic, &[("BB_VBLANK_HZ", "120")]);
+        assert_eq!(
+            overridden.get("BB_VBLANK_HZ").map(String::as_str),
+            Some("120")
+        );
+
+        // 4. Malformed config falls back to baseline without panicking.
+        std::fs::write(&settings_path, "{broken").unwrap();
+        let (malformed_profile, malformed_env) = build(prompts::Choice::Automatic, &[]);
+        assert_eq!(malformed_profile, "desktop");
+        assert_eq!(malformed_env, baseline);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
