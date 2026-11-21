@@ -384,7 +384,13 @@ impl Store {
         let slot = free.ok_or(ERR_MOUNT_FULL)?;
         let point = format!("/savedata{}", slot & 15);
         // The mount point must exist in the file layer before the game is told it is mounted.
-        if self.vfs && !crate::file::mount(point.as_bytes(), host.as_bytes()) {
+        if self.vfs
+            && !crate::file::mount_with_mode(
+                point.as_bytes(),
+                host.as_bytes(),
+                mode & MODE_RDONLY != 0,
+            )
+        {
             return Err(ERR_MOUNT_FULL);
         }
         if !exists && (fs::create_dir_all(&host).is_err() || fs::create_dir_all(&meta).is_err()) {
