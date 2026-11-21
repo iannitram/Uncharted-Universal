@@ -639,3 +639,23 @@ fn rdtsc_decode_describe_and_emulate_scales_edx_eax() {
     assert_eq!(regs[1], 0x1111_2222_3333_4444u64);
     assert_eq!(regs[16], 0x246);
 }
+
+#[test]
+fn rdtsc_window_handles_short_and_rip_relative_neighbors() {
+    // 0: 0f 31 (rdtsc, 2B), 2: 8b 05 04 00 00 00 (mov eax, [rip+4], 6B)
+    // Window of 5+ bytes cannot cross RIP-relative mov cleanly without displacement issues,
+    // while a trailing `0f 31 90 90 90 90` (6B) has a clean 5B window starting at `rdtsc`.
+    let mut bytes = [
+        0x0f_u8, 0x31, // rdtsc (adjacent to rip-relative)
+        0x8b, 0x05, 0x04, 0x00, 0x00, 0x00, // mov eax, [rip+4]
+        0x0f, 0x31, // rdtsc with clean NOP padding
+        0x90, 0x90, 0x90, 0x90, 0xc3,
+    ];
+    let image = unsafe { Image::new(bytes.as_mut_ptr(), bytes.len() as u64) };
+    let first = decode(&image, NEED_RDTSC, 0, bytes.len() as u64).unwrap();
+    assert_eq!(first.d.ins.mnemonic(), Mnemonic::Rdtsc);
+    let second = decode(&image, NEED_RDTSC, 8, bytes.len() as u64).unwrap();
+    assert_eq!(second.d.ins.mnemonic(), Mnemonic::Rdtsc);
+    assert_eq!(second.d.at, bytes.as_ptr() as u64 + 8);
+    assert!(!second.d.bytes.is_empty());
+}
