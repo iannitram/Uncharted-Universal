@@ -447,3 +447,52 @@ fn the_bloodborne_sound_flag_is_set_once_and_can_be_disabled() {
     store.title_id = "CUSA00000".into();
     assert!(bloodborne_sound_hack(&store, false).is_empty());
 }
+
+#[test]
+fn malformed_mount_names_do_not_alias_slot_zero_and_like_is_bounded() {
+    let dir = TempDir::new("malformed");
+    let mut store = dir.store(None);
+    let (m0, _) = store
+        .mount(1, None, Some(&name("SAVEDATA01A")), MODE_CREATE, true)
+        .unwrap();
+    assert_eq!(m0, "/savedata0");
+    assert!(store.mounted(b"/savedata0"));
+    for bad in [
+        b"/savedataX".as_slice(),
+        b"/savedata",
+        b"/savedata0abc",
+        b"/savedata-1",
+    ] {
+        assert!(!store.mounted(bad));
+        assert_eq!(store.set_param(bad, 1, b"bad"), ERR_NOT_MOUNTED);
+    }
+
+    // Repeated '%' wildcards must complete immediately in linear time.
+    let mut pattern = vec![b'%'; 40];
+    pattern.push(b'Z');
+    assert!(!like(&[b'A'; 40], &pattern));
+    assert!(like(&[vec![b'A'; 40], vec![b'Z']].concat(), &pattern));
+}
+
+#[test]
+fn metadata_write_and_delete_failures_return_internal_error() {
+    let dir = TempDir::new("ioerr");
+    let mut store = dir.store(None);
+    let (m, _) = store
+        .mount(1, None, Some(&name("SAVEDATA01A")), MODE_CREATE, true)
+        .unwrap();
+    let meta = dir.0.join("savedata/1/CUSA00000/SAVEDATA01A.sce_sys");
+    // Replace param.bin with a directory so fs::write fails even as root or on any OS.
+    fs::remove_file(meta.join("param.bin")).unwrap();
+    fs::create_dir(meta.join("param.bin")).unwrap();
+    assert_eq!(store.set_param(&point(&m), 1, b"fail"), ERR_INTERNAL);
+
+    // Replace host save dir with a regular file so remove_dir_all fails with ENOTDIR, or test
+    // missing meta + non-dir host: remove_dir_all on a file returns NotADirectory (not NotFound).
+    let host = dir.0.join("savedata/1/CUSA00000/SAVEDATA01B");
+    fs::write(&host, b"not a dir").unwrap();
+    assert_eq!(
+        store.delete(1, None, Some(&name("SAVEDATA01B"))),
+        ERR_INTERNAL
+    );
+}
