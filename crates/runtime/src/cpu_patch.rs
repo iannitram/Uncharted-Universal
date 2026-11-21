@@ -19,11 +19,13 @@ use crate::patch_util::{self, host, Bits, Decoded, Image};
 use iced_x86::{Mnemonic, OpKind, Register};
 use std::ffi::c_int;
 use std::io::Write as _;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError, RwLock};
 
 const NEED_BMI1: u32 = 1;
 const NEED_LZCNT: u32 = 2;
 const NEED_MOVBE: u32 = 4;
+const NEED_RDTSC: u32 = 8;
 
 const LZCNT: i32 = 0;
 const TZCNT: i32 = 1;
@@ -34,10 +36,32 @@ const BLSI: i32 = 5;
 const BEXTR: i32 = 6;
 const MOVBE_LOAD: i32 = 7;
 const MOVBE_STORE: i32 = 8;
-const KINDS: usize = 9;
+const RDTSC: i32 = 9;
+const KINDS: usize = 10;
 const KIND_NAMES: [&str; KINDS] = [
-    "LZCNT", "TZCNT", "ANDN", "BLSR", "BLSMSK", "BLSI", "BEXTR", "MOVBE", "MOVBE",
+    "LZCNT", "TZCNT", "ANDN", "BLSR", "BLSMSK", "BLSI", "BEXTR", "MOVBE", "MOVBE", "RDTSC",
 ];
+
+/// 32.32 fixed-point multiplier applied by rewritten inline `rdtsc` thunks (default 1.0x).
+static TSC_SCALE: AtomicU64 = AtomicU64::new(1u64 << 32);
+
+/// Scale a 64-bit host TSC reading by a 32.32 fixed-point multiplier without 64-bit overflow.
+pub fn scale_tsc(raw: u64, mul_32_32: u64) -> u64 {
+    ((u128::from(raw) * u128::from(mul_32_32)) >> 32) as u64
+}
+
+/// Compute the 32.32 fixed-point multiplier for `guest_hz / host_hz` (1.0x if `host_hz == 0`).
+pub fn tsc_scale_factor(guest_hz: u64, host_hz: u64) -> u64 {
+    if host_hz == 0 {
+        return 1u64 << 32;
+    }
+    ((u128::from(guest_hz) << 32) / u128::from(host_hz)).min(u128::from(u64::MAX)) as u64
+}
+
+/// Set the 32.32 fixed-point multiplier used by rewritten inline `rdtsc` thunks.
+pub fn set_tsc_scale(mul_32_32: u64) {
+    TSC_SCALE.store(mul_32_32, Ordering::Relaxed);
+}
 
 const CF: u64 = 0x1;
 const ZF: u64 = 0x40;
@@ -164,6 +188,7 @@ fn wanted(need: u32, m: Mnemonic) -> bool {
         | Mnemonic::Tzcnt => need & NEED_BMI1 != 0,
         Mnemonic::Lzcnt => need & NEED_LZCNT != 0,
         Mnemonic::Movbe => need & NEED_MOVBE != 0,
+        Mnemonic::Rdtsc => need & NEED_RDTSC != 0,
         _ => false,
     }
 }
@@ -567,6 +592,16 @@ unsafe extern "win64" fn emulate(regs: *mut u64, op: *const CpuPatchOp) {
         address = address.wrapping_add(regs[m.index as usize].wrapping_mul(m.scale as u64));
     }
     let reg = |i: usize| op.reg[i] as usize;
+    if op.kind == RDTSC {
+        #[cfg(target_arch = "x86_64")]
+        let raw = unsafe { core::arch::x86_64::_rdtsc() };
+        #[cfg(not(target_arch = "x86_64"))]
+        let raw = 0u64;
+        let scaled = scale_tsc(raw, TSC_SCALE.load(Ordering::Relaxed));
+        regs[0] = scaled & 0xffff_ffff;
+        regs[2] = scaled >> 32;
+        return;
+    }
     if op.kind == BEXTR {
         let source = if op.reg[1] >= 0 {
             regs[reg(1)]
@@ -703,6 +738,18 @@ fn memory(d: &Decoded) -> Option<CpuPatchMem> {
 
 fn describe(d: &Decoded) -> Option<CpuPatchOp> {
     let ins = &d.ins;
+    if ins.mnemonic() == Mnemonic::Rdtsc {
+        return Some(CpuPatchOp {
+            kind: RDTSC,
+            width: 64,
+            reg: [-1; 3],
+            mem: CpuPatchMem {
+                base: -1,
+                index: -1,
+                ..CpuPatchMem::default()
+            },
+        });
+    }
     let (kind, operands) = match ins.mnemonic() {
         Mnemonic::Lzcnt => (LZCNT, 2u32),
         Mnemonic::Tzcnt => (TZCNT, 2u32),
@@ -1095,7 +1142,7 @@ fn illegal(at: u64) -> Option<u64> {
         return Some(thunk);
     }
     let offset = at - image.addr();
-    let every = NEED_BMI1 | NEED_LZCNT | NEED_MOVBE;
+    let every = NEED_BMI1 | NEED_LZCNT | NEED_MOVBE | NEED_RDTSC;
     let item = decode(&image, every, offset, image.size()).filter(|item| item.rewrite)?;
     let (thunk, starts) = emit_thunk(&mut st, std::slice::from_ref(&item))?;
     debug_assert_eq!(thunk, starts[0]);

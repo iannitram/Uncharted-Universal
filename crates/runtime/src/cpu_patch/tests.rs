@@ -58,6 +58,7 @@ snippets! {
     andn_rsp = "andn 8(%rsp),%rbx,%rcx";
     andn_rip = "andn 0(%rip),%rbx,%rdx";
     blsr64 = "blsr %rsi,%rax";
+    rdtsc_plain = "rdtsc";
     blsr_same = "blsr %eax,%eax";
     blsr_mem = "blsr (%r12),%rdx";
     blsr_index = "blsr 4(%r12,%r13,4),%r13d";
@@ -586,4 +587,55 @@ fn rewritten_instructions_match_native() {
 fn image_byte(offset: usize) -> u8 {
     // SAFETY: inside the test image.
     unsafe { *((IMAGE_AT as usize + offset) as *const u8) }
+}
+
+#[test]
+fn tsc_scale_math_and_overflow_bounds() {
+    assert_eq!(tsc_scale_factor(1_000, 0), 1u64 << 32);
+    assert_eq!(tsc_scale_factor(1_000_000, 1_000_000), 1u64 << 32);
+    assert_eq!(tsc_scale_factor(500_000, 1_000_000), 1u64 << 31);
+    assert_eq!(scale_tsc(0x1_0000_0000, 1u64 << 31), 0x8000_0000);
+    assert_eq!(scale_tsc(1_000_000_000_000, 1u64 << 32), 1_000_000_000_000);
+    assert_eq!(scale_tsc(1_000_000_000_000, 1u64 << 33), 2_000_000_000_000);
+}
+
+#[test]
+fn rdtsc_decode_describe_and_emulate_scales_edx_eax() {
+    let mut bytes = [0x0f_u8, 0x31]; // rdtsc
+    let image = unsafe { Image::new(bytes.as_mut_ptr(), bytes.len() as u64) };
+    let item = decode(&image, NEED_RDTSC, 0, bytes.len() as u64).unwrap();
+    assert!(item.rewrite);
+    assert!(decode(&image, NEED_BMI1, 0, bytes.len() as u64).is_some_and(|i| !i.rewrite));
+
+    let op = describe(&item.d).unwrap();
+    assert_eq!(op.kind, RDTSC);
+
+    set_tsc_scale(1u64 << 31); // 0.5x
+    let mut regs = [0x1111_2222_3333_4444u64; 17];
+    regs[16] = 0x246;
+    #[cfg(target_arch = "x86_64")]
+    let before = unsafe { core::arch::x86_64::_rdtsc() };
+    #[cfg(not(target_arch = "x86_64"))]
+    let before = 0u64;
+
+    unsafe { emulate(regs.as_mut_ptr(), &op) };
+
+    #[cfg(target_arch = "x86_64")]
+    let after = unsafe { core::arch::x86_64::_rdtsc() };
+    #[cfg(not(target_arch = "x86_64"))]
+    let after = 0u64;
+
+    set_tsc_scale(1u64 << 32);
+
+    let got = (regs[2] << 32) | (regs[0] & 0xffff_ffff);
+    assert!(
+        got >= (before >> 1) && got <= (after >> 1) + 10_000,
+        "scaled={got} before/2={} after/2={}",
+        before >> 1,
+        after >> 1
+    );
+    assert_eq!(regs[0] >> 32, 0, "EAX zero-extends into RAX");
+    assert_eq!(regs[2] >> 32, 0, "EDX zero-extends into RDX");
+    assert_eq!(regs[1], 0x1111_2222_3333_4444u64);
+    assert_eq!(regs[16], 0x246);
 }
