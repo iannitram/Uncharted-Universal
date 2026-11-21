@@ -878,11 +878,14 @@ mod guest {
 
     pub(super) extern "sysv64" fn read_tsc() -> u64 {
         // SAFETY: `rdtsc` is available on every x86-64 CPU.
-        unsafe { std::arch::x86_64::_rdtsc() }
+        crate::cpu_patch::scale_tsc(
+            unsafe { std::arch::x86_64::_rdtsc() },
+            crate::cpu_patch::tsc_scale(),
+        )
     }
 
     pub(super) extern "sysv64" fn guest_tsc_frequency() -> u64 {
-        tsc_frequency()
+        crate::cpu_patch::scale_tsc(tsc_frequency(), crate::cpu_patch::tsc_scale()).max(1)
     }
 
     pub(super) extern "sysv64" fn kernel_usleep(microseconds: u32) -> i32 {
@@ -2191,6 +2194,23 @@ mod tests {
         fn unknown_symbols_do_not_resolve() {
             assert_eq!(by_symbol("sceKernelUnknown"), None);
             assert_eq!(super::super::resolve(c""), None);
+        }
+
+        #[test]
+        fn guest_tsc_and_frequency_scale_while_process_counter_stays_1ghz() {
+            assert_eq!(process_time_frequency(), 1_000_000_000);
+            let p0 = process_time_counter();
+            let p1 = process_time_counter();
+            assert!(p1 >= p0);
+
+            let raw_hz = tsc_frequency();
+            let factor = crate::cpu_patch::tsc_scale();
+            let expected_hz = ((u128::from(raw_hz) * u128::from(factor)) >> 32) as u64;
+            assert_eq!(guest_tsc_frequency(), expected_hz.max(1));
+
+            let t0 = read_tsc();
+            let t1 = read_tsc();
+            assert!(t1 >= t0);
         }
     }
 }

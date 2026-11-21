@@ -63,6 +63,11 @@ pub fn set_tsc_scale(mul_32_32: u64) {
     TSC_SCALE.store(mul_32_32, Ordering::Relaxed);
 }
 
+/// Return the current 32.32 fixed-point TSC multiplier.
+pub fn tsc_scale() -> u64 {
+    TSC_SCALE.load(Ordering::Relaxed)
+}
+
 const CF: u64 = 0x1;
 const ZF: u64 = 0x40;
 const OF: u64 = 0x800;
