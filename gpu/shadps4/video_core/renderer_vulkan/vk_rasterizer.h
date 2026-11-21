@@ -278,6 +278,10 @@ private:
     void BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                      Shader::Backend::Bindings& binding,
                      Shader::PushData& push_data, u32& write_index);
+    /// bbport: while frame generation generates frames, the game's motion blur dispatch
+    /// (19367542) binds a copy of its constants with the blur length at 1/multiplier.
+    void ScaleMotionBlur(const Shader::Info& cs);
+    vk::DescriptorBufferInfo blur_scale_info{}; ///< that copy's binding (until the next dispatch)
     /// `on_helper`: run by the texture binding helper; out-of-date images are not refreshed.
     void BindTextures(const Shader::Info& stage, const PreparedStage* prepared,
                       Shader::Backend::Bindings& binding, u32& write_index, bool& barrier,
