@@ -16,6 +16,7 @@ use crate::focus::{Grid, Nav};
 use crate::screen::Input;
 use crate::{input_settings, prompts};
 use serde_json::Value;
+use uncharted_core::language::{self, Language};
 use uncharted_core::profile::{self, DeviceProfile};
 use uncharted_core::run_env;
 use uncharted_core::tune::{self, Bench, Card, Cards, Device, Generation, HardwareReport, Vendor};
@@ -59,6 +60,8 @@ pub struct Stored {
     /// off, fsr3, dlss: `BB_FRAME_GEN`.
     pub frame_generation: String,
     pub button_prompts: prompts::Choice,
+    /// Interface language setting (`""` for Automatic, or a language code).
+    pub ui_language: String,
     /// The two raw mouse values live in `<data>/input.ini`, alongside Python's bindings.
     pub mouse: input_settings::Settings,
 }
@@ -74,6 +77,7 @@ impl Stored {
             upscale_preset: card.upscale_preset.clone(),
             frame_generation: card.frame_generation.clone(),
             button_prompts: self.button_prompts,
+            ui_language: self.ui_language.clone(),
             mouse: self.mouse,
         }
     }
@@ -91,6 +95,7 @@ impl Stored {
             Choice::Quality => &self.upscale_preset,
             Choice::FrameGeneration => &self.frame_generation,
             Choice::ButtonPrompts => return self.button_prompts.id().to_owned(),
+            Choice::Language => &self.ui_language,
             Choice::RawMouse => return u8::from(self.mouse.raw).to_string(),
             Choice::AimSensitivity => return self.mouse.sensitivity(),
         }
@@ -121,6 +126,7 @@ impl Stored {
             Choice::Upscaler => &mut self.anti_aliasing,
             Choice::Quality => &mut self.upscale_preset,
             Choice::FrameGeneration => &mut self.frame_generation,
+            Choice::Language => &mut self.ui_language,
             Choice::RawMouse | Choice::AimSensitivity | Choice::ButtonPrompts => unreachable!(),
         } = value;
     }
@@ -213,10 +219,11 @@ pub enum Choice {
     RawMouse,
     AimSensitivity,
     ButtonPrompts,
+    Language,
 }
 
 impl Choice {
-    pub const ALL: [Choice; 9] = [
+    pub const ALL: [Choice; 10] = [
         Choice::Profile,
         Choice::FrameRate,
         Choice::Resolution,
@@ -226,6 +233,7 @@ impl Choice {
         Choice::RawMouse,
         Choice::AimSensitivity,
         Choice::ButtonPrompts,
+        Choice::Language,
     ];
 
     pub fn label(self) -> &'static str {
@@ -239,6 +247,7 @@ impl Choice {
             Choice::RawMouse => "Raw mouse aiming and cover camera (Uncharted 1 and 2)",
             Choice::AimSensitivity => "Aim sensitivity (raw mouse)",
             Choice::ButtonPrompts => "Button prompts",
+            Choice::Language => "Language",
         }
     }
 
@@ -254,6 +263,7 @@ impl Choice {
             Choice::RawMouse => "mouse_raw",
             Choice::AimSensitivity => "mouse_aim_sensitivity",
             Choice::ButtonPrompts => "button_prompts",
+            Choice::Language => language::SETTING_KEY,
         }
     }
 }
@@ -304,6 +314,7 @@ pub enum SettingsCommand {
     Save(Stored),
     /// Write the prompt choice without changing the display or mouse settings.
     SaveButtonPrompts(prompts::Choice),
+    SaveLanguage(String),
     /// Run the hardware probe and read the benchmark reports, then call [`SettingsVm::tuned`].
     Tune,
 }
@@ -451,6 +462,14 @@ impl SettingsVm {
                 .into_iter()
                 .map(|style| (style.id().to_owned(), style.label().to_owned()))
                 .collect(),
+            Choice::Language => language::setting_choices()
+                .into_iter()
+                .map(|code| {
+                    let label = Language::from_code(code)
+                        .map_or_else(String::new, |lang| lang.native_name().to_owned());
+                    (code.to_owned(), label)
+                })
+                .collect(),
             Choice::RawMouse => vec![("0".into(), "0".into()), ("1".into(), "1".into())],
             Choice::AimSensitivity => (10..=300)
                 .map(|n| {
@@ -546,6 +565,9 @@ impl SettingsVm {
         self.status.clear();
         if choice == Choice::ButtonPrompts {
             return SettingsCommand::SaveButtonPrompts(self.stored.button_prompts);
+        }
+        if choice == Choice::Language {
+            return SettingsCommand::SaveLanguage(self.stored.ui_language.clone());
         }
         self.fit();
         SettingsCommand::Save(self.stored.clone())

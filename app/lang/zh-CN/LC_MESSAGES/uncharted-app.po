@@ -52,8 +52,6 @@ msgstr "返回"
 msgid "Up and down scroll. {} chooses, {} goes back."
 msgstr "上下滚动。{} 选择，{} 返回。"
 
-msgid "Language: {}"
-msgstr "语言：{}"
 
 msgid "Automatic ({})"
 msgstr "自动 ({})"
@@ -201,3 +199,93 @@ msgstr "PlayStation"
 
 msgid "Nintendo"
 msgstr "Nintendo"
+
+msgid "Language"
+msgstr "语言"
+
+msgid "Continue"
+msgstr "继续"
+
+msgid "Play"
+msgstr "开始游戏"
+
+msgid "Other saves ({})"
+msgstr "其他存档 ({})"
+
+msgid "Set up"
+msgstr "设置"
+
+msgid "Saves"
+msgstr "存档"
+
+msgid "Settings"
+msgstr "设置选项"
+
+msgid "Other saves: {}"
+msgstr "其他存档：{}"
+
+msgid "Two saves of {}. Keep which one?"
+msgstr "{} 有两个存档。保留哪一个？"
+
+msgid "This device"
+msgstr "本设备"
+
+msgid "Synced"
+msgstr "已同步"
+
+msgid "No save yet"
+msgstr "暂无存档"
+
+msgid "Two saves: pick one to play"
+msgstr "有两个存档：请选择一个游玩"
+
+msgid "time not known"
+msgstr "时间未知"
+
+msgid "Slot {}"
+msgstr "槽位 {}"
+
+msgid "In the game: Load"
+msgstr "游戏中：读取"
+
+msgid "Build not recorded"
+msgstr "未记录构建版本"
+
+msgid "build {}"
+msgstr "构建 {}"
+
+msgid "Quit"
+msgstr "退出"
+
+msgid "Backups"
+msgstr "备份"
+
+msgid "In use"
+msgstr "使用中"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Keep"
+msgstr "保留"
+
+msgid "Quit the launcher?"
+msgstr "退出启动器？"
+
+msgid "Stay"
+msgstr "留下"
+
+msgid "Continue this save"
+msgstr "继续此存档"
+
+msgid "Newer"
+msgstr "较新"
+
+msgid "Keep this save"
+msgstr "保留此存档"
+
+msgid "Decide later"
+msgstr "稍后决定"
+
+msgid "Play anyway"
+msgstr "仍然游玩"

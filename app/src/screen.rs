@@ -5,7 +5,9 @@
 
 use crate::card::{self, Clock};
 use crate::focus::{Focus, Nav, Row};
+use crate::lang::Texts;
 use uncharted_core::games::Game;
+use uncharted_core::language::Language;
 use uncharted_core::launch::Keep;
 use uncharted_core::savecard::{SaveCard, SideBySide};
 
@@ -61,12 +63,12 @@ pub enum Action {
 }
 
 impl Action {
-    pub fn label(self) -> String {
+    pub fn label(self, texts: &Texts) -> String {
         match self {
-            Action::Continue => "Continue".into(),
-            Action::Play => "Play".into(),
-            Action::OtherSaves(n) => format!("Other saves ({n})"),
-            Action::SetUp => "Set up".into(),
+            Action::Continue => texts.tr("Continue"),
+            Action::Play => texts.tr("Play"),
+            Action::OtherSaves(n) => texts.tr1("Other saves ({})", &n.to_string()),
+            Action::SetUp => texts.tr("Set up"),
         }
     }
 }
@@ -549,14 +551,19 @@ impl Screen {
         }
     }
 
-    /// What to draw now.
+    /// What to draw now (in English, for tests).
     pub fn view(&self, clock: &Clock) -> View {
+        self.view_in(clock, &Texts::new(Language::English))
+    }
+
+    /// What to draw now, in `texts`'s language.
+    pub fn view_in(&self, clock: &Clock, texts: &Texts) -> View {
         let data = self.data();
         View {
             games: self.games.iter().map(|g| g.game.name()).collect(),
             current: self.current,
-            card: self.card_view(clock),
-            actions: self.actions().iter().map(|a| a.label()).collect(),
+            card: self.card_view(clock, texts),
+            actions: self.actions().iter().map(|a| a.label(texts)).collect(),
             action_hints: self
                 .actions()
                 .iter()
@@ -567,7 +574,7 @@ impl Screen {
                     _ => None,
                 })
                 .collect(),
-            pages: Page::ALL.iter().map(|p| p.label()).collect(),
+            pages: Page::ALL.iter().map(|p| texts.tr(p.label())).collect(),
             focus: self.focus,
             status: self.status.clone(),
             overlay: match &self.overlay {
@@ -578,28 +585,30 @@ impl Screen {
                 }
                 Overlay::Running { text } => OverlayView::Running(text.clone()),
                 Overlay::OtherSaves { index } => OverlayView::OtherSaves {
-                    title: format!("Other saves: {}", data.game.name()),
-                    rows: self.rows(clock),
+                    title: texts.tr1("Other saves: {}", data.game.name()),
+                    rows: self.rows(clock, texts),
                     index: *index,
                 },
                 Overlay::Conflict { server, .. } => match &self.conflicts[self.current] {
                     Some(pair) => OverlayView::Conflict {
-                        title: format!("Two saves of {}. Keep which one?", data.game.name()),
+                        title: texts.tr1("Two saves of {}. Keep which one?", data.game.name()),
                         sides: [
                             side_view(
                                 &pair.local,
-                                "This device",
+                                &texts.tr("This device"),
                                 !pair.server_is_newer
                                     && pair.local.saved_unix > pair.server.saved_unix,
                                 data.selected_slot,
                                 clock,
+                                texts,
                             ),
                             side_view(
                                 &pair.server,
-                                "Synced",
+                                &texts.tr("Synced"),
                                 pair.server_is_newer,
                                 data.selected_slot,
                                 clock,
+                                texts,
                             ),
                         ],
                         server: *server,
@@ -610,13 +619,13 @@ impl Screen {
         }
     }
 
-    fn card_view(&self, clock: &Clock) -> CardView {
+    fn card_view(&self, clock: &Clock, texts: &Texts) -> CardView {
         let data = self.data();
         let name = data.game.name();
         let Some(newest) = data.newest() else {
             return CardView {
                 title: name.to_owned(),
-                lines: vec!["No save yet".into()],
+                lines: vec![texts.tr("No save yet")],
                 picture: data.fallback_picture.clone(),
                 picture_label: name.to_owned(),
             };
@@ -624,7 +633,7 @@ impl Screen {
         let save = &newest.card;
         let mut lines = Vec::new();
         if self.conflicted() {
-            lines.push("Two saves: pick one to play".to_owned());
+            lines.push(texts.tr("Two saves: pick one to play"));
         }
         lines.extend(save.detail.clone());
         lines.push(card::saved_line(save.saved_unix, clock));
@@ -642,7 +651,7 @@ impl Screen {
         }
     }
 
-    fn rows(&self, clock: &Clock) -> Vec<RowView> {
+    fn rows(&self, clock: &Clock, texts: &Texts) -> Vec<RowView> {
         let saves = &self.data().saves;
         saves
             .iter()
@@ -657,11 +666,11 @@ impl Screen {
                         .unwrap_or_else(|| save.game.name().to_owned()),
                     detail: save.detail.clone().unwrap_or_default(),
                     when: card::when(save.saved_unix, clock)
-                        .unwrap_or_else(|| "time not known".into()),
+                        .unwrap_or_else(|| texts.tr("time not known")),
                     device: save.device.clone().unwrap_or_default(),
-                    slot: format!("Slot {}", entry.slot),
+                    slot: texts.tr1("Slot {}", &entry.slot.to_string()),
                     note: if shared {
-                        "In the game: Load".into()
+                        texts.tr("In the game: Load")
                     } else {
                         String::new()
                     },
@@ -672,7 +681,14 @@ impl Screen {
 }
 
 /// One side of the conflict prompt.
-fn side_view(save: &SaveCard, heading: &str, newer: bool, slot: u8, clock: &Clock) -> SideView {
+fn side_view(
+    save: &SaveCard,
+    heading: &str,
+    newer: bool,
+    slot: u8,
+    clock: &Clock,
+    texts: &Texts,
+) -> SideView {
     let mut lines = Vec::new();
     lines.extend(save.detail.clone());
     let mut when = card::saved_line(save.saved_unix, clock);
@@ -681,12 +697,12 @@ fn side_view(save: &SaveCard, heading: &str, newer: bool, slot: u8, clock: &Cloc
     }
     lines.push(when);
     lines.extend(save.play_time_secs.map(card::play_time_line));
-    lines.push(format!(
-        "Slot {slot}, {}",
-        save.build_id
-            .as_deref()
-            .map_or_else(|| "Build not recorded".to_owned(), |b| format!("build {b}"))
-    ));
+    let slot_label = texts.tr1("Slot {}", &slot.to_string());
+    let build_label = save.build_id.as_deref().map_or_else(
+        || texts.tr("Build not recorded"),
+        |b| texts.tr1("build {}", b),
+    );
+    lines.push(format!("{slot_label}, {build_label}"));
     SideView {
         heading: heading.to_owned(),
         newer,
@@ -709,7 +725,7 @@ pub struct View {
     pub actions: Vec<String>,
     /// The input shown on each action: confirm on the default one and Other saves on its button.
     pub action_hints: Vec<Option<Input>>,
-    pub pages: Vec<&'static str>,
+    pub pages: Vec<String>,
     pub focus: Focus,
     pub status: String,
     pub overlay: OverlayView,

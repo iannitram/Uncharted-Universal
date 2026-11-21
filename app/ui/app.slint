@@ -432,11 +432,10 @@ component AboutPage inherits Rectangle {
     in property <[PatchRow]> patches;
     in property <[LicenceRow]> shipped;
     in property <[LicenceRow]> learned;
-    // The language button's value, and which of the two buttons has focus (`AboutFocus`).
-    in property <string> language-name;
+    // Which button has focus (`AboutFocus`).
     in property <PromptHints> hints;
     in property <int> focused-index;
-    // A click on button <int>: 0 the language button, 1 Back.
+    // A click on button <int>: 0 Back.
     callback clicked(int);
 
     // Up and down on the controller: one step is a few lines.
@@ -512,16 +511,10 @@ component AboutPage inherits Rectangle {
         HorizontalLayout {
             spacing: 16px;
             alignment: space-between;
-            // The language button is here until Settings (2.06) exists (owner ruling 2026-11-12).
-            LauncherButton {
-                label: @tr("Language: {}", root.language-name);
-                focused: root.focused-index == 0;
-                activated => { root.clicked(0); }
-            }
             LauncherButton {
                 label: @tr("Back");
-                focused: root.focused-index == 1;
-                activated => { root.clicked(1); }
+                focused: root.focused-index == 0;
+                activated => { root.clicked(0); }
             }
             Body {
                 vertical-alignment: center;
@@ -587,8 +580,6 @@ export component AppWindow inherits Window {
     // the after-crash screen's (`page` 5, `Ui::crash`).
     in property <int> about-focus;
     in property <int> crash-focus;
-    // The language button's value: a language's own name, or "Automatic (<name>)".
-    in property <string> language-name;
     in property <string> version;
     in property <[PatchRow]> patches;
     in property <[LicenceRow]> shipped-licences;
@@ -899,7 +890,7 @@ export component AppWindow inherits Window {
                 }
                 Hint {
                     unit: root.unit;
-                    text: root.prompt-hints.back + "  Quit";
+                    text: root.prompt-hints.back + "  " + @tr("Quit");
                 }
             }
         }
@@ -921,7 +912,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: root.unit * 0.8;
                     FocusButton {
-                        label: "Back";
+                        label: @tr("Back");
                         hint: root.prompt-hints.back;
                         unit: root.unit * 0.9;
                         clicked => {
@@ -1027,7 +1018,7 @@ export component AppWindow inherits Window {
                         }
                         backups-heading := Text {
                             visible: root.save-backups.length > 0;
-                            text: "Backups";
+                            text: @tr("Backups");
                             color: Theme.text;
                             font-size: root.unit * 1.1;
                             font-weight: 700;
@@ -1095,7 +1086,7 @@ export component AppWindow inherits Window {
                                             horizontal-stretch: 1;
                                         }
                                         if card.in-use: Text {
-                                            text: "In use";
+                                            text: @tr("In use");
                                             color: Theme.accent;
                                             font-size: root.unit * 0.9;
                                             font-weight: 700;
@@ -1217,7 +1208,7 @@ export component AppWindow inherits Window {
                         text: root.prompt-hints.confirm + "  Choose   " +
                             (root.page == 1 ? root.prompt-hints.prev + "/" + root.prompt-hints.next + "  Game"
                                             : "Left/Right  Change") + "   " +
-                            root.prompt-hints.back + "  Back";
+                            root.prompt-hints.back + "  " + @tr("Back");
                     }
                 }
             }
@@ -1238,7 +1229,7 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     spacing: root.unit;
                     FocusButton {
-                        label: "Delete";
+                        label: @tr("Delete");
                         hint: root.prompt-hints.confirm;
                         unit: root.unit;
                         focused: true;
@@ -1247,7 +1238,7 @@ export component AppWindow inherits Window {
                         }
                     }
                     FocusButton {
-                        label: "Keep";
+                        label: @tr("Keep");
                         hint: root.prompt-hints.back;
                         unit: root.unit;
                         clicked => {
@@ -1266,14 +1257,14 @@ export component AppWindow inherits Window {
             height: root.height;
             unit: root.unit;
             Text {
-                text: "Quit the launcher?";
+                text: @tr("Quit the launcher?");
                 color: Theme.text;
                 font-size: root.unit * 1.4;
             }
             HorizontalLayout {
                 spacing: root.unit;
                 FocusButton {
-                    label: "Quit";
+                    label: @tr("Quit");
                     hint: root.prompt-hints.confirm;
                     unit: root.unit;
                     focused: true;
@@ -1282,7 +1273,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 FocusButton {
-                    label: "Stay";
+                    label: @tr("Stay");
                     hint: root.prompt-hints.back;
                     unit: root.unit;
                     clicked => {
@@ -1381,11 +1372,11 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 Hint {
                     unit: root.unit;
-                    text: root.prompt-hints.confirm + "  Continue this save";
+                    text: root.prompt-hints.confirm + "  " + @tr("Continue this save");
                 }
                 Hint {
                     unit: root.unit;
-                    text: root.prompt-hints.back + "  Back";
+                    text: root.prompt-hints.back + "  " + @tr("Back");
                 }
             }
         }
@@ -1424,7 +1415,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                             }
                             if side.newer: Text {
-                                text: "Newer";
+                                text: @tr("Newer");
                                 color: Theme.accent;
                                 font-size: root.unit;
                                 font-weight: 700;
@@ -1461,14 +1452,14 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 Hint {
                     unit: root.unit;
-                    text: root.prompt-hints.confirm + "  Keep this save";
+                    text: root.prompt-hints.confirm + "  " + @tr("Keep this save");
                 }
                 Rectangle {
                     horizontal-stretch: 1;
                 }
                 Hint {
                     unit: root.unit;
-                    text: root.prompt-hints.back + "  Decide later";
+                    text: root.prompt-hints.back + "  " + @tr("Decide later");
                 }
             }
         }
@@ -1489,7 +1480,7 @@ export component AppWindow inherits Window {
             HorizontalLayout {
                 spacing: root.unit;
                 FocusButton {
-                    label: "Play anyway";
+                    label: @tr("Play anyway");
                     hint: root.prompt-hints.confirm;
                     unit: root.unit;
                     focused: true;
@@ -1498,7 +1489,7 @@ export component AppWindow inherits Window {
                     }
                 }
                 FocusButton {
-                    label: "Back";
+                    label: @tr("Back");
                     hint: root.prompt-hints.back;
                     unit: root.unit;
                     clicked => {
@@ -1704,7 +1695,6 @@ export component AppWindow inherits Window {
             patches: root.patches;
             shipped: root.shipped-licences;
             learned: root.learned-licences;
-            language-name: root.language-name;
             hints: root.prompt-hints;
             focused-index: root.about-focus;
             clicked(index) => {

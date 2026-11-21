@@ -52,8 +52,6 @@ msgstr "戻る"
 msgid "Up and down scroll. {} chooses, {} goes back."
 msgstr "上下でスクロール。{}で選択、{}で戻る。"
 
-msgid "Language: {}"
-msgstr "言語: {}"
 
 msgid "Automatic ({})"
 msgstr "自動 ({})"
@@ -201,3 +199,93 @@ msgstr "PlayStation"
 
 msgid "Nintendo"
 msgstr "Nintendo"
+
+msgid "Language"
+msgstr "言語"
+
+msgid "Continue"
+msgstr "続ける"
+
+msgid "Play"
+msgstr "プレイ"
+
+msgid "Other saves ({})"
+msgstr "他のセーブ ({})"
+
+msgid "Set up"
+msgstr "セットアップ"
+
+msgid "Saves"
+msgstr "セーブデータ"
+
+msgid "Settings"
+msgstr "設定"
+
+msgid "Other saves: {}"
+msgstr "他のセーブ: {}"
+
+msgid "Two saves of {}. Keep which one?"
+msgstr "{} に 2 つのセーブがあります。どちらを残しますか？"
+
+msgid "This device"
+msgstr "このデバイス"
+
+msgid "Synced"
+msgstr "同期済み"
+
+msgid "No save yet"
+msgstr "セーブなし"
+
+msgid "Two saves: pick one to play"
+msgstr "セーブが 2 つあります: 遊ぶ方を選択"
+
+msgid "time not known"
+msgstr "時刻不明"
+
+msgid "Slot {}"
+msgstr "スロット {}"
+
+msgid "In the game: Load"
+msgstr "ゲーム内: ロード"
+
+msgid "Build not recorded"
+msgstr "ビルド未記録"
+
+msgid "build {}"
+msgstr "ビルド {}"
+
+msgid "Quit"
+msgstr "終了"
+
+msgid "Backups"
+msgstr "バックアップ"
+
+msgid "In use"
+msgstr "使用中"
+
+msgid "Delete"
+msgstr "削除"
+
+msgid "Keep"
+msgstr "残す"
+
+msgid "Quit the launcher?"
+msgstr "ランチャーを終了しますか？"
+
+msgid "Stay"
+msgstr "戻る"
+
+msgid "Continue this save"
+msgstr "このセーブから続ける"
+
+msgid "Newer"
+msgstr "新しい"
+
+msgid "Keep this save"
+msgstr "このセーブを残す"
+
+msgid "Decide later"
+msgstr "後で決める"
+
+msgid "Play anyway"
+msgstr "このままプレイ"
