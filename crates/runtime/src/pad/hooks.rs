@@ -48,12 +48,12 @@ type Callback = unsafe extern "win64" fn(u64, u64, u64, u64, *const GuestRegs);
 /// `RuntimeGuestCallback`.
 #[repr(C)]
 pub struct GuestCallback {
-    name: *const c_char,
-    pattern: *const c_char,
-    skip: usize,
-    moved: usize,
-    callback: Option<Callback>,
-    patch: *const u8,
+    pub(crate) name: *const c_char,
+    pub(crate) pattern: *const c_char,
+    pub(crate) skip: usize,
+    pub(crate) moved: usize,
+    pub(crate) callback: Option<Callback>,
+    pub(crate) patch: *const u8,
 }
 
 // SAFETY: the pointers are to static strings and byte arrays.

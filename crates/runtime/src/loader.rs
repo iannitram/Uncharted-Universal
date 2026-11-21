@@ -5,6 +5,12 @@
 //! `bbgpu_init`, and `enter_on_stack`) remains in `src/probe.c` until C/GPU linkage moves
 //! to `uncharted-run` in 3.17.
 
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows")
+))]
+pub mod hooks;
+
 const MAX_IMAGE_SIZE: u64 = 512 * 1024 * 1024;
 const MAX_SEGMENTS: u64 = 64;
 const MAX_RELOCS: u64 = 1_000_000;
