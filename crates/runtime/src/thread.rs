@@ -639,7 +639,7 @@ unsafe fn create(
         let stack = (*t).attr.stack.max(MIN_STACK);
         let stack_bytes = stack as usize + STACK_MARGIN;
         let stack_memory =
-            crate::memory::linux::runtime_low_map(stack_bytes, libc::PROT_READ | libc::PROT_WRITE);
+            crate::memory::abi::runtime_low_map(stack_bytes, libc::PROT_READ | libc::PROT_WRITE);
         if !stack_memory.is_null() {
             libc::pthread_attr_setstack(host.as_mut_ptr(), stack_memory, stack_bytes);
         } else {
