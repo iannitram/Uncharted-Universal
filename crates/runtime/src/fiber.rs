@@ -72,6 +72,10 @@ struct FiberThread {
     thread_rsp: u64,
     arg_on_run_to: u64,
     arg_on_return: u64,
+    #[cfg(windows)]
+    stack_base: u64,
+    #[cfg(windows)]
+    stack_limit: u64,
 }
 
 impl FiberThread {
@@ -82,6 +86,10 @@ impl FiberThread {
             thread_rsp: 0,
             arg_on_run_to: 0,
             arg_on_return: 0,
+            #[cfg(windows)]
+            stack_base: 0,
+            #[cfg(windows)]
+            stack_limit: 0,
         }
     }
 }
@@ -173,9 +181,41 @@ unsafe fn fatal(what: &str, fiber: *const GuestFiber) -> ! {
     };
     crate::abi::host::err(&format!("STOP: fiber '{name}': {what}\n"));
     crate::abi::libc::runtime_report();
+    #[cfg(unix)]
     // SAFETY: `_exit` terminates the process immediately without running C++ destructors.
-    unsafe { libc::_exit(24) }
+    unsafe {
+        libc::_exit(24)
+    }
+    #[cfg(windows)]
+    std::process::exit(24);
 }
+
+#[cfg(windows)]
+unsafe fn use_stack(fiber: *const GuestFiber, t: *mut FiberThread) {
+    unsafe {
+        if (*t).stack_base == 0 {
+            let mut base: u64;
+            let mut limit: u64;
+            core::arch::asm!("mov {}, gs:[0x08]", out(reg) base, options(nostack, readonly));
+            core::arch::asm!("mov {}, gs:[0x10]", out(reg) limit, options(nostack, readonly));
+            (*t).stack_base = base;
+            (*t).stack_limit = limit;
+        }
+        let (base, limit) = if !fiber.is_null() && !(*fiber).addr_context.is_null() {
+            (
+                (*fiber).addr_context as u64 + (*fiber).size_context,
+                (*fiber).addr_context as u64,
+            )
+        } else {
+            ((*t).stack_base, (*t).stack_limit)
+        };
+        core::arch::asm!("mov gs:[0x08], {}", in(reg) base, options(nostack));
+        core::arch::asm!("mov gs:[0x10], {}", in(reg) limit, options(nostack));
+    }
+}
+
+#[cfg(not(windows))]
+unsafe fn use_stack(_fiber: *const GuestFiber, _t: *mut FiberThread) {}
 
 unsafe fn context_of(fiber: *mut GuestFiber, below: u64) -> u64 {
     // SAFETY: caller validated `fiber` and claimed `STATE_RUN`.
@@ -439,8 +479,10 @@ unsafe extern "sysv64" fn fiber_run_with(
         core::arch::asm!("mov {}, rsp", out(reg) here, options(nostack, nomem));
         let target = context_of(fiber, here);
         SWITCHES.fetch_add(1, Ordering::Relaxed);
+        use_stack(fiber, t);
         fiber_swap(&mut (*t).thread_rsp, target);
         t = this_thread();
+        use_stack(null_mut(), t);
         let last = (*t).current;
         (*t).current = null_mut();
         if !last.is_null() {
@@ -491,6 +533,7 @@ unsafe extern "sysv64" fn fiber_switch_with(
         (*t).arg_on_run_to = arg;
         let target = context_of(fiber, (*t).thread_rsp);
         SWITCHES.fetch_add(1, Ordering::Relaxed);
+        use_stack(fiber, t);
         if (*current).addr_context.is_null() {
             let mut discarded = 0u64;
             fiber_swap(&mut discarded, target);

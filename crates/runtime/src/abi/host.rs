@@ -76,26 +76,44 @@ mod loader {
     #[cfg(any(target_os = "linux", target_os = "android", windows))]
     pub use crate::memory::abi::{runtime_memory_report, runtime_memory_resolve};
 
-    // Rust on Linux x86-64 since 3.13 (`crate::thread`, `crate::fiber`); Windows keeps the C files.
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    // Rust on Linux and Windows x86-64 (`crate::thread`, `crate::fiber`).
+    #[cfg(all(
+        any(target_os = "linux", target_os = "windows"),
+        target_arch = "x86_64"
+    ))]
     pub use crate::fiber::{runtime_fiber_report, runtime_fiber_resolve};
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(
+        any(target_os = "linux", target_os = "windows"),
+        target_arch = "x86_64"
+    ))]
     pub use crate::thread::{runtime_thread_report, runtime_thread_resolve};
 
     extern "C" {
-        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        #[cfg(not(all(
+            any(target_os = "linux", target_os = "windows"),
+            target_arch = "x86_64"
+        )))]
         pub fn runtime_thread_resolve(name: *const c_char) -> usize;
         #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         pub fn runtime_memory_resolve(name: *const c_char) -> usize;
-        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        #[cfg(not(all(
+            any(target_os = "linux", target_os = "windows"),
+            target_arch = "x86_64"
+        )))]
         pub fn runtime_fiber_resolve(name: *const c_char) -> usize;
         pub fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
 
-        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        #[cfg(not(all(
+            any(target_os = "linux", target_os = "windows"),
+            target_arch = "x86_64"
+        )))]
         pub fn runtime_thread_report();
         #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
         pub fn runtime_memory_report();
-        #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+        #[cfg(not(all(
+            any(target_os = "linux", target_os = "windows"),
+            target_arch = "x86_64"
+        )))]
         pub fn runtime_fiber_report();
 
         pub fn runtime_quit(code: c_int) -> !;

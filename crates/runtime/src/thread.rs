@@ -6,7 +6,7 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void, CStr};
-use std::mem::{self, MaybeUninit};
+use std::mem;
 use std::ptr::{self, null_mut};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -20,6 +20,7 @@ const STACK_MARGIN: usize = 256 * 1024;
 const MIN_STACK: u64 = 64 * 1024;
 const DEFAULT_STACK: u64 = 1024 * 1024;
 const DEFAULT_PRIO: i32 = 700;
+#[cfg(unix)]
 const ARCH_SET_GS: c_int = 0x1001;
 
 type GuestEntry = unsafe extern "sysv64" fn(*mut c_void) -> *mut c_void;
@@ -42,7 +43,10 @@ struct ThreadAttr {
 pub struct GuestThread {
     tcb: *mut u64,
     tls_block: *mut u8,
+    #[cfg(unix)]
     host: libc::pthread_t,
+    #[cfg(windows)]
+    host: usize,
     entry: Option<GuestEntry>,
     argument: *mut c_void,
     result: *mut c_void,
@@ -136,12 +140,62 @@ fn tls_offset() -> u64 {
     (memsz + align - 1) & !(align - 1)
 }
 
+#[cfg(windows)]
+static WIN_TLS_SLOT: AtomicU32 =
+    AtomicU32::new(windows_sys::Win32::System::Threading::TLS_OUT_OF_INDEXES);
+
+/// Windows: returns the TEB `TlsSlots` byte offset (`gs:[offset]`) holding the guest TCB.
+#[cfg(windows)]
+#[no_mangle]
+pub extern "C" fn runtime_thread_tcb_offset() -> u32 {
+    use windows_sys::Win32::System::Threading::{TlsAlloc, TLS_OUT_OF_INDEXES};
+    let slot = WIN_TLS_SLOT.load(Ordering::Acquire);
+    let slot = if slot == TLS_OUT_OF_INDEXES {
+        // SAFETY: allocates a process-wide TEB TLS slot.
+        let allocated = unsafe { TlsAlloc() };
+        if allocated >= 64 {
+            crate::abi::host::err(&format!(
+                "STOP: no TEB TLS slot below 64 (got {allocated})\n"
+            ));
+            quit(21);
+        }
+        match WIN_TLS_SLOT.compare_exchange(
+            TLS_OUT_OF_INDEXES,
+            allocated,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => allocated,
+            Err(existing) => existing,
+        }
+    } else {
+        slot
+    };
+    0x1480 + 8 * slot
+}
+
 unsafe fn set_gs(base: *mut c_void) {
-    // SAFETY: `SYS_arch_prctl(ARCH_SET_GS, base)` sets the calling thread's GS base on Linux x86-64.
-    let rc = unsafe { libc::syscall(libc::SYS_arch_prctl, ARCH_SET_GS, base as libc::c_ulong) };
-    if rc != 0 {
-        crate::abi::host::err("STOP: arch_prctl(ARCH_SET_GS) failed\n");
-        quit(21);
+    #[cfg(unix)]
+    {
+        // SAFETY: `SYS_arch_prctl(ARCH_SET_GS, base)` sets the calling thread's GS base on Linux x86-64.
+        let rc = unsafe { libc::syscall(libc::SYS_arch_prctl, ARCH_SET_GS, base as libc::c_ulong) };
+        if rc != 0 {
+            crate::abi::host::err("STOP: arch_prctl(ARCH_SET_GS) failed\n");
+            quit(21);
+        }
+    }
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::Foundation::GetLastError;
+        use windows_sys::Win32::System::Threading::TlsSetValue;
+        runtime_thread_tcb_offset();
+        let slot = WIN_TLS_SLOT.load(Ordering::Acquire);
+        // SAFETY: `slot` was allocated by `TlsAlloc` and `base` is this thread's guest TCB.
+        if unsafe { TlsSetValue(slot, base) } == 0 {
+            let err = unsafe { GetLastError() };
+            crate::abi::host::err(&format!("STOP: TlsSetValue failed ({err})\n"));
+            quit(21);
+        }
     }
 }
 
@@ -154,19 +208,22 @@ fn quit(code: c_int) -> ! {
         // SAFETY: `runtime_quit` terminates the loader process cleanly.
         unsafe { runtime_quit(code) }
     }
-    #[cfg(not(uncharted_loader))]
+    #[cfg(all(not(uncharted_loader), unix))]
     // SAFETY: `_exit` terminates immediately in test builds without a C loader.
     unsafe {
         libc::_exit(code)
     }
+    #[cfg(all(not(uncharted_loader), windows))]
+    std::process::exit(code)
 }
 
 unsafe fn attach(t: *mut GuestThread) {
     let offset = tls_offset() as usize;
     let total = offset + 256;
     let aligned_total = (total + 63) & !63usize;
-    // SAFETY: allocates a 64-byte aligned TLS + TCB block.
-    let block = unsafe { libc::aligned_alloc(64, aligned_total) }.cast::<u8>();
+    let layout = std::alloc::Layout::from_size_align(aligned_total, 64).expect("valid TLS layout");
+    // SAFETY: allocates a 64-byte aligned zeroed TLS + TCB block.
+    let block = unsafe { std::alloc::alloc_zeroed(layout) };
     if block.is_null() {
         crate::abi::host::err("Cannot allocate guest TLS\n");
         std::process::exit(1);
@@ -190,8 +247,9 @@ unsafe fn attach(t: *mut GuestThread) {
 }
 
 unsafe fn new_thread() -> *mut GuestThread {
+    let layout = std::alloc::Layout::new::<GuestThread>();
     // SAFETY: allocates zeroed `GuestThread`.
-    let t = unsafe { libc::calloc(1, mem::size_of::<GuestThread>()) }.cast::<GuestThread>();
+    let t = unsafe { std::alloc::alloc_zeroed(layout) }.cast::<GuestThread>();
     if t.is_null() {
         return null_mut();
     }
@@ -249,7 +307,14 @@ pub(crate) fn current_thread() -> *mut GuestThread {
             crate::abi::host::err("Cannot allocate guest thread\n");
             std::process::exit(1);
         }
-        (*t).host = libc::pthread_self();
+        #[cfg(unix)]
+        {
+            (*t).host = libc::pthread_self();
+        }
+        #[cfg(windows)]
+        {
+            (*t).host = windows_sys::Win32::System::Threading::GetCurrentThread() as usize;
+        }
         (*t).host_owned = 1;
         copy_name(&mut (*t).name, "host");
         attach(t);
@@ -351,24 +416,20 @@ unsafe extern "sysv64" fn attr_init(out: *mut *mut ThreadAttr) -> i32 {
     if out.is_null() {
         return err(22);
     }
-    // SAFETY: allocates a `ThreadAttr`.
-    let a = unsafe { libc::calloc(1, mem::size_of::<ThreadAttr>()) }.cast::<ThreadAttr>();
-    if a.is_null() {
-        return err(12);
-    }
+    let a = Box::into_raw(Box::new(ThreadAttr {
+        magic: ATTR_MAGIC,
+        detached: 0,
+        policy: 1,
+        prio: DEFAULT_PRIO,
+        inherit: 4,
+        stack: DEFAULT_STACK,
+        guard: 4096,
+        affinity: 0x7f,
+        next: null_mut(),
+    }));
     let mut reg = LOCK.lock().unwrap();
     unsafe {
-        *a = ThreadAttr {
-            magic: ATTR_MAGIC,
-            detached: 0,
-            policy: 1,
-            prio: DEFAULT_PRIO,
-            inherit: 4,
-            stack: DEFAULT_STACK,
-            guard: 4096,
-            affinity: 0x7f,
-            next: reg.attributes as *mut ThreadAttr,
-        };
+        (*a).next = reg.attributes as *mut ThreadAttr;
         reg.attributes = a as usize;
         *out = a;
     }
@@ -400,7 +461,7 @@ unsafe extern "sysv64" fn attr_destroy(slot: *mut *mut ThreadAttr) -> i32 {
         }
     }
     unsafe {
-        libc::free(a.cast());
+        drop(Box::from_raw(a));
         *slot = null_mut();
     }
     0
@@ -542,6 +603,7 @@ unsafe extern "sysv64" fn attr_set_guard(slot: *mut *mut ThreadAttr, size: u64) 
 }
 
 /// Linux thread names hold 15 characters; longer ones would be rejected.
+#[cfg(unix)]
 fn set_host_name(name: &[u8; 32]) {
     let len = name
         .iter()
@@ -553,6 +615,9 @@ fn set_host_name(name: &[u8; 32]) {
     // SAFETY: `host` is NUL-terminated and <= 15 bytes.
     unsafe { libc::pthread_setname_np(libc::pthread_self(), host.as_ptr().cast()) };
 }
+
+#[cfg(windows)]
+fn set_host_name(_name: &[u8; 32]) {}
 
 fn guest_mxcsr_value() -> u32 {
     static VALUE: OnceLock<u32> = OnceLock::new();
@@ -603,6 +668,12 @@ extern "C" fn host_start(p: *mut c_void) -> *mut c_void {
     }
 }
 
+#[cfg(windows)]
+unsafe extern "system" fn win_host_start(p: *mut c_void) -> u32 {
+    host_start(p);
+    0
+}
+
 unsafe fn create(
     out: *mut *mut GuestThread,
     attr_slot: *mut *mut ThreadAttr,
@@ -634,28 +705,57 @@ unsafe fn create(
         (*t).detached = (*t).attr.detached;
         copy_c_name(&mut (*t).name, name, "guest");
 
-        let mut host = MaybeUninit::<libc::pthread_attr_t>::uninit();
-        libc::pthread_attr_init(host.as_mut_ptr());
         let stack = (*t).attr.stack.max(MIN_STACK);
         let stack_bytes = stack as usize + STACK_MARGIN;
-        let stack_memory =
-            crate::memory::abi::runtime_low_map(stack_bytes, libc::PROT_READ | libc::PROT_WRITE);
-        if !stack_memory.is_null() {
-            libc::pthread_attr_setstack(host.as_mut_ptr(), stack_memory, stack_bytes);
-        } else {
-            libc::pthread_attr_setstacksize(host.as_mut_ptr(), stack_bytes);
-        }
-
         publish(t);
         *out = t;
-        let e = libc::pthread_create(&mut (*t).host, host.as_ptr(), host_start, t.cast());
-        libc::pthread_attr_destroy(host.as_mut_ptr());
-        if e != 0 {
-            crate::abi::host::err(&format!("STOP: host pthread_create failed: {e}\n"));
-            quit(21);
+
+        #[cfg(unix)]
+        {
+            let mut host = std::mem::MaybeUninit::<libc::pthread_attr_t>::uninit();
+            libc::pthread_attr_init(host.as_mut_ptr());
+            let stack_memory = crate::memory::abi::runtime_low_map(
+                stack_bytes,
+                libc::PROT_READ | libc::PROT_WRITE,
+            );
+            if !stack_memory.is_null() {
+                libc::pthread_attr_setstack(host.as_mut_ptr(), stack_memory, stack_bytes);
+            } else {
+                libc::pthread_attr_setstacksize(host.as_mut_ptr(), stack_bytes);
+            }
+            let e = libc::pthread_create(&mut (*t).host, host.as_ptr(), host_start, t.cast());
+            libc::pthread_attr_destroy(host.as_mut_ptr());
+            if e != 0 {
+                crate::abi::host::err(&format!("STOP: host pthread_create failed: {e}\n"));
+                quit(21);
+            }
+            if (*t).detached != 0 {
+                libc::pthread_detach((*t).host);
+            }
         }
-        if (*t).detached != 0 {
-            libc::pthread_detach((*t).host);
+
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{CloseHandle, GetLastError};
+            use windows_sys::Win32::System::Threading::CreateThread;
+            let handle = CreateThread(
+                null_mut(),
+                stack_bytes,
+                Some(win_host_start),
+                t.cast(),
+                0,
+                null_mut(),
+            );
+            if handle.is_null() {
+                let e = GetLastError();
+                crate::abi::host::err(&format!("STOP: host CreateThread failed: {e}\n"));
+                quit(21);
+            }
+            (*t).host = handle as usize;
+            if (*t).detached != 0 {
+                CloseHandle(handle);
+                (*t).host = 0;
+            }
         }
         {
             let mut reg = LOCK.lock().unwrap();
@@ -697,11 +797,23 @@ unsafe extern "sysv64" fn thread_join(thread: *mut c_void, result: *mut *mut c_v
             return err(22);
         }
         (*t).joined = 1;
-        let mut value: *mut c_void = null_mut();
-        let e = libc::pthread_join((*t).host, &mut value);
-        if e != 0 {
-            crate::abi::host::err(&format!("STOP: host pthread_join failed: {e}\n"));
-            quit(21);
+        #[cfg(unix)]
+        {
+            let mut value: *mut c_void = null_mut();
+            let e = libc::pthread_join((*t).host, &mut value);
+            if e != 0 {
+                crate::abi::host::err(&format!("STOP: host pthread_join failed: {e}\n"));
+                quit(21);
+            }
+        }
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+            use windows_sys::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+            let handle = (*t).host as HANDLE;
+            WaitForSingleObject(handle, INFINITE);
+            CloseHandle(handle);
+            (*t).host = 0;
         }
         if !result.is_null() {
             *result = (*t).result;
@@ -722,7 +834,17 @@ unsafe extern "sysv64" fn thread_detach(thread: *mut c_void) -> i32 {
         }
         (*t).detached = 1;
         if (*t).host_owned == 0 {
+            #[cfg(unix)]
             libc::pthread_detach((*t).host);
+            #[cfg(windows)]
+            {
+                use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+                let handle = (*t).host as HANDLE;
+                if !handle.is_null() {
+                    CloseHandle(handle);
+                    (*t).host = 0;
+                }
+            }
         }
     }
     0
@@ -741,8 +863,7 @@ unsafe extern "sysv64" fn thread_exit(value: *mut c_void) -> ! {
 }
 
 extern "sysv64" fn thread_yield() -> i32 {
-    // SAFETY: `sched_yield` has no preconditions.
-    unsafe { libc::sched_yield() };
+    std::thread::yield_now();
     0
 }
 
