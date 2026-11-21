@@ -223,10 +223,45 @@ pub fn relay_manifest(game: Game) -> String {
     .to_owned()
 }
 
+/// How the user's saves are laid out under `user_dir` (M4, #431).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SaveLayout {
+    /// Per-game folders (`<user>/Uncharted N`, `<user>/Save slots/Uncharted N/Slot n`) via
+    /// `BB_SAVEDATA_DIRS`.
+    #[default]
+    PerGameSlots,
+    /// Windows/runtime default layout (`<user>/savedata/1/<title ID>`) with no `BB_SAVEDATA_DIRS`
+    /// mapping so synced folders match the Windows build (`spacepepperoni #84`).
+    SameAsWindows,
+}
+
+/// The Windows-style save folder for `title_id` (`<user_dir>/savedata/1/<title_id>`).
+pub fn windows_save_dir(user_dir: &Path, title_id: &str) -> PathBuf {
+    user_dir.join("savedata/1").join(title_id)
+}
+
 /// The `--saves-dir` the launcher passes save-relay for a game: the folder of its selected
 /// slot under `user_dir`. Changing the selected slot changes what syncs.
 pub fn relay_saves_dir(user_dir: &Path, game: Game) -> PathBuf {
     slot_dir(user_dir, game, selected(user_dir, game))
+}
+
+/// The `--saves-dir` passed to save-relay under `layout`:
+/// - `PerGameSlots`: [`relay_saves_dir`] (`<user>/Uncharted N` or `<user>/Save slots/...`).
+/// - `SameAsWindows`: [`windows_save_dir`] (`<user>/savedata/1/<title_id>`).
+///
+/// In both modes, the save-relay manifest (`saves_from: "launcher"`) uses `SAVEDATA0N*/**`
+/// include patterns relative to that folder.
+pub fn relay_saves_dir_for_layout(
+    user_dir: &Path,
+    game: Game,
+    title_id: &str,
+    layout: SaveLayout,
+) -> PathBuf {
+    match layout {
+        SaveLayout::PerGameSlots => relay_saves_dir(user_dir, game),
+        SaveLayout::SameAsWindows => windows_save_dir(user_dir, title_id),
+    }
 }
 
 /// Use the exact user folder and first matching prefix that the runtime receives.
@@ -550,6 +585,15 @@ pub fn mapping(user_dir: &Path) -> String {
         })
         .collect::<Vec<_>>()
         .join(";")
+}
+
+/// Returns `Some(BB_SAVEDATA_DIRS)` for [`SaveLayout::PerGameSlots`], or `None` for
+/// [`SaveLayout::SameAsWindows`] so the runtime uses `<user>/savedata/1/<title ID>`.
+pub fn mapping_for_layout(user_dir: &Path, layout: SaveLayout) -> Option<String> {
+    match layout {
+        SaveLayout::PerGameSlots => Some(mapping(user_dir)),
+        SaveLayout::SameAsWindows => None,
+    }
 }
 
 #[cfg(test)]
