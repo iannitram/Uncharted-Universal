@@ -89,6 +89,21 @@ class LookupTest(unittest.TestCase):
                 found = licence_check._windows_files('mingw-w64-clang-x86_64-sdl3')
                 self.assertEqual(found, [(Path(tmp) / 'SDL3' / 'LICENSE.txt', Path('LICENSE.txt'))])
 
+    def test_ffmpeg_gpl3_is_rejected_and_gpl2_is_accepted(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            gpl3 = Path(tmp) / 'COPYING.txt'
+            gpl3.write_text('GNU GENERAL PUBLIC LICENSE\nVersion 3, 29 June 2007\n')
+            gpl2 = Path(tmp) / 'COPYING.GPLv2'
+            gpl2.write_text('GNU GENERAL PUBLIC LICENSE\nVersion 2, June 1991\n')
+            bad = [('avcodec-61.dll', 'ffmpeg', [gpl3]), ('SDL3.dll', 'sdl3', [gpl3])]
+            problems = licence_check.check_ffmpeg_compatibility(bad)
+            self.assertEqual(len(problems), 1)
+            self.assertIn('avcodec-61.dll', problems[0])
+            good = [('avcodec-61.dll', 'ffmpeg', [gpl2]), ('libavutil.so.59', 'ffmpeg', [gpl2])]
+            self.assertEqual(licence_check.check_ffmpeg_compatibility(good), [])
+
 
 if __name__ == '__main__':
     unittest.main()
