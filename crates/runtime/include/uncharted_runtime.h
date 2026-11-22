@@ -179,6 +179,10 @@ bool uncharted_runtime_resize_needs_restart(uint32_t start_w,
                                             uint32_t cur_w,
                                             uint32_t cur_h);
 
+// Computes the centered 16:9 HUD/menu safe-area rectangle inside `screen_w x screen_h`
+// via `aspect::safe_area` (M21b, #433).
+struct RuntimeRect uncharted_runtime_safe_area(uint32_t screen_w, uint32_t screen_h);
+
 #if defined(__x86_64__)
 // `BB_GAME_RES`: rewrites the display configuration the game initializes, the memory
 // budget and the movie frame buffers in the loaded executable (`image_size` bytes at
