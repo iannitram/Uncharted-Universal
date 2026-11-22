@@ -146,15 +146,24 @@ core::arch::global_asm!(
     "    ud2",
 );
 
+thread_local! {
+    static NDGI_OPEN: std::cell::Cell<std::ffi::c_int> = const { std::cell::Cell::new(0) };
+}
+
+/// Sets this thread's `runtime_ndgi_open` flag (used by `pad/hooks.rs` and `job_lock_wait`).
+#[no_mangle]
+pub extern "C" fn runtime_ndgi_set(open: std::ffi::c_int) {
+    NDGI_OPEN.with(|flag| flag.set(open));
+}
+
+/// Returns this thread's `runtime_ndgi_open` flag.
+#[no_mangle]
+pub extern "C" fn runtime_ndgi_is_open() -> std::ffi::c_int {
+    NDGI_OPEN.with(|flag| flag.get())
+}
+
 fn ndgi_leave() {
-    #[cfg(uncharted_loader)]
-    {
-        extern "C" {
-            fn runtime_ndgi_set(open: std::ffi::c_int);
-        }
-        // SAFETY: clears the per-thread `runtime_ndgi_open` flag in C when a fiber leaves.
-        unsafe { runtime_ndgi_set(0) };
-    }
+    runtime_ndgi_set(0);
 }
 
 /// For fault reports (no allocation, any thread): the guest fiber running here, or null.
