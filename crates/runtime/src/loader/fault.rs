@@ -3,11 +3,22 @@
 //! and `watchdog` from `src/probe.c` into Rust for roadmap 3.17).
 
 use crate::crash;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 static IMAGE_BASE: AtomicU64 = AtomicU64::new(0);
 static EXE_BASE: AtomicU64 = AtomicU64::new(0);
 static GPU_ENABLED: AtomicBool = AtomicBool::new(false);
+static GPU_HANDLE_FAULT_FN: AtomicUsize = AtomicUsize::new(0);
+static GPU_DUMP_WRITES_FN: AtomicUsize = AtomicUsize::new(0);
+static BENCHMARK_CRASH_FN: AtomicUsize = AtomicUsize::new(0);
+
+/// Optional C/GPU hooks invoked by the fault handler when linked into a GPU-enabled runner.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FaultHooks {
+    pub gpu_handle_fault: Option<unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void) -> i32>,
+    pub gpu_dump_writes: Option<unsafe extern "C" fn(*mut libc::c_void)>,
+    pub benchmark_crash: Option<unsafe extern "C" fn()>,
+}
 
 /// Records the loaded guest image base, host executable base, and GPU fault-tracking state for the
 /// fault/watchdog handlers.
@@ -15,6 +26,22 @@ pub fn configure_fault_context(image_base: u64, exe_base: u64, gpu_enabled: bool
     IMAGE_BASE.store(image_base, Ordering::Release);
     EXE_BASE.store(exe_base, Ordering::Release);
     GPU_ENABLED.store(gpu_enabled, Ordering::Release);
+}
+
+/// Registers optional GPU/benchmark callbacks for the fault handler.
+pub fn configure_fault_hooks(hooks: FaultHooks) {
+    GPU_HANDLE_FAULT_FN.store(
+        hooks.gpu_handle_fault.map_or(0, |f| f as usize),
+        Ordering::Release,
+    );
+    GPU_DUMP_WRITES_FN.store(
+        hooks.gpu_dump_writes.map_or(0, |f| f as usize),
+        Ordering::Release,
+    );
+    BENCHMARK_CRASH_FN.store(
+        hooks.benchmark_crash.map_or(0, |f| f as usize),
+        Ordering::Release,
+    );
 }
 
 /// Returns the configured `(image_base, exe_base, gpu_enabled)` tuple.
@@ -31,12 +58,6 @@ pub mod linux {
     use super::*;
     use crate::cpu_patch::{cpu_patch_breakpoint, cpu_patch_illegal};
     use std::ffi::CStr;
-
-    extern "C" {
-        fn bbgpu_handle_fault(context: *mut libc::c_void, addr: *mut libc::c_void) -> libc::c_int;
-        fn bbgpu_dump_guest_writes(context: *mut libc::c_void);
-        fn runtime_benchmark_crash();
-    }
 
     /// Installs the Linux `SIGSEGV`, `SIGILL`, `SIGBUS`, `SIGTRAP`, `SIGUSR2`, and `SIGALRM`
     /// handlers for guest execution.
@@ -101,9 +122,14 @@ pub mod linux {
 
         let (image_base, _, gpu_enabled) = fault_context();
         if gpu_enabled && sig == libc::SIGSEGV {
-            // SAFETY: GPU fault tracker inspects write-protected guest pages.
-            if unsafe { bbgpu_handle_fault(context, fault_addr) } != 0 {
-                return;
+            let fn_ptr = GPU_HANDLE_FAULT_FN.load(Ordering::Acquire);
+            if fn_ptr != 0 {
+                // SAFETY: `configure_fault_hooks` received a valid `gpu_handle_fault` pointer.
+                let f: unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void) -> i32 =
+                    unsafe { std::mem::transmute(fn_ptr) };
+                if unsafe { f(context, fault_addr) } != 0 {
+                    return;
+                }
             }
         }
 
@@ -141,9 +167,17 @@ pub mod linux {
         unsafe {
             libc::write(2, line.as_ptr() as *const libc::c_void, line.len());
             if gpu_enabled {
-                bbgpu_dump_guest_writes(context);
+                let fn_ptr = GPU_DUMP_WRITES_FN.load(Ordering::Acquire);
+                if fn_ptr != 0 {
+                    let f: unsafe extern "C" fn(*mut libc::c_void) = std::mem::transmute(fn_ptr);
+                    f(context);
+                }
             }
-            runtime_benchmark_crash();
+            let bench_ptr = BENCHMARK_CRASH_FN.load(Ordering::Acquire);
+            if bench_ptr != 0 {
+                let f: unsafe extern "C" fn() = std::mem::transmute(bench_ptr);
+                f();
+            }
             libc::_exit(128 + sig);
         }
     }
