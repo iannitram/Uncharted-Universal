@@ -2,6 +2,7 @@
 //! callbacks, per-thread TLS isolation, fault handoff, and teardown to the Rust runtime ABI
 //! (roadmap 7.01c, #209).
 
+use core::ffi::c_void;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -51,7 +52,7 @@ pub struct FexFaultInfo {
 pub type FexHostCallback = extern "C" fn(
     ctx: *mut FexGuestContext,
     args: *const FexCallArgs,
-    user_data: *mut libc::c_void,
+    user_data: *mut c_void,
 ) -> u64;
 
 #[derive(Clone, Copy)]
@@ -119,7 +120,7 @@ pub extern "C" fn runtime_fex_context_destroy(handle: u64) -> i32 {
 pub unsafe extern "C" fn runtime_fex_register_callback(
     func_id: u32,
     func: FexHostCallback,
-    user_data: *mut libc::c_void,
+    user_data: *mut c_void,
 ) -> i32 {
     let mut guard = state().lock().expect("fex bridge mutex poisoned");
     guard.callbacks.insert(
@@ -169,7 +170,7 @@ pub unsafe extern "C" fn runtime_fex_call(
     ctx.xmm[1] = call_args.vectors[1];
 
     // Invoke outside the lock so nested `runtime_fex_call` invocations do not deadlock.
-    let result = (cb.func)(&mut ctx, &call_args, cb.user_data as *mut libc::c_void);
+    let result = (cb.func)(&mut ctx, &call_args, cb.user_data as *mut c_void);
 
     {
         let mut guard = state().lock().expect("fex bridge mutex poisoned");
@@ -219,7 +220,7 @@ mod tests {
     extern "C" fn test_callback(
         ctx: *mut FexGuestContext,
         args: *const FexCallArgs,
-        user_data: *mut libc::c_void,
+        user_data: *mut c_void,
     ) -> u64 {
         let ctx = unsafe { &mut *ctx };
         let args = unsafe { &*args };
