@@ -231,6 +231,10 @@ extern "C" BbMovieRect bbgpu_movie_fit_rect(uint32_t screen_w, uint32_t screen_h
     return {(screen_w - width) / 2, (screen_h - height) / 2, width, height};
 }
 
+extern "C" BbMovieRect bbgpu_safe_area(uint32_t screen_w, uint32_t screen_h) {
+    return bbgpu_movie_fit_rect(screen_w, screen_h, 16, 9);
+}
+
 extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
     static u32 last_w = 0, last_h = 0;
     const u32 sw = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;

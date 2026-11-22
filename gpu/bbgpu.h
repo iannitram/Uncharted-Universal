@@ -40,6 +40,8 @@ typedef struct {
     uint32_t x, y, width, height;
 } BbMovieRect;
 BbMovieRect bbgpu_movie_fit_rect(uint32_t screen_w, uint32_t screen_h, uint32_t movie_w, uint32_t movie_h);
+/* Centered 16:9 HUD/menu safe-area rectangle inside screen_w x screen_h (M21b, #433). */
+BbMovieRect bbgpu_safe_area(uint32_t screen_w, uint32_t screen_h);
 /* Presenter resize notification (M21e, #436): returns 1 if a restart prompt is advised. */
 int bbgpu_notify_resize(uint32_t width, uint32_t height);
 /* Function for an imported NID ("NID#lib#mod"), or 0 when the GPU library does not provide it. */

@@ -545,6 +545,21 @@ pub extern "C" fn uncharted_runtime_resize_needs_restart(
     resize_needs_restart((start_w, start_h), (cur_w, cur_h))
 }
 
+/// Computes the centered 16:9 HUD/menu safe-area rectangle inside `screen_w x screen_h`
+/// via `aspect::safe_area` (M21b, #433).
+#[no_mangle]
+pub extern "C" fn uncharted_runtime_safe_area(screen_w: u32, screen_h: u32) -> RuntimeRect {
+    match uncharted_core::aspect::safe_area((screen_w, screen_h)) {
+        Ok(r) => RuntimeRect {
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+        },
+        Err(_) => RuntimeRect::default(),
+    }
+}
+
 #[cfg(any(target_arch = "x86_64", test))]
 fn automatic_patch(
     image: &mut [u8],
@@ -947,6 +962,54 @@ mod tests {
         assert!(uncharted_runtime_resize_needs_restart(
             1280, 720, 1920, 1080
         ));
+    }
+
+    #[test]
+    fn safe_area_fits_inside_every_target_screen() {
+        // 16:9 -> full frame
+        assert_eq!(
+            uncharted_runtime_safe_area(1920, 1080),
+            RuntimeRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080
+            }
+        );
+        // 16:10 -> centered 16:9 band
+        assert_eq!(
+            uncharted_runtime_safe_area(2560, 1600),
+            RuntimeRect {
+                x: 0,
+                y: 80,
+                width: 2560,
+                height: 1440
+            }
+        );
+        // 3:2 (iPad mini) -> letterboxed 16:9 safe area
+        let ipad = uncharted_runtime_safe_area(2266, 1488);
+        assert_eq!(ipad.x, 0);
+        assert!(ipad.y > 0 && ipad.width == 2266 && ipad.height < 1488);
+        // 6:5 (Pixel Fold unfolded) -> letterboxed 16:9 safe area
+        assert_eq!(
+            uncharted_runtime_safe_area(2208, 1840),
+            RuntimeRect {
+                x: 0,
+                y: 299,
+                width: 2208,
+                height: 1242
+            }
+        );
+        // Fold cover (2092x1080) -> pillarboxed 16:9 safe area
+        assert_eq!(
+            uncharted_runtime_safe_area(2092, 1080),
+            RuntimeRect {
+                x: 86,
+                y: 0,
+                width: 1920,
+                height: 1080
+            }
+        );
     }
 
     #[test]
