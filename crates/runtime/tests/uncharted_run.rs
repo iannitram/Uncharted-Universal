@@ -8,10 +8,29 @@ fn uncharted_run_probe_force_fault_and_list_missing() {
     let bad = Command::new(bin).output().unwrap();
     assert_eq!(bad.status.code(), Some(2));
 
-    // 2. --probe succeeds and prints hardware capabilities
+    // 2. --probe succeeds with JSON on Vulkan-capable hosts, or exits 1 with a clean
+    //    diagnostic on headless runners without a Vulkan loader/device.
     let probe = Command::new(bin).arg("--probe").output().unwrap();
-    assert_eq!(probe.status.code(), Some(0));
-    assert!(!String::from_utf8_lossy(&probe.stdout).trim().is_empty());
+    match probe.status.code() {
+        Some(0) => {
+            let stdout = String::from_utf8_lossy(&probe.stdout);
+            assert!(
+                stdout.trim().starts_with('{'),
+                "expected JSON probe report, got: {stdout}"
+            );
+        }
+        Some(1) => {
+            let stderr = String::from_utf8_lossy(&probe.stderr);
+            assert!(
+                stderr.contains("uncharted-run:"),
+                "expected clean probe diagnostic on stderr, got: {stderr}"
+            );
+        }
+        other => panic!(
+            "unexpected --probe exit code {other:?}; stderr: {}",
+            String::from_utf8_lossy(&probe.stderr)
+        ),
+    }
 
     // 3. --force-fault exits non-zero and prints exactly one Crash: line
     let fault = Command::new(bin).arg("--force-fault").output().unwrap();
