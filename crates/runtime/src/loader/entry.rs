@@ -24,6 +24,43 @@ pub fn quit_process(code: i32) -> ! {
     std::process::exit(code);
 }
 
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+core::arch::global_asm!(
+    ".globl uncharted_enter_on_stack",
+    "uncharted_enter_on_stack:",
+    "mov rsp, rcx",
+    "mov rax, rdi",
+    "mov rdi, rsi",
+    "mov rsi, rdx",
+    "jmp rax",
+);
+
+#[cfg(all(target_arch = "x86_64", windows))]
+core::arch::global_asm!(
+    ".globl uncharted_enter_on_stack",
+    "uncharted_enter_on_stack:",
+    "mov rsp, r9",
+    "mov rax, rcx",
+    "mov rdi, rdx",
+    "mov rsi, r8",
+    "jmp rax",
+);
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows")
+))]
+extern "C" {
+    /// Transfers control to a SysV x86-64 guest `entry(arg0, arg1)` on a freshly prepared stack
+    /// (`top`, 16-byte aligned minus 8 or 64 as expected by the guest).
+    pub fn uncharted_enter_on_stack(
+        entry: *const core::ffi::c_void,
+        arg0: *mut core::ffi::c_void,
+        arg1: *mut core::ffi::c_void,
+        top: *mut core::ffi::c_void,
+    ) -> !;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
