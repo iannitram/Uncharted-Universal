@@ -6,6 +6,8 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 
+__thread sigjmp_buf* runtime_fault_recover = nullptr;
+
 // A draw-preparation worker translates shaders and builds pipelines ahead of the GPU thread, from
 // guest memory the game may already have reused. Where it armed a recovery point (the same one a
 // faulting read uses), an assertion on such data only abandons the speculation; the GPU thread

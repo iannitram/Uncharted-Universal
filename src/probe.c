@@ -1234,7 +1234,7 @@ static void patch_u1_sticky(uint64_t image_size) {
  * retries in place (SwitchToThread, then 1 ms sleeps, up to BB_JOB_LOCK_WAIT_MS, default 250;
  * 0: off) and suspends its job only after that, as before; other workers suspend at once. The
  * counter is read again on every try. */
-extern _Thread_local int runtime_ndgi_open; /* runtime_fiber.c */
+int runtime_ndgi_is_open(void); /* crates/runtime/src/fiber.rs */
 static uint64_t job_lock_try;
 static unsigned job_lock_wait_ms=250;
 static volatile long job_lock_fallbacks;
@@ -1245,7 +1245,7 @@ static ABI int job_lock_wait(uint64_t counter, uint64_t a, uint32_t b) {
 #define try_lock(x,y) try_value(*value,(x),(y))
     /* Without a render context open the job may move: suspend at once, as the game does (waiting
      * in place for every counter starved the job system: 3.6 fps loading with 4 cores). */
-    if (!runtime_ndgi_open) return 0;
+    if (!runtime_ndgi_is_open()) return 0;
 #ifdef _WIN32
     for (unsigned i=0;i<16;++i) {
         if (try_lock(a,b)&0xff) return 1;

@@ -201,6 +201,16 @@ struct RuntimeDisplaySize runtime_display_auto(uint8_t *image,
 #endif
 
 #if (defined(__linux__) && defined(__x86_64__))
+// Sets this thread's `runtime_ndgi_open` flag (used by `pad/hooks.rs` and `job_lock_wait`).
+void runtime_ndgi_set(int open);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
+// Returns this thread's `runtime_ndgi_open` flag.
+int runtime_ndgi_is_open(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
 // For fault reports (no allocation, any thread): the guest fiber running here, or null.
 const char *runtime_fiber_name_here(void);
 #endif
