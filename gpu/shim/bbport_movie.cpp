@@ -4,6 +4,7 @@
 #include "bbport_movie.h"
 #include "../bbgpu.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
@@ -28,12 +29,16 @@ const Size& Display() {
         }
         Size s;
         if (const char* env = std::getenv("BB_MOVIE_SIZE")) {
-            if (std::sscanf(env, "%ux%u", &s.width, &s.height) != 2 || s.width < 64 || s.height < 64 ||
-                s.width > 7680 || s.height > 4320) {
-                s = {};
+            if (std::sscanf(env, "%ux%u", &s.width, &s.height) == 2 && s.width >= 64 && s.height >= 64 &&
+                s.width <= 7680 && s.height <= 4320) {
+                return s;
             }
+            s = {};
         }
-        return s;
+        if (GameResolution(s.width, s.height)) {
+            return s;
+        }
+        return Size{};
     }();
     return size;
 }
@@ -94,8 +99,20 @@ bool GameResolution(std::uint32_t& width, std::uint32_t& height) {
     return width != 0;
 }
 
+std::uint32_t LinearAlignedPitch(std::uint32_t width, std::uint32_t height, std::uint32_t bits) {
+    const std::uint32_t bytes_per_texel = std::max(1u, (bits + 7) / 8);
+    const std::uint32_t pitch_align = std::max(8u, 64u / bytes_per_texel);
+    std::uint32_t pitch = (width + pitch_align - 1) & ~(pitch_align - 1);
+    const std::uint32_t slice_align = std::max(64u, 256u / bytes_per_texel);
+    while ((std::uint64_t(pitch) * std::max(height, 1u)) % slice_align != 0) {
+        pitch += pitch_align;
+    }
+    return pitch;
+}
+
 std::uint32_t ScaledPitch() {
-    return Align64(Display().width);
+    const Size& d = Display();
+    return d.width ? LinearAlignedPitch(d.width, d.height, 8) : 0;
 }
 
 std::uint32_t ScaledRows() {
@@ -103,11 +120,36 @@ std::uint32_t ScaledRows() {
 }
 
 std::uint32_t ScaledChromaPitch() {
-    return Align64(Display().width / 2) * 2;
+    const Size& d = Display();
+    if (!d.width) {
+        return 0;
+    }
+    return LinearAlignedPitch(d.width / 2, d.height / 2, 16) * 2;
 }
 
 std::uint64_t ScaledFrameBytes() {
     return std::uint64_t(ScaledPitch()) * ScaledRows() + std::uint64_t(ScaledChromaPitch()) * ScaledRows() / 2;
+}
+
+bool NeedsCpuScale(std::uint32_t display_w, std::uint32_t display_h, std::uint32_t frame_w,
+                   std::uint32_t frame_h) {
+    if (!display_w || !display_h || !frame_w || !frame_h) {
+        return false;
+    }
+    if (frame_w == display_w && frame_h == display_h) {
+        return false;
+    }
+    std::uint32_t fit_w = display_w, fit_h = display_h;
+    if (std::uint64_t(frame_w) * display_h > std::uint64_t(frame_h) * display_w) {
+        fit_h = std::min(
+            display_h, static_cast<std::uint32_t>(std::uint64_t(display_w) * frame_h / frame_w) & ~1u);
+    } else {
+        fit_w = std::min(
+            display_w, static_cast<std::uint32_t>(std::uint64_t(display_h) * frame_w / frame_h) & ~1u);
+    }
+    // Same-aspect frames fill the display canvas completely, so the GPU movie shader samples
+    // the native decoded planes directly via Remap + MovieShaderConstant with zero CPU scale.
+    return fit_w != display_w || fit_h != display_h;
 }
 
 void RecordFrame(std::uint64_t base, std::uint32_t width, std::uint32_t height, std::uint32_t pitch,

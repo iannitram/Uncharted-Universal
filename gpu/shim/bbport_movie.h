@@ -30,13 +30,18 @@ void RecordFrame(std::uint64_t base, std::uint32_t width, std::uint32_t height, 
 // in NV12, luma pitch ScaledPitch(), chroma (pitch ScaledChromaPitch()) after ScaledRows() rows.
 // Null when none can be mapped.
 std::uint8_t* ScratchFrame(std::uint64_t base);
+std::uint32_t LinearAlignedPitch(std::uint32_t width, std::uint32_t height, std::uint32_t bits);
 std::uint32_t ScaledPitch();
 std::uint32_t ScaledRows();
-/// Bytes per chroma row (2-byte texels): its width padded to 64 texels, as the GPU reads a
-/// linear texture (1440 texels at 1620p are read with a pitch of 1472).
+/// Bytes per chroma row (2-byte texels): matches ImageSizeLinearAligned so the GPU reads the
+/// exact row stride written by the decoder (e.g. 1440 texels at 1620p -> pitch 1472).
 std::uint32_t ScaledChromaPitch();
 /// Bytes of a scratch frame: luma, then the chroma plane (ScaledRows() / 2 rows).
 std::uint64_t ScaledFrameBytes();
+/// True when a decoded frame needs CPU letterboxing/pillarboxing into a scratch canvas of
+/// display_w x display_h. Same-aspect frames fill the canvas directly on the GPU.
+bool NeedsCpuScale(std::uint32_t display_w, std::uint32_t display_h, std::uint32_t frame_w,
+                   std::uint32_t frame_h);
 
 // The movie player's conversion shader samples a frame at u = (x + 0.5) / 1920 and
 // v = (y + 0.5) / 1088 with those factors as literals, so above 1080p it covers only the top-left

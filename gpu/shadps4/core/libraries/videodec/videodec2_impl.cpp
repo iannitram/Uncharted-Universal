@@ -11,18 +11,65 @@
 #include "videodec_error.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cstdio>
+#include <thread>
+
+extern "C" {
+#include <libavutil/opt.h>
+}
 
 #include "common/support/avdec.h"
 #include "core/memory.h"
 #include "bbport_movie.h"
 
-#include <algorithm>
-#include <cstring>
-
 namespace Libraries::Videodec2 {
+
+VdecDecoder::SwsCache::~SwsCache() {
+    sws_freeContext(ctx);
+}
+
+SwsContext* VdecDecoder::SwsCache::Get(int sw, int sh, int sfmt, int dw, int dh, int dfmt,
+                                       int sflags) {
+    if (ctx && src_w == sw && src_h == sh && src_fmt == sfmt && dst_w == dw && dst_h == dh &&
+        dst_fmt == dfmt && flags == sflags) {
+        return ctx;
+    }
+    sws_freeContext(ctx);
+    ctx = sws_alloc_context();
+    if (ctx) {
+        const unsigned hw_threads = std::thread::hardware_concurrency();
+        const int threads = static_cast<int>(std::clamp(hw_threads ? hw_threads : 4u, 1u, 4u));
+        av_opt_set_int(ctx, "threads", threads, 0);
+        av_opt_set_int(ctx, "srcw", sw, 0);
+        av_opt_set_int(ctx, "srch", sh, 0);
+        av_opt_set_int(ctx, "src_format", sfmt, 0);
+        av_opt_set_int(ctx, "dstw", dw, 0);
+        av_opt_set_int(ctx, "dsth", dh, 0);
+        av_opt_set_int(ctx, "dst_format", dfmt, 0);
+        av_opt_set_int(ctx, "sws_flags", sflags, 0);
+        if (sws_init_context(ctx, nullptr, nullptr) < 0) {
+            sws_freeContext(ctx);
+            ctx = nullptr;
+        }
+    }
+    if (!ctx) {
+        ctx = sws_getContext(sw, sh, AVPixelFormat(sfmt), dw, dh, AVPixelFormat(dfmt), sflags,
+                             nullptr, nullptr, nullptr);
+    }
+    if (!ctx) {
+        return nullptr;
+    }
+    src_w = sw;
+    src_h = sh;
+    src_fmt = sfmt;
+    dst_w = dw;
+    dst_h = dh;
+    dst_fmt = dfmt;
+    flags = sflags;
+    return ctx;
+}
 
 VdecDecoder::VdecDecoder(const OrbisVideodec2DecoderConfigInfo& config_info,
                          const OrbisVideodec2DecoderMemoryInfo& memory_info) {
@@ -39,15 +86,16 @@ VdecDecoder::VdecDecoder(const OrbisVideodec2DecoderConfigInfo& config_info,
     m_max_height = config_info.max_frame_height;
     std::printf("Videodec2: decoder for %ux%u frames\n", m_max_width, m_max_height);
     m_codec_context->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
+    const unsigned hw_threads = std::thread::hardware_concurrency();
+    m_codec_context->thread_count =
+        static_cast<int>(std::clamp(hw_threads ? hw_threads : 4u, 1u, 4u));
+    m_codec_context->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
 
     avcodec_open2(m_codec_context, codec, nullptr);
 }
 
 VdecDecoder::~VdecDecoder() {
     avcodec_free_context(&m_codec_context);
-    sws_freeContext(m_sws_context);
-    sws_freeContext(m_scale_context);
-    sws_freeContext(m_fit_context);
     av_frame_free(&m_scaled);
 }
 
@@ -111,38 +159,9 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
         return ORBIS_VIDEODEC2_ERROR_API_FAIL;
     }
 
-    if (frame->flags & AV_FRAME_FLAG_INTERLACED) {
-        LOG_ERROR(Lib_Vdec2, "Interlaced video output is not suported.");
-    }
-
-    if (frame->format != AV_PIX_FMT_NV12) {
-        AVFrame* nv12_frame = ConvertNV12Frame(*frame);
-        ASSERT(nv12_frame);
-        av_frame_free(&frame);
-        frame = nv12_frame;
-    }
-    // Linux fork: in the Steam Deck's 720p mode (scripts/render_720p.py) the game asks for
-    // 1280x720 decoders and the collection's movies are 1080p: their frames did not fit its
-    // 720p buffers (green and pink logo screens). FitToMaxSize makes them fit.
-    // The game's 720p movie textures put the chroma plane after 768 luma rows (rows aligned to
-    // 64; 1080p frames come out at 1088 rows either way).
-    u32 height_align = 16;
-    // BB_GAME_RES uses the movie scratch canvas instead of the Deck-specific fit.
-    s32 display_w = 0, display_h = 0;
-    GameResolution(display_w, display_h);
-    if (!display_w && m_max_width && m_max_height &&
-        (u32(frame->width) > m_max_width || u32(frame->height) > m_max_height)) {
-        if (AVFrame* fitted = FitToMaxSize(*frame)) {
-            av_frame_free(&frame);
-            frame = fitted;
-            height_align = 64;
-        }
-    }
-
-    Output(*frame, frame_buffer, output_info, height_align);
+    EmitFrame(frame, frame_buffer, output_info);
 
     av_packet_free(&packet);
-    av_frame_free(&frame);
     return ORBIS_OK;
 }
 
@@ -169,6 +188,16 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
         return ORBIS_VIDEODEC2_ERROR_API_FAIL;
     }
 
+    EmitFrame(frame, frame_buffer, output_info);
+    return ORBIS_OK;
+}
+
+void VdecDecoder::EmitFrame(AVFrame* frame, OrbisVideodec2FrameBuffer& frame_buffer,
+                            OrbisVideodec2OutputInfo& output_info) {
+    if (frame->flags & AV_FRAME_FLAG_INTERLACED) {
+        LOG_ERROR(Lib_Vdec2, "Interlaced video output is not suported.");
+    }
+
     if (frame->format != AV_PIX_FMT_NV12) {
         AVFrame* nv12_frame = ConvertNV12Frame(*frame);
         ASSERT(nv12_frame);
@@ -181,7 +210,7 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
     // The game's 720p movie textures put the chroma plane after 768 luma rows (rows aligned to
     // 64; 1080p frames come out at 1088 rows either way).
     u32 height_align = 16;
-    // BB_GAME_RES uses the movie scratch canvas instead of the Deck-specific fit.
+    // BB_GAME_RES uses the movie scratch canvas / GPU sampling instead of the Deck-specific fit.
     s32 display_w = 0, display_h = 0;
     GameResolution(display_w, display_h);
     if (!display_w && m_max_width && m_max_height &&
@@ -194,9 +223,7 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
     }
 
     Output(*frame, frame_buffer, output_info, height_align);
-
     av_frame_free(&frame);
-    return ORBIS_OK;
 }
 
 void VdecDecoder::Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer,
@@ -281,7 +308,7 @@ void VdecDecoder::Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer
 bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
     u32 width = 0, height = 0;
     if (!BbMovie::DisplaySize(width, height) ||
-        ((u32)frame.width == width && (u32)frame.height == height)) {
+        !BbMovie::NeedsCpuScale(width, height, (u32)frame.width, (u32)frame.height)) {
         return false;
     }
     u8* dst = BbMovie::ScratchFrame(base);
@@ -295,7 +322,7 @@ bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
         return false;
     }
     // The movie keeps its own shape inside the display size: black bars at the top and bottom
-    // (16:10) or at the sides (ultrawide) instead of a stretched picture. 16:9 sizes fill it.
+    // (16:10) or at the sides (ultrawide) instead of a stretched picture.
     u32 fit_width = width, fit_height = height;
     if ((u64)frame.width * height > (u64)frame.height * width) {
         fit_height = std::min(height, (u32)((u64)width * frame.height / frame.width) & ~1u);
@@ -313,21 +340,23 @@ bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
             return false;
         }
     }
-    m_scale_context = sws_getCachedContext(m_scale_context, frame.width, frame.height,
-                                           AV_PIX_FMT_NV12, (int)fit_width, (int)fit_height,
-                                           AV_PIX_FMT_NV12, SWS_BICUBIC, nullptr, nullptr, nullptr);
-    if (!m_scale_context || sws_scale(m_scale_context, frame.data, frame.linesize, 0, frame.height,
-                                      m_scaled->data, m_scaled->linesize) < 0) {
+    SwsContext* scale_ctx = m_scale_cache.Get(frame.width, frame.height, AV_PIX_FMT_NV12,
+                                              (int)fit_width, (int)fit_height, AV_PIX_FMT_NV12,
+                                              SWS_BICUBIC);
+    if (!scale_ctx || sws_scale(scale_ctx, frame.data, frame.linesize, 0, frame.height,
+                                m_scaled->data, m_scaled->linesize) < 0) {
         return false;
     }
     const u32 pitch = BbMovie::ScaledPitch(), rows = BbMovie::ScaledRows();
     const u32 chroma_pitch = BbMovie::ScaledChromaPitch();
+    const u64 luma_bytes = (u64)pitch * rows;
     const u64 bytes = BbMovie::ScaledFrameBytes();
     // Black (video range) around the picture.
-    m_movie_copy.assign(bytes, 128);
+    m_movie_copy.resize(bytes);
     u8* copy = m_movie_copy.data();
-    u8* chroma = copy + (u64)pitch * rows;
-    std::memset(copy, 16, (u64)pitch * rows);
+    u8* chroma = copy + luma_bytes;
+    std::memset(copy, 16, luma_bytes);
+    std::memset(chroma, 128, bytes - luma_bytes);
     for (u32 y = 0; y < fit_height; ++y) {
         std::memcpy(copy + (u64)(top + y) * pitch + left,
                     m_scaled->data[0] + (u64)y * m_scaled->linesize[0], fit_width);
@@ -399,11 +428,11 @@ AVFrame* VdecDecoder::FitToMaxSize(AVFrame& frame) {
     for (u32 y = 0; y < height / 2; ++y) {
         std::memset(fitted->data[1] + y * fitted->linesize[1], 128, width);
     }
-    m_fit_context = sws_getCachedContext(m_fit_context, frame.width, frame.height, AV_PIX_FMT_NV12,
-                                         int(pic_width), int(pic_height), AV_PIX_FMT_NV12,
-                                         SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (!m_fit_context || sws_scale(m_fit_context, frame.data, frame.linesize, 0, frame.height,
-                                    fitted->data, fitted->linesize) < 0) {
+    SwsContext* fit_ctx = m_fit_cache.Get(frame.width, frame.height, AV_PIX_FMT_NV12,
+                                          int(pic_width), int(pic_height), AV_PIX_FMT_NV12,
+                                          SWS_BILINEAR);
+    if (!fit_ctx || sws_scale(fit_ctx, frame.data, frame.linesize, 0, frame.height, fitted->data,
+                              fitted->linesize) < 0) {
         av_frame_free(&fitted);
         return nullptr;
     }
@@ -412,6 +441,9 @@ AVFrame* VdecDecoder::FitToMaxSize(AVFrame& frame) {
 
 AVFrame* VdecDecoder::ConvertNV12Frame(AVFrame& frame) {
     AVFrame* nv12_frame = av_frame_alloc();
+    if (!nv12_frame) {
+        return nullptr;
+    }
     nv12_frame->pts = frame.pts;
     nv12_frame->pkt_dts = frame.pkt_dts < 0 ? 0 : frame.pkt_dts;
     nv12_frame->format = AV_PIX_FMT_NV12;
@@ -424,18 +456,40 @@ AVFrame* VdecDecoder::ConvertNV12Frame(AVFrame& frame) {
     nv12_frame->crop_right = frame.crop_right;
     nv12_frame->opaque = frame.opaque;
 
-    av_frame_get_buffer(nv12_frame, 0);
-
-    if (m_sws_context == nullptr) {
-        m_sws_context = sws_getContext(frame.width, frame.height, AVPixelFormat(frame.format),
-                                       nv12_frame->width, nv12_frame->height, AV_PIX_FMT_NV12,
-                                       SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+    if (av_frame_get_buffer(nv12_frame, 0) < 0) {
+        av_frame_free(&nv12_frame);
+        return nullptr;
     }
 
-    const auto res = sws_scale(m_sws_context, frame.data, frame.linesize, 0, frame.height,
-                               nv12_frame->data, nv12_frame->linesize);
+    if (frame.format == AV_PIX_FMT_YUV420P) {
+        for (int y = 0; y < frame.height; ++y) {
+            std::memcpy(nv12_frame->data[0] + static_cast<size_t>(y) * nv12_frame->linesize[0],
+                        frame.data[0] + static_cast<size_t>(y) * frame.linesize[0],
+                        static_cast<size_t>(frame.width));
+        }
+        const int chroma_w = frame.width / 2;
+        const int chroma_h = frame.height / 2;
+        for (int y = 0; y < chroma_h; ++y) {
+            const u8* u = frame.data[1] + static_cast<size_t>(y) * frame.linesize[1];
+            const u8* v = frame.data[2] + static_cast<size_t>(y) * frame.linesize[2];
+            u8* uv = nv12_frame->data[1] + static_cast<size_t>(y) * nv12_frame->linesize[1];
+            for (int x = 0; x < chroma_w; ++x) {
+                uv[x * 2] = u[x];
+                uv[x * 2 + 1] = v[x];
+            }
+        }
+        return nv12_frame;
+    }
+
+    SwsContext* sws_ctx = m_sws_cache.Get(frame.width, frame.height, frame.format,
+                                          nv12_frame->width, nv12_frame->height, AV_PIX_FMT_NV12,
+                                          SWS_FAST_BILINEAR);
+    const auto res = sws_ctx ? sws_scale(sws_ctx, frame.data, frame.linesize, 0, frame.height,
+                                         nv12_frame->data, nv12_frame->linesize)
+                             : -1;
     if (res < 0) {
         LOG_ERROR(Lib_Vdec2, "Could not convert to NV12: {}", av_err2str(res));
+        av_frame_free(&nv12_frame);
         return nullptr;
     }
 
