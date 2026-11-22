@@ -138,6 +138,35 @@ const BUTTONS: [(&str, i32); 26] = [
     ("misc6", 25),
 ];
 
+fn scancode_by_name(name: &str) -> Option<i32> {
+    KEYS.iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|&(_, code)| code)
+}
+
+fn keycode_by_name(name: &str) -> Option<i32> {
+    name.bytes()
+        .next()
+        .map(|b| i32::from(b.to_ascii_lowercase()))
+}
+
+fn scancode_for_keycode(key: i32) -> Option<i32> {
+    (97..=122).contains(&key).then(|| 4 + key - 97)
+}
+
+fn format_key_name(key: i32) -> String {
+    char::from_u32(key as u32)
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+fn button_by_name(name: &str) -> Option<i32> {
+    BUTTONS
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|&(_, b)| b)
+}
+
 impl Host for FakeHost {
     fn pads_ready(&self) -> bool {
         true
@@ -228,31 +257,22 @@ impl Host for FakeHost {
         self.state().keys.clone()
     }
     fn scancode_from_name(&self, name: &str) -> Option<i32> {
-        KEYS.iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|&(_, code)| code)
+        scancode_by_name(name)
     }
     fn keycode_from_name(&self, name: &str) -> Option<i32> {
-        name.bytes()
-            .next()
-            .map(|b| i32::from(b.to_ascii_lowercase()))
+        keycode_by_name(name)
     }
     fn scancode_from_keycode(&self, key: i32) -> Option<i32> {
-        (97..=122).contains(&key).then(|| 4 + key - 97)
+        scancode_for_keycode(key)
     }
     fn key_name(&self, key: i32) -> String {
-        char::from_u32(key as u32)
-            .map(String::from)
-            .unwrap_or_default()
+        format_key_name(key)
     }
     fn scancode_name(&self, code: i32) -> String {
         format!("scancode {code}")
     }
     fn button_from_name(&self, name: &str) -> Option<i32> {
-        BUTTONS
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(name))
-            .map(|&(_, b)| b)
+        button_by_name(name)
     }
     fn mouse_configure(&mut self, _look: bool) {}
     fn mouse_sample(&mut self) -> MouseSample {
@@ -1175,4 +1195,246 @@ fn guest_callback_table_and_exports_are_complete() {
         super::resolve(c"clVvL4ZDntw#A#B"),
         super::guest::export("scePadSetMotionSensorState")
     );
+}
+
+#[derive(Default)]
+struct PolledSdlState {
+    hints_set: bool,
+    ready: bool,
+    staged_pads: BTreeMap<PadId, FakePad>,
+    live_pads: BTreeMap<PadId, FakePad>,
+    unopenable: Vec<PadId>,
+    open: Vec<PadId>,
+    prompts: Vec<i32>,
+}
+
+/// Models SDL3's gamepad backend where `SDL_InitSubSystem(SDL_INIT_GAMEPAD)` and
+/// `SDL_OpenGamepad()` can succeed while `SDL_GetGamepads()`, `SDL_GetGamepadButton()`, and
+/// `SDL_GetGamepadAxis()` stay empty/zero until `SDL_UpdateGamepads()` (`Host::update_pads`) runs.
+#[derive(Clone, Default)]
+struct PolledSdlHost(Arc<Mutex<PolledSdlState>>);
+
+impl PolledSdlHost {
+    fn state(&self) -> std::sync::MutexGuard<'_, PolledSdlState> {
+        self.0.lock().unwrap()
+    }
+
+    fn stage_pad(&self, id: PadId, name: &str, prompts: i32) {
+        self.state().staged_pads.insert(
+            id,
+            FakePad {
+                name: name.into(),
+                prompts,
+                ..FakePad::default()
+            },
+        );
+    }
+
+    fn stage_press(&self, id: PadId, button: i32, down: bool) {
+        let mut state = self.state();
+        let pad = state.staged_pads.get_mut(&id).unwrap();
+        pad.buttons = (pad.buttons & !(1 << button)) | (u32::from(down) << button);
+    }
+
+    fn stage_axis(&self, id: PadId, axis: i32, value: i16) {
+        self.state().staged_pads.get_mut(&id).unwrap().axes[axis as usize] = value;
+    }
+}
+
+impl Host for PolledSdlHost {
+    fn hints(&mut self) {
+        self.state().hints_set = true;
+    }
+    fn pads_ready(&self) -> bool {
+        self.state().ready
+    }
+    fn init_pads(&mut self) -> Result<(), String> {
+        let mut state = self.state();
+        state.ready = true;
+        Ok(())
+    }
+    fn update_pads(&mut self) {
+        let mut state = self.state();
+        if state.ready {
+            state.live_pads = state
+                .staged_pads
+                .iter()
+                .map(|(&id, pad)| {
+                    (
+                        id,
+                        FakePad {
+                            name: pad.name.clone(),
+                            buttons: pad.buttons,
+                            axes: pad.axes,
+                            fingers: pad.fingers.clone(),
+                            gyro: pad.gyro,
+                            accel: pad.accel,
+                            sensors: pad.sensors,
+                            prompts: pad.prompts,
+                        },
+                    )
+                })
+                .collect();
+        }
+    }
+    fn pads(&mut self) -> Vec<PadId> {
+        self.state().live_pads.keys().copied().collect()
+    }
+    fn open(&mut self, id: PadId) -> bool {
+        let mut state = self.state();
+        if !state.live_pads.contains_key(&id) || state.unopenable.contains(&id) {
+            return false;
+        }
+        if !state.open.contains(&id) {
+            state.open.push(id);
+        }
+        true
+    }
+    fn close(&mut self, id: PadId) {
+        self.state().open.retain(|&open| open != id);
+    }
+    fn connected(&self, id: PadId) -> bool {
+        self.state().live_pads.contains_key(&id)
+    }
+    fn name(&self, id: PadId) -> String {
+        self.state()
+            .live_pads
+            .get(&id)
+            .map(|p| p.name.clone())
+            .unwrap_or_default()
+    }
+    fn button(&self, id: PadId, button: i32) -> bool {
+        let state = self.state();
+        state.open.contains(&id)
+            && state
+                .live_pads
+                .get(&id)
+                .is_some_and(|p| p.buttons & (1 << button) != 0)
+    }
+    fn axis(&self, id: PadId, axis: i32) -> i16 {
+        let state = self.state();
+        if !state.open.contains(&id) {
+            return 0;
+        }
+        state
+            .live_pads
+            .get(&id)
+            .map_or(0, |p| p.axes[axis as usize])
+    }
+    fn fingers(&self, _: PadId) -> Vec<Finger> {
+        Vec::new()
+    }
+    fn has_rumble(&self, id: PadId) -> bool {
+        self.connected(id)
+    }
+    fn rumble(&mut self, id: PadId, _: u16, _: u16, _: u32) -> bool {
+        self.connected(id)
+    }
+    fn set_led(&mut self, _: PadId, _: u8, _: u8, _: u8) {}
+    fn prompts_device(&self, id: PadId) -> i32 {
+        self.state()
+            .live_pads
+            .get(&id)
+            .map_or(PROMPTS_XBOX, |p| p.prompts)
+    }
+    fn sensors(&mut self, _: PadId, _: bool) {}
+    fn gyro(&self, _: PadId) -> Option<[f32; 3]> {
+        None
+    }
+    fn accel(&self, _: PadId) -> Option<[f32; 3]> {
+        None
+    }
+    fn keyboard(&self) -> Option<Vec<bool>> {
+        None
+    }
+    fn scancode_from_name(&self, name: &str) -> Option<i32> {
+        scancode_by_name(name)
+    }
+    fn keycode_from_name(&self, name: &str) -> Option<i32> {
+        keycode_by_name(name)
+    }
+    fn scancode_from_keycode(&self, key: i32) -> Option<i32> {
+        scancode_for_keycode(key)
+    }
+    fn key_name(&self, key: i32) -> String {
+        format_key_name(key)
+    }
+    fn scancode_name(&self, code: i32) -> String {
+        format!("scancode {code}")
+    }
+    fn button_from_name(&self, name: &str) -> Option<i32> {
+        button_by_name(name)
+    }
+    fn mouse_configure(&mut self, _: bool) {}
+    fn mouse_sample(&mut self) -> MouseSample {
+        MouseSample::default()
+    }
+    fn overlay_captures_input(&self) -> bool {
+        false
+    }
+    fn prompts_controller(&mut self, device: i32) {
+        self.state().prompts.push(device);
+    }
+    fn benchmark_pad(&self) -> Option<BenchmarkPad> {
+        None
+    }
+}
+
+#[test]
+fn xinput_style_sdl3_pad_is_polled_opened_and_read_in_game() {
+    let host = PolledSdlHost::default();
+    host.stage_pad(1, "Steam Controller", PROMPTS_XBOX);
+    host.stage_pad(2, "XInput Controller", PROMPTS_XBOX);
+
+    let mut pad = Pad::new(
+        Box::new(host.clone()),
+        Settings::default(),
+        Arc::new(Mutex::new(Camera::new(Knobs::default()))),
+    );
+    assert_eq!(pad.init(), 0);
+    assert_eq!(pad.open(1, 0, 0), 1);
+
+    // First read initializes the gamepad subsystem with hints, polls SDL_UpdateGamepads,
+    // opens both gamepads, and selects the first pad until the XInput pad becomes active.
+    let initial = pad.read_state(1).unwrap();
+    assert_eq!(initial.buttons, 0);
+    assert!(host.state().hints_set);
+    assert!(host.state().ready);
+    assert_eq!(host.state().open, vec![1, 2]);
+    assert_eq!(pad.connected_count, 2);
+
+    // Input staged on the XInput pad must become visible on the next read_state without any
+    // external SDL_UpdateGamepads caller.
+    host.stage_press(2, BUTTON_SOUTH, true);
+    host.stage_axis(2, axis::LEFT_TRIGGER, i16::MAX);
+    host.stage_axis(2, axis::LEFT_X, i16::MAX);
+    let data = pad.read_state(1).unwrap();
+    assert_eq!(pad.current, Some(2));
+    assert_ne!(data.buttons & button::CROSS, 0);
+    assert_ne!(data.buttons & button::L2, 0);
+    assert_eq!(data.l2, 255);
+    assert_eq!(data.left_x, 255);
+    assert_eq!(host.state().prompts.last().copied(), Some(PROMPTS_XBOX));
+    assert_eq!(
+        pad.report_line(),
+        "Runtime: pad reads=2, gamepad=XInput Controller"
+    );
+
+    // The launcher's controller tool skips unopenable devices and reports the XInput pad.
+    let mut tool_host = PolledSdlHost::default();
+    tool_host.stage_pad(1, "Unopenable Pad", PROMPTS_XBOX);
+    tool_host.stage_pad(2, "XInput Controller", PROMPTS_XBOX);
+    tool_host.state().unopenable.push(1);
+    let (code, lines) = super::tool_lines(&mut tool_host, true, 100);
+    assert_eq!(code, 0);
+    assert_eq!(
+        lines,
+        vec![
+            "connected=1",
+            "name=XInput Controller",
+            "rumble=1",
+            "tested=1",
+        ]
+    );
+    assert!(tool_host.state().open.is_empty());
 }

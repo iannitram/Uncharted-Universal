@@ -270,6 +270,10 @@ impl Pad {
     }
 
     pub fn pick_gamepad(&mut self, now: u64) -> Option<PadId> {
+        // Refresh SDL3's gamepad state before listing or polling: when no window event loop is
+        // pumping on this thread (or before the window thread's next poll), SDL_GetGamepads() and
+        // SDL_GetGamepadButton/Axis() otherwise keep stale/zero state even after SDL_OpenGamepad().
+        self.host.update_pads();
         if self.current.is_none_or(|id| !self.host.connected(id))
             || now.wrapping_sub(self.listed_us) > 500_000
         {

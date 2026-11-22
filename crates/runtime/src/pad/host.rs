@@ -375,6 +375,9 @@ mod sdl {
         }
 
         fn open(&mut self, id: PadId) -> bool {
+            if self.pads.contains_key(&id) {
+                return true;
+            }
             // SAFETY: an id SDL listed.
             let pad = unsafe { SDL_OpenGamepad(SDL_JoystickID(id)) };
             NonNull::new(pad).is_some_and(|pad| {

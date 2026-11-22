@@ -176,7 +176,8 @@ fn tool_lines(host: &mut dyn host::Host, test: bool, strength: i32) -> (i32, Vec
             host.quit_pads();
         }
     };
-    let id = host.pads().first().copied().filter(|&id| host.open(id));
+    host.update_pads();
+    let id = host.pads().into_iter().find(|&id| host.open(id));
     let Some(id) = id else {
         quit(host);
         return (0, vec!["connected=0".into(), "rumble=0".into()]);
