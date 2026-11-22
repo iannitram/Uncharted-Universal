@@ -9,7 +9,18 @@
     target_arch = "x86_64",
     any(target_os = "linux", target_os = "windows")
 ))]
+pub mod fault;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows")
+))]
 pub mod hooks;
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows")
+))]
+pub mod image;
+pub mod patches;
 
 const MAX_IMAGE_SIZE: u64 = 512 * 1024 * 1024;
 const MAX_SEGMENTS: u64 = 64;
