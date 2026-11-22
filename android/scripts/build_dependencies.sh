@@ -116,8 +116,11 @@ cmake -S "$WORK/src/fex" -B "$WORK/build/fex" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release -DBUILD_FEXCONFIG=OFF -DBUILD_TESTING=OFF \
     -DBUILD_THUNKS=OFF -DENABLE_JEMALLOC_GLIBC_ALLOC=OFF -DENABLE_LTO=OFF \
     -DENABLE_OFFLINE_TELEMETRY=OFF -DENABLE_CCACHE=OFF -DTUNE_CPU=cortex-a78 \
-    -DBUILD_FEXCORE_ONLY=ON
-cmake --build "$WORK/build/fex" --parallel "$JOBS" --target FEXCore Common CommonTools JemallocLibs rpmalloc
+    -DBUILD_FEXCORE_ONLY=ON \
+    -DFEXCORE_SMOKE_SOURCE="$ROOT/android/synthetic/fexcore_smoke_entry.cpp"
+cmake --build "$WORK/build/fex" --parallel "$JOBS" --target FEXCore Common CommonTools JemallocLibs rpmalloc fexcore-smoke
+cmake --install "$WORK/build/fex" --prefix "$WORK/stage-fex"
+install -D "$WORK/stage-fex/bin/fexcore-smoke" "$WORK/dist/uncharted-android-fexcore-smoke"
 
 echo '== Build Mesa Turnip for Android KGSL'
 fetch_commit mesa-turnip "$MESA_URL" "$MESA_REV"
@@ -162,23 +165,44 @@ fetch_commit sdl3 "$SDL_URL" "$SDL_REV"
 cmake_android sdl3 "$WORK/src/sdl3" -DSDL_SHARED=ON -DSDL_STATIC=OFF \
     -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 
-echo '== Link the authored synthetic Android smoke binary'
+echo '== Link the authored synthetic Android smoke binaries'
 "$TC/aarch64-linux-android$API-clang" -fPIE -pie -O2 \
     -I"$PREFIX/include" "$ROOT/android/synthetic/smoke.c" \
     -L"$PREFIX/lib" -Wl,-rpath,'$ORIGIN' -lSDL3 \
     -o "$WORK/dist/uncharted-android-smoke"
+cmake -S "$ROOT/android/synthetic" -B "$WORK/build/synthetic" -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+    -DANDROID_ABI="$ABI" -DANDROID_PLATFORM="android-$API" \
+    -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+cmake --build "$WORK/build/synthetic" --parallel "$JOBS"
+install -D "$WORK/build/synthetic/uncharted-android-fex-smoke" "$WORK/dist/uncharted-android-fex-smoke"
+install -D "$WORK/build/synthetic/test_android_fex_smoke" "$WORK/dist/test_android_fex_smoke"
 cp "$PREFIX/lib/libSDL3.so" "$WORK/dist/"
 cp "$NDK/toolchains/llvm/prebuilt/$HOST/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$WORK/dist/"
-file "$WORK/dist/uncharted-android-smoke"
-readelf -h "$WORK/dist/uncharted-android-smoke" | grep -E 'Class:|Machine:'
+
+for bin in uncharted-android-smoke uncharted-android-fex-smoke test_android_fex_smoke uncharted-android-fexcore-smoke; do
+    file "$WORK/dist/$bin"
+    readelf -h "$WORK/dist/$bin" | grep -E 'Class:|Machine:'
+    readelf -l "$WORK/dist/$bin" | grep -q '/system/bin/linker64' || {
+        echo "$bin is missing Android bionic /system/bin/linker64 interpreter" >&2; exit 1
+    }
+    if readelf -d "$WORK/dist/$bin" | grep -q 'libc\.so\.6'; then
+        echo "$bin unexpectedly links glibc libc.so.6" >&2; exit 1
+    fi
+done
 
 if command -v adb >/dev/null 2>&1 && adb get-state >/dev/null 2>&1; then
-    echo '== Execute synthetic smoke binary on the attached Android device'
+    echo '== Execute synthetic smoke binaries on the attached Android device'
     adb shell mkdir -p /data/local/tmp/uncharted-android-smoke
-    adb push "$WORK/dist/uncharted-android-smoke" "$WORK/dist/libSDL3.so" \
+    adb push "$WORK/dist/uncharted-android-smoke" \
+        "$WORK/dist/uncharted-android-fex-smoke" \
+        "$WORK/dist/test_android_fex_smoke" \
+        "$WORK/dist/uncharted-android-fexcore-smoke" \
+        "$WORK/dist/libSDL3.so" \
         "$WORK/dist/libc++_shared.so" \
         /data/local/tmp/uncharted-android-smoke/ >/dev/null
-    adb shell 'cd /data/local/tmp/uncharted-android-smoke && chmod 755 uncharted-android-smoke && LD_LIBRARY_PATH=. ./uncharted-android-smoke'
+    adb shell 'cd /data/local/tmp/uncharted-android-smoke && chmod 755 uncharted-android-smoke uncharted-android-fex-smoke test_android_fex_smoke uncharted-android-fexcore-smoke && LD_LIBRARY_PATH=. ./uncharted-android-smoke && LD_LIBRARY_PATH=. ./test_android_fex_smoke && LD_LIBRARY_PATH=. ./uncharted-android-fex-smoke && LD_LIBRARY_PATH=. ./uncharted-android-fexcore-smoke'
 else
     echo 'No attached adb device; Android execution was not performed.' >&2
 fi
