@@ -13,3 +13,5 @@ patches here to its working tree when they are not applied yet:
 - `0004-...`: the FFX Vulkan backend never picks a protected memory type unless it asked for one;
   on RADV PHOENIX (Ryzen Z1 Extreme) it picked one for FSR 3.1's device-local resources, and the
   scene was full-screen noise (2026-10-19).
+- `0005-...`: never pick protected or unrequested `DEVICE_COHERENT_AMD` memory types in the
+  portable FSR 3 wrapper, FSR 3.1.5/3.1.6 bridge/framegen helpers, or FSR 4 v07 allocator.

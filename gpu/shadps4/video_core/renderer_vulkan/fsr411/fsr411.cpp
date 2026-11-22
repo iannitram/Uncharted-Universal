@@ -302,7 +302,16 @@ struct Upscaler::Impl {
 
     uint32_t MemoryType(uint32_t bits, VkMemoryPropertyFlags flags) const {
         for (uint32_t i = 0; i < memory.memoryTypeCount; ++i) {
-            if ((bits & (1u << i)) && (memory.memoryTypes[i].propertyFlags & flags) == flags) {
+            const VkMemoryPropertyFlags props = memory.memoryTypes[i].propertyFlags;
+            if ((props & VK_MEMORY_PROPERTY_PROTECTED_BIT) &&
+                !(flags & VK_MEMORY_PROPERTY_PROTECTED_BIT)) {
+                continue;
+            }
+            if ((props & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) &&
+                !(flags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD)) {
+                continue;
+            }
+            if ((bits & (1u << i)) && (props & flags) == flags) {
                 return i;
             }
         }

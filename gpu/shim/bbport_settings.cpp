@@ -181,6 +181,7 @@ int DriverDefaultUpscaler(int current, bool chosen, bool driver_validated) {
 
 void ConfigureDriverDefault(unsigned driver_id, const char* driver_name) {
     auto& v = Get();
+    const char* display_name = driver_name ? driver_name : "(unknown)";
     const bool validated = FsrDriverValidated(driver_id) || FsrDeviceValidated(driver_name);
     const int before = v.upscaler;
     const int now = DriverDefaultUpscaler(before, v.upscaler_chosen, validated);
@@ -189,15 +190,15 @@ void ConfigureDriverDefault(unsigned driver_id, const char* driver_name) {
         v.startup_upscaler = now;
         std::printf("Upscaler: decision: anti-aliasing Off by default: FSR 3.1 has not been checked "
                     "on %s (driver id %u); turn it on in the menu (Insert / L3+R3) to try it\n",
-                    driver_name, driver_id);
+                    display_name, driver_id);
     } else if (before == UpscalerFsr3 && validated) {
         std::printf("Upscaler: decision: FSR 3.1 on by default: measured clean on %s (driver id %u)\n",
-                    driver_name, driver_id);
+                    display_name, driver_id);
     } else if (before == UpscalerFsr3 && !validated) {
         std::printf("Upscaler: decision: FSR 3.1 kept (the player chose it) on %s (driver id %u), "
                     "which it has not been checked on; if the scene shows noise or garbage, set "
                     "anti-aliasing to Off\n",
-                    driver_name, driver_id);
+                    display_name, driver_id);
     }
 }
 
