@@ -2127,10 +2127,16 @@ mod tests {
         // MAP_FIXED replacement queues Unmap for the overwritten mapping before Map.
         static SPLIT_HOOK_CALLS: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
         extern "C" fn split_map(address: usize, size: u64) {
-            SPLIT_HOOK_CALLS.lock().unwrap().push((address as u64, size));
+            SPLIT_HOOK_CALLS
+                .lock()
+                .unwrap()
+                .push((address as u64, size));
         }
         extern "C" fn split_unmap(address: usize, size: u64) {
-            SPLIT_HOOK_CALLS.lock().unwrap().push((!(address as u64), size));
+            SPLIT_HOOK_CALLS
+                .lock()
+                .unwrap()
+                .push((!(address as u64), size));
         }
         let memory = Memory::new(space());
         let p2 = memory.write(|s| allocate_on(s, 6 * PAGE));
@@ -2186,15 +2192,16 @@ mod tests {
         let retail = RETAIL_POOL as i64;
         let (low1, end1, align1) =
             direct_window(s.pool_size(), 0, retail, 4096 * MIB, 0, 0).unwrap();
-        let block1 = s.allocate_direct(low1, end1, 4096 * MIB, align1, 0).unwrap() as i64;
+        let block1 = s
+            .allocate_direct(low1, end1, 4096 * MIB, align1, 0)
+            .unwrap() as i64;
         let (low2, end2, align2) =
             direct_window(s.pool_size(), 0, retail, 1024 * MIB, 0, 3).unwrap();
-        let block2 = s.allocate_direct(low2, end2, 1024 * MIB, align2, 3).unwrap() as i64;
+        let block2 = s
+            .allocate_direct(low2, end2, 1024 * MIB, align2, 3)
+            .unwrap() as i64;
         assert_eq!((block1, block2), (0, (4096 * MIB) as i64));
-        assert_eq!(
-            s.direct_memory_type(4096 * MIB - 1),
-            Ok((0, 0, 4096 * MIB))
-        );
+        assert_eq!(s.direct_memory_type(4096 * MIB - 1), Ok((0, 0, 4096 * MIB)));
         assert_eq!(
             s.direct_memory_type(4096 * MIB),
             Ok((3, 4096 * MIB, 5120 * MIB))
@@ -2231,7 +2238,14 @@ mod tests {
         assert_eq!(s.protect(boundary + PAGE, PAGE, 1, -1), 0);
         assert_eq!(s.unmap(boundary + 2 * PAGE, PAGE), 0);
         assert_eq!(
-            s.map_direct(boundary + 3 * PAGE, PAGE, 0x33, MAP_FIXED, block2 + 4 * MIB as i64, 0),
+            s.map_direct(
+                boundary + 3 * PAGE,
+                PAGE,
+                0x33,
+                MAP_FIXED,
+                block2 + 4 * MIB as i64,
+                0
+            ),
             Ok(boundary + 3 * PAGE)
         );
         s.host().calls();
