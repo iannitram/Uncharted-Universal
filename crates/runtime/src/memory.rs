@@ -205,6 +205,10 @@ pub fn align_up(n: u64, a: u64) -> u64 {
     n.wrapping_add(a - 1) & !(a - 1)
 }
 
+fn checked_align_up(n: u64, a: u64) -> Option<u64> {
+    n.checked_add(a - 1).map(|v| v & !(a - 1))
+}
+
 /// Guest protection to host protection. The GPU read/write bits (0x10/0x20) need host access.
 pub fn host_prot(prot: i32) -> i32 {
     let mut host = 0;
@@ -468,14 +472,19 @@ impl<H: Host> Space<H> {
         if left.kind != Kind::Reserved {
             right.phys += address - left.start;
         }
+        // Reserve capacity before mutating `vmas[i]` so the split never leaves a truncated VMA.
+        self.vmas.reserve(1);
         self.vmas[i].end = address;
         self.vmas.insert(i + 1, right);
     }
 
     /// `[start, end)` split on its edges; returns the first index inside it.
     fn carve(&mut self, start: u64, end: u64) -> usize {
-        self.split_at(start);
-        self.split_at(end);
+        if start < end {
+            self.vmas.reserve(2);
+            self.split_at(start);
+            self.split_at(end);
+        }
         self.vma_index(start)
     }
 
@@ -503,11 +512,19 @@ impl<H: Host> Space<H> {
 
     /// First fit in the PS4 user range, starting from the hint; 0 when nothing fits.
     fn find_free(&self, hint: u64, size: u64, alignment: u64) -> u64 {
-        let mut at = align_up(hint.max(USER_MIN), alignment);
+        let Some(mut at) = checked_align_up(hint.max(USER_MIN), alignment) else {
+            return 0;
+        };
         let mut i = self.vma_index(at);
-        while at.wrapping_add(size) <= USER_MAX {
+        while let Some(end) = at.checked_add(size) {
+            if end > USER_MAX {
+                break;
+            }
             match self.vmas.get(i) {
-                Some(v) if v.start < at.wrapping_add(size) => at = align_up(v.end, alignment),
+                Some(v) if v.start < end => match checked_align_up(v.end, alignment) {
+                    Some(next) => at = next,
+                    None => return 0,
+                },
                 _ => return at,
             }
             i += 1;
@@ -550,6 +567,9 @@ impl<H: Host> Space<H> {
     }
 
     fn drop_range(&mut self, start: u64, end: u64) {
+        if start >= end {
+            return;
+        }
         let first = self.carve(start, end);
         let mut n = 0;
         while let Some(&v) = self.vmas.get(first + n) {
@@ -572,6 +592,22 @@ impl<H: Host> Space<H> {
         }
     }
 
+    fn queue_unmap_hooks(&mut self, start: u64, end: u64) -> usize {
+        let first = self.vma_index(start);
+        let mut i = first;
+        while let Some(&v) = self.vmas.get(i) {
+            if v.start >= end {
+                break;
+            }
+            if v.kind != Kind::Reserved {
+                let (a, b) = (v.start.max(start), v.end.min(end));
+                self.queue_hook(Hook::Unmap, a, b - a);
+            }
+            i += 1;
+        }
+        i
+    }
+
     /// Places a host mapping; with `MAP_FIXED` it replaces what the guest had there.
     #[allow(clippy::too_many_arguments)]
     fn place(
@@ -586,10 +622,13 @@ impl<H: Host> Space<H> {
         phys: u64,
     ) -> Result<u64, i32> {
         let address = if flags & MAP_FIXED != 0 {
+            let Some(end) = want.checked_add(size) else {
+                return Err(INVALID);
+            };
             if want == 0 || !want.is_multiple_of(PAGE) {
                 return Err(INVALID);
             }
-            if flags & MAP_NO_OVERWRITE != 0 && self.overlaps(want, want.wrapping_add(size), true) {
+            if flags & MAP_NO_OVERWRITE != 0 && self.overlaps(want, end, true) {
                 return Err(NO_MEMORY);
             }
             want
@@ -599,6 +638,9 @@ impl<H: Host> Space<H> {
                 address => address,
             }
         };
+        let Some(end) = address.checked_add(size) else {
+            return Err(INVALID);
+        };
         let reserved = kind == Kind::Reserved;
         if !self
             .host
@@ -606,7 +648,8 @@ impl<H: Host> Space<H> {
         {
             return Err(NO_MEMORY);
         }
-        let end = address.wrapping_add(size);
+        // Invalidate GPU trackers for any non-reserved mappings replaced by MAP_FIXED.
+        self.queue_unmap_hooks(address, end);
         self.drop_range(address, end);
         let at = self.vma_index(address);
         self.vmas.insert(
@@ -637,8 +680,11 @@ impl<H: Host> Space<H> {
     }
 
     fn direct_range_allocated(&self, phys: u64, size: u64) -> bool {
+        let Some(end) = phys.checked_add(size) else {
+            return false;
+        };
         let mut at = phys;
-        while at < phys.wrapping_add(size) {
+        while at < end {
             match self.blocks.iter().find(|b| b.contains(at)) {
                 Some(b) => at = b.end(),
                 None => return false,
@@ -734,20 +780,12 @@ impl<H: Host> Space<H> {
         if !start.is_multiple_of(PAGE) || size == 0 {
             return INVALID;
         }
-        let end = start.wrapping_add(align_up(size, PAGE));
+        let Some(end) = checked_align_up(size, PAGE).and_then(|s| start.checked_add(s)) else {
+            return INVALID;
+        };
         let first = self.vma_index(start);
-        let mut i = first;
-        while let Some(&v) = self.vmas.get(i) {
-            if v.start >= end {
-                break;
-            }
-            if v.kind != Kind::Reserved {
-                let (a, b) = (v.start.max(start), v.end.min(end));
-                self.queue_hook(Hook::Unmap, a, b - a);
-            }
-            i += 1;
-        }
-        for v in &self.vmas[first..i] {
+        let end_idx = self.queue_unmap_hooks(start, end);
+        for v in &self.vmas[first..end_idx] {
             let (a, b) = (v.start.max(start), v.end.min(end));
             if !self.host.unmap(a, b - a) {
                 return INVALID;
@@ -766,10 +804,12 @@ impl<H: Host> Space<H> {
         if size == 0 {
             return 0;
         }
+        let Some(stop) = start.checked_add(size) else {
+            return INVALID;
+        };
         if !self.direct_range_allocated(start, size) {
             return INVALID;
         }
-        let stop = start.wrapping_add(size);
         let mut i = 0;
         while let Some(&v) = self.vmas.get(i) {
             let length = v.end - v.start;
@@ -856,8 +896,13 @@ impl<H: Host> Space<H> {
         if size == 0 || !size.is_multiple_of(PAGE) || !valid_alignment(self.pool_size, alignment) {
             return Err(INVALID);
         }
-        if flags & MAP_FIXED != 0 && self.overlaps(want, want.wrapping_add(size), false) {
-            return Err(NO_MEMORY);
+        if flags & MAP_FIXED != 0 {
+            let Some(end) = want.checked_add(size) else {
+                return Err(INVALID);
+            };
+            if self.overlaps(want, end, false) {
+                return Err(NO_MEMORY);
+            }
         }
         if self.trace {
             say(&format!(
@@ -872,7 +917,9 @@ impl<H: Host> Space<H> {
     /// `sceKernelMprotect` (`memory_type` < 0) and batch protection: the whole range must be
     /// mapped.
     pub fn protect(&mut self, start: u64, size: u64, prot: i32, memory_type: i32) -> i32 {
-        let end = start.wrapping_add(align_up(size, PAGE));
+        let Some(end) = checked_align_up(size, PAGE).and_then(|s| start.checked_add(s)) else {
+            return INVALID;
+        };
         let start = start & !(PAGE - 1);
         if prot & !PROT_MASK != 0 || !self.covered(start, end, false) {
             return INVALID;
@@ -993,7 +1040,10 @@ impl<H: Host> Space<H> {
     pub fn clamp(&self, address: u64, size: u64) -> u64 {
         let mut length = 0;
         for v in &self.vmas[self.vma_index(address)..] {
-            if length >= size || v.start > address + length || v.kind == Kind::Reserved {
+            if length >= size
+                || address.checked_add(length).is_none_or(|at| v.start > at)
+                || v.kind == Kind::Reserved
+            {
                 break;
             }
             length = v.end - address;
@@ -1016,12 +1066,15 @@ impl<H: Host> Space<H> {
 
     /// Whether `[address, address + size)` is all mapped (reserved ranges are not).
     pub fn is_mapped(&self, address: u64, size: u64) -> bool {
-        self.covered(address, address.wrapping_add(size), false)
+        let Some(end) = address.checked_add(size) else {
+            return false;
+        };
+        self.covered(address, end, false)
     }
 
     /// GPU page tracking: restricts host access, never beyond the guest's own protection.
     pub fn gpu_protect(&self, address: u64, size: u64, read: bool, write: bool) {
-        let end = address.wrapping_add(size);
+        let end = address.saturating_add(size);
         for v in &self.vmas[self.vma_index(address)..] {
             if v.start >= end {
                 break;
@@ -1051,7 +1104,7 @@ impl<H: Host> Space<H> {
         size: u64,
         mut copy: impl FnMut(u64, u64, u64),
     ) -> bool {
-        let end = address.wrapping_add(size);
+        let end = address.saturating_add(size);
         let mut at = address;
         while at < end {
             match self.containing(at) {
@@ -1063,7 +1116,7 @@ impl<H: Host> Space<H> {
                 _ => return false,
             }
         }
-        true
+        address.checked_add(size).is_some()
     }
 
     /// The GPU library's notifications; every mapping the guest already has is announced.
@@ -2053,6 +2106,166 @@ mod tests {
             Ok((0, 256 * MIB, 320 * MIB))
         );
         assert_eq!(s.direct_memory_type(second as u64 + 64 * MIB), Err(ACCESS));
+    }
+
+    #[test]
+    fn split_at_and_drop_range_preserve_vma_invariants_and_hooks() {
+        let mut s = space();
+        let phys = allocate_on(&mut s, 8 * PAGE);
+        let d = s.map_direct(0, 8 * PAGE, 0x33, 0, phys, 0).unwrap();
+        let f = s.map_flexible(0, 6 * PAGE, 0x33, 0).unwrap();
+
+        // Splitting an empty range does not fragment the VMA table.
+        assert_eq!(s.carve(d + 2 * PAGE, d + 2 * PAGE), 0);
+        assert_eq!(s.regions().len(), 2);
+
+        // Unmapping a middle slice preserves left/right ends and exact backing offsets.
+        assert_eq!(s.unmap(d + 2 * PAGE, 3 * PAGE), 0);
+        assert_eq!(s.unmap(f + PAGE, 2 * PAGE), 0);
+        assert_eq!(s.stats().flexible_bytes, 4 * PAGE);
+
+        // MAP_FIXED replacement queues Unmap for the overwritten mapping before Map.
+        static SPLIT_HOOK_CALLS: Mutex<Vec<(u64, u64)>> = Mutex::new(Vec::new());
+        extern "C" fn split_map(address: usize, size: u64) {
+            SPLIT_HOOK_CALLS
+                .lock()
+                .unwrap()
+                .push((address as u64, size));
+        }
+        extern "C" fn split_unmap(address: usize, size: u64) {
+            SPLIT_HOOK_CALLS
+                .lock()
+                .unwrap()
+                .push((!(address as u64), size));
+        }
+        let memory = Memory::new(space());
+        let p2 = memory.write(|s| allocate_on(s, 6 * PAGE));
+        let base = memory.write(|s| s.map_direct(0, 4 * PAGE, 0x33, 0, p2, 0).unwrap());
+        memory.write(|s| s.set_hooks(Some(split_map), Some(split_unmap), Some(split_map)));
+        memory.flush_hooks();
+        SPLIT_HOOK_CALLS.lock().unwrap().clear();
+        memory.write(|s| {
+            assert_eq!(
+                s.map_direct(
+                    base + PAGE,
+                    2 * PAGE,
+                    0x31,
+                    MAP_FIXED,
+                    p2 + (4 * PAGE) as i64,
+                    0
+                ),
+                Ok(base + PAGE)
+            );
+        });
+        memory.flush_hooks();
+        assert_eq!(
+            std::mem::take(&mut *SPLIT_HOOK_CALLS.lock().unwrap()),
+            [(!(base + PAGE), 2 * PAGE), (base + PAGE, 2 * PAGE)]
+        );
+        memory.read(|s| {
+            for pair in s.regions().windows(2) {
+                assert!(pair[0].start < pair[0].end);
+                assert!(pair[0].end <= pair[1].start);
+            }
+            assert_eq!(
+                s.containing(base + 3 * PAGE).unwrap().phys,
+                p2 as u64 + 3 * PAGE
+            );
+        });
+
+        // Overflowing address+size ranges must be rejected without wrapping VMA bounds.
+        let wrap_size = u64::MAX - PAGE + 1;
+        assert_eq!(s.reserve(0, wrap_size, 0, 0), Err(NO_MEMORY));
+        assert_eq!(s.reserve(USER_MIN, wrap_size, MAP_FIXED, 0), Err(INVALID));
+        assert_eq!(s.unmap(d, wrap_size), INVALID);
+        assert_eq!(s.protect(d, wrap_size, 1, -1), INVALID);
+        assert_eq!(s.release_direct(phys as u64, wrap_size), INVALID);
+        assert_eq!(s.map_direct(0, wrap_size, 3, 0, phys, 0), Err(INVALID));
+        assert!(!s.is_mapped(d, wrap_size));
+        assert!(!s.for_each_backing(d, wrap_size, |_, _, _| {}));
+    }
+
+    #[test]
+    fn large_two_block_layout_and_gpu_protection_survive_splits_and_unmaps() {
+        let raised = 9000 * MIB;
+        let mut s = Space::new(raised, Fake::default());
+        let retail = RETAIL_POOL as i64;
+        let (low1, end1, align1) =
+            direct_window(s.pool_size(), 0, retail, 4096 * MIB, 0, 0).unwrap();
+        let block1 = s
+            .allocate_direct(low1, end1, 4096 * MIB, align1, 0)
+            .unwrap() as i64;
+        let (low2, end2, align2) =
+            direct_window(s.pool_size(), 0, retail, 1024 * MIB, 0, 3).unwrap();
+        let block2 = s
+            .allocate_direct(low2, end2, 1024 * MIB, align2, 3)
+            .unwrap() as i64;
+        assert_eq!((block1, block2), (0, (4096 * MIB) as i64));
+        assert_eq!(s.direct_memory_type(4096 * MIB - 1), Ok((0, 0, 4096 * MIB)));
+        assert_eq!(
+            s.direct_memory_type(4096 * MIB),
+            Ok((3, 4096 * MIB, 5120 * MIB))
+        );
+        assert_eq!(s.direct_memory_type(5120 * MIB), Err(ACCESS));
+
+        // Map the tail 8 MiB of block 1 and all of block 2 in 1 MiB MAP_FIXED steps, contiguous
+        // up to an exact edge past which nothing is mapped.
+        let tail1 = 8u64;
+        let edge = 0x12_0000_0000u64;
+        let total_steps = tail1 + 64;
+        let start = edge - total_steps * MIB;
+        for step in 0..tail1 {
+            let at = start + step * MIB;
+            let phys = block1 + ((4096 - tail1 + step) * MIB) as i64;
+            assert_eq!(s.map_direct(at, MIB, 0x33, MAP_FIXED, phys, 0), Ok(at));
+        }
+        for step in 0..64u64 {
+            let at = start + (tail1 + step) * MIB;
+            let phys = block2 + (step * MIB) as i64;
+            assert_eq!(s.map_direct(at, MIB, 0x33, MAP_FIXED, phys, 0), Ok(at));
+        }
+        let boundary = start + tail1 * MIB;
+        assert!(s.is_mapped(start, total_steps * MIB));
+        assert!(!s.is_mapped(edge, 1));
+        assert_eq!(s.clamp(boundary - 8, 32), 32);
+
+        // GPU write-tracking write-protects across the block1/block2 step boundary; guest then
+        // splits via protect + unmap + MAP_FIXED, and GPU restores write access per-VMA.
+        let tracked_start = boundary - PAGE;
+        let tracked_len = 6 * PAGE;
+        s.host().calls();
+        s.gpu_protect(tracked_start, tracked_len, true, false);
+        assert_eq!(s.protect(boundary + PAGE, PAGE, 1, -1), 0);
+        assert_eq!(s.unmap(boundary + 2 * PAGE, PAGE), 0);
+        assert_eq!(
+            s.map_direct(
+                boundary + 3 * PAGE,
+                PAGE,
+                0x33,
+                MAP_FIXED,
+                block2 + 4 * MIB as i64,
+                0
+            ),
+            Ok(boundary + 3 * PAGE)
+        );
+        s.host().calls();
+        s.gpu_protect(tracked_start, tracked_len, true, true);
+        assert_eq!(
+            s.host().calls(),
+            [
+                format!("protect {tracked_start:#x} {PAGE:#x} prot=3"),
+                format!("protect {boundary:#x} {PAGE:#x} prot=3"),
+                format!("protect {:#x} {PAGE:#x} prot=1", boundary + PAGE),
+                format!("protect {:#x} {PAGE:#x} prot=3", boundary + 3 * PAGE),
+                format!("protect {:#x} {:#x} prot=3", boundary + 4 * PAGE, PAGE),
+            ]
+        );
+        // Backing walk stops at the unmapped hole and succeeds right up to the second block edge.
+        assert!(!s.for_each_backing(boundary, 4 * PAGE, |_, _, _| {}));
+        let mut tail_pieces = Vec::new();
+        assert!(s.for_each_backing(edge - 16, 16, |p, o, n| tail_pieces.push((p, o, n))));
+        assert_eq!(tail_pieces, [(block2 as u64 + 64 * MIB - 16, 0, 16)]);
+        assert!(!s.for_each_backing(edge - 8, 16, |_, _, _| {}));
     }
 
     #[test]
