@@ -151,15 +151,22 @@ s32 PS4_SYSV_ABI sceVideoOutRegisterBuffers(s32 handle, s32 startIndex, void* co
 
 s32 PS4_SYSV_ABI sceVideoOutSetFlipRate(s32 handle, s32 rate) {
     LOG_TRACE(Lib_VideoOut, "called");
+    auto* port = driver->GetPort(handle);
+    if (!port) {
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_HANDLE;
+    }
+    if (rate < 0 || rate > 2) {
+        LOG_ERROR(Lib_VideoOut, "Invalid flip rate = {}", rate);
+        return ORBIS_VIDEO_OUT_ERROR_INVALID_VALUE;
+    }
     // bbport: the game's frame-rate request (0 = every vblank, 1 = every second, ...), once per
     // change. Per static analysis (2026-10-18; not measured), photo mode and one tweak setting ask
     // for 30 Hz; gameplay, menus and cutscenes made no change in U1 and U2 runs on the Legion Go.
-    if (driver->GetPort(handle)->flip_rate != rate) {
-        std::printf("VideoOut: flip rate %d -> %d (handle %d)\n", driver->GetPort(handle)->flip_rate,
-                    rate, handle);
+    const int prev = port->flip_rate.exchange(rate, std::memory_order_relaxed);
+    if (prev != rate) {
+        std::printf("VideoOut: flip rate %d -> %d (handle %d)\n", prev, rate, handle);
         std::fflush(stdout);
     }
-    driver->GetPort(handle)->flip_rate = rate;
     return ORBIS_OK;
 }
 

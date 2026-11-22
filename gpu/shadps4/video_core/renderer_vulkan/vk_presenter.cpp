@@ -552,22 +552,24 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // With a margin (paused above ~175 FPS, back below ~158): one threshold flipped generation on
     // and off around 165 FPS, which halved and doubled the frames shown (DLSS players near it
     // reported stutter, 2026-11-05).
-    static bool fast_game = false;
-    static u32 fast_switches = 0;
     {
         const double ms = game_frame_ms.load(std::memory_order_relaxed);
-        const bool was = fast_game;
-        if (!fast_game && ms < 5.7) {
-            fast_game = true;
-        } else if (fast_game && ms > 6.3) {
-            fast_game = false;
+        const bool was = fast_game.load(std::memory_order_relaxed);
+        bool now_fast = was;
+        if (!was && ms < 5.7) {
+            now_fast = true;
+        } else if (was && ms > 6.3) {
+            now_fast = false;
         }
-        if (was != fast_game && frame_generator->Wanted()) {
-            ++fast_switches;
-            if (fast_switches <= 20 || (fast_switches % 100) == 0) {
-                std::printf("Frame generation: %s (game %.1f FPS, switch %u)\n",
-                            fast_game ? "paused, the game runs above 175 FPS" : "back on",
-                            1000.0 / ms, fast_switches);
+        if (was != now_fast) {
+            fast_game.store(now_fast, std::memory_order_relaxed);
+            if (frame_generator->Wanted()) {
+                ++fast_switches;
+                if (fast_switches <= 20 || (fast_switches % 100) == 0) {
+                    std::printf("Frame generation: %s (game %.1f FPS, switch %u)\n",
+                                now_fast ? "paused, the game runs above 175 FPS" : "back on",
+                                1000.0 / ms, fast_switches);
+                }
             }
         }
     }
@@ -575,7 +577,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // with the picture before its HUD captured at the same size (TemporalUpscaler::UpscaleToUi).
     const bool generate_upscaled = upscaled && rasterizer->GetUpscaler().CompositeFrames();
     if (frame_generator->Wanted() && !frame->is_hdr && (!upscaled || generate_upscaled) &&
-        !fast_game) {
+        !fast_game.load(std::memory_order_relaxed)) {
         EnsureGenerated(frame);
         // The picture before the UI, composed like the frame (equal outside the UI).
         vk::Image hudless{};
@@ -774,16 +776,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     // time before this frame). A frame shown again has none.
     u32 generated = is_reusing_frame ? 0 : frame->generated_count;
     const auto start = std::chrono::steady_clock::now();
+    double pace_ms = game_frame_ms.load(std::memory_order_relaxed);
     if (!is_reusing_frame && is_game_frame) {
-        const double ms =
-            std::chrono::duration<double, std::milli>(start - last_game_present).count();
-        if (ms > 1.0 && ms < 100.0) {
-            game_frame_ms = game_frame_ms + (ms - game_frame_ms) * 0.1;
-        }
-        last_game_present = start;
+        pace_ms = frame_pace.RecordPresent(start, generated > 0,
+                                           fast_game.load(std::memory_order_relaxed));
+        game_frame_ms.store(pace_ms, std::memory_order_relaxed);
     }
     const auto step = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-        std::chrono::duration<double, std::milli>(game_frame_ms / (generated + 1)));
+        std::chrono::duration<double, std::milli>(pace_ms / (generated + 1)));
     // The game must never wait for generated frames: when every frame is in use (the GPU
     // thread would block on the next one, and the game on its GPU work: Uncharted 3 asserts
     // in FrameBegin) they are dropped and the game's frame goes out at once.

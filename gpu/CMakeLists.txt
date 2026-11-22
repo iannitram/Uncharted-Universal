@@ -403,6 +403,10 @@ add_executable(vertex-input-deny-test EXCLUDE_FROM_ALL ../tests/test_vertex_inpu
 target_include_directories(vertex-input-deny-test PRIVATE shim)
 target_compile_options(vertex-input-deny-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(video-pacing-test EXCLUDE_FROM_ALL ../tests/test_video_pacing.cpp)
+target_include_directories(video-pacing-test PRIVATE shim)
+target_compile_options(video-pacing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(expand-image-test EXCLUDE_FROM_ALL ../tests/test_expand_image.cpp)
 target_include_directories(expand-image-test PRIVATE shim shadps4)
 # vk_common.h carries clang-only pragmas; GCC (the Linux package build) must not fail on them.

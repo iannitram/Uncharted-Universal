@@ -11,6 +11,7 @@
 
 #include <condition_variable>
 
+#include "bbport_video_pacing.h"
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
 #include "video_core/renderer_vulkan/host_passes/pp_pass.h"
@@ -162,8 +163,10 @@ private:
     std::unique_ptr<FrameGenerator> frame_generator;
     /// The game's picture before its UI, through the same passes as the frame.
     Frame hudless_frame{};
-    std::chrono::steady_clock::time_point last_game_present{};
-    std::atomic<double> game_frame_ms{16.7}; ///< written by the present thread
+    BbVideoPacing::FramePaceTracker frame_pace{};
+    std::atomic<double> game_frame_ms{BbVideoPacing::DefaultFrameMs}; ///< written by the present thread
+    std::atomic<bool> fast_game{false};
+    u32 fast_switches{0};
 };
 
 } // namespace Vulkan
