@@ -5,6 +5,7 @@
 //! `bbgpu_init`, and `enter_on_stack`) remains in `src/probe.c` until C/GPU linkage moves
 //! to `uncharted-run` in 3.17.
 
+pub mod entry;
 #[cfg(all(
     target_arch = "x86_64",
     any(target_os = "linux", target_os = "windows")
