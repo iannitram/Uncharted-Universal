@@ -393,13 +393,21 @@ static size_t vma_index(uintptr_t a) { /* first VMA with end > a */
     while (lo<hi) { size_t mid=(lo+hi)/2; if (vmas[mid].end<=a) lo=mid+1; else hi=mid; }
     return lo;
 }
-static int vma_insert(size_t at, Vma v) {
-    if (vma_count==vma_capacity) {
-        size_t capacity=vma_capacity ? vma_capacity*2 : 256;
-        Vma *next=realloc(vmas,capacity*sizeof(*vmas));
-        if (!next) return -1;
-        vmas=next; vma_capacity=capacity;
+static int vma_reserve(size_t extra) {
+    if (extra > SIZE_MAX - vma_count) return -1;
+    if (vma_count + extra <= vma_capacity) return 0;
+    size_t capacity=vma_capacity ? vma_capacity : 256;
+    while (capacity < vma_count + extra) {
+        if (capacity > SIZE_MAX / 2) return -1;
+        capacity *= 2;
     }
+    Vma *next=realloc(vmas,capacity*sizeof(*vmas));
+    if (!next) return -1;
+    vmas=next; vma_capacity=capacity;
+    return 0;
+}
+static int vma_insert(size_t at, Vma v) {
+    if (vma_reserve(1)) return -1;
     memmove(vmas+at+1,vmas+at,(vma_count-at)*sizeof(*vmas));
     vmas[at]=v; ++vma_count; return 0;
 }
@@ -409,6 +417,7 @@ static void vma_erase(size_t at, size_t n) {
 static int split_at(uintptr_t a) {
     size_t i=vma_index(a);
     if (i==vma_count || vmas[i].start>=a) return 0;
+    if (vma_reserve(1)) return -1;
     Vma right=vmas[i];
     right.start=a;
     /* Direct and flexible mappings both sit on the backing pool at a byte offset: the right half
@@ -419,6 +428,8 @@ static int split_at(uintptr_t a) {
 }
 /* Range [start,end) split on its edges; returns the first index inside it. */
 static size_t carve(uintptr_t start, uintptr_t end, int *error) {
+    if (start>=end) { *error=0; return vma_index(start); }
+    if (vma_reserve(2)) { *error=-1; return vma_index(start); }
     *error = split_at(start) || split_at(end);
     return vma_index(start);
 }
@@ -438,14 +449,17 @@ static int overlaps(uintptr_t start, uintptr_t end, int ignore_reserved) {
 /* First-fit search in the PS4 user range, starting from the hint. */
 static uintptr_t find_free(uintptr_t hint, uint64_t size, uint64_t alignment) {
     uintptr_t at=align_up(hint<USER_MIN ? USER_MIN : hint, alignment);
-    for (size_t i=vma_index(at); at+size<=USER_MAX; ++i) {
+    if (size > USER_MAX) return 0;
+    for (size_t i=vma_index(at); at<=USER_MAX-size; ++i) {
         if (i==vma_count || vmas[i].start>=at+size) return at;
         at=align_up(vmas[i].end,alignment);
     }
     return 0;
 }
-static void drop_range(uintptr_t start, uintptr_t end) {
+static int drop_range(uintptr_t start, uintptr_t end) {
+    if (start>=end) return 0;
     int error; size_t i=carve(start,end,&error), n=0;
+    if (error) return -1;
     while (i+n<vma_count && vmas[i+n].end<=end && vmas[i+n].start>=start) {
         if (vmas[i+n].kind==KIND_FLEXIBLE) {
             flexible_bytes-=vmas[i+n].end-vmas[i+n].start;
@@ -454,22 +468,31 @@ static void drop_range(uintptr_t start, uintptr_t end) {
         ++n;
     }
     vma_erase(i,n);
+    return 0;
 }
 /* Places a host mapping; with MAP_FIXED it replaces what the guest had there. */
 static int32_t place(void **inout, uint64_t size, int prot, int flags, uint64_t alignment,
                      int kind, int type, uint64_t phys) {
     uintptr_t address=(uintptr_t)*inout;
     if (flags & MAP_FIXED_FLAG) {
-        if (!address || address%PAGE) return INVALID;
+        if (!address || address%PAGE || size>UINT64_MAX-address) return INVALID;
         if ((flags & MAP_NO_OVERWRITE) && overlaps(address,address+size,1)) return NO_MEMORY;
     } else {
         address=find_free(address,size,alignment);
         if (!address) return NO_MEMORY;
     }
+    if (size>UINT64_MAX-address) return INVALID;
+    if (vma_reserve(3)) return NO_MEMORY;
     if (host_map(address,size,host_prot(prot),kind==KIND_RESERVED,phys)) return NO_MEMORY;
     void *mapped=(void *)address;
-    drop_range(address,address+size);
-    if (vma_insert(vma_index(address),(Vma){address,address+size,kind,prot,type,phys})) return NO_MEMORY;
+    uintptr_t end=address+size;
+    for (size_t i=vma_index(address); i<vma_count && vmas[i].start<end; ++i)
+        if (vmas[i].kind!=KIND_RESERVED) {
+            uintptr_t a=vmas[i].start>address ? vmas[i].start : address, b=vmas[i].end<end ? vmas[i].end : end;
+            queue_hook(HOOK_UNMAP,a,b-a);
+        }
+    if (drop_range(address,end)) return NO_MEMORY;
+    if (vma_insert(vma_index(address),(Vma){address,end,kind,prot,type,phys})) return NO_MEMORY;
     if (kind==KIND_FLEXIBLE) flexible_bytes+=size;
     if (kind!=KIND_RESERVED) queue_hook(HOOK_MAP,address,size);
     *inout=mapped;
@@ -481,6 +504,7 @@ static int block_type(uint64_t phys) {
     return -1;
 }
 static int direct_range_allocated(uint64_t phys, uint64_t size) {
+    if (size>UINT64_MAX-phys) return 0;
     for (uint64_t at=phys; at<phys+size;) {
         int found=0;
         for (int i=0;i<LIMIT;++i) if (blocks[i].used && at>=blocks[i].start && at-blocks[i].start<blocks[i].size) {
@@ -565,8 +589,11 @@ static ABI int32_t direct_map_named(void **out, uint64_t size, int prot, int fla
     (void)name; return direct_map(out,size,prot,flags,physical,alignment);
 }
 static int32_t unmap_locked(uintptr_t start, uint64_t size) {
-    if (start%PAGE || !size) return INVALID;
-    uint64_t end=start+align_up(size,PAGE);
+    if (start%PAGE || !size || size>UINT64_MAX-(PAGE-1)) return INVALID;
+    uint64_t aligned=align_up(size,PAGE);
+    if (aligned>UINT64_MAX-start) return INVALID;
+    if (vma_reserve(2)) return NO_MEMORY;
+    uint64_t end=start+aligned;
     for (size_t i=vma_index(start); i<vma_count && vmas[i].start<end; ++i)
         if (vmas[i].kind!=KIND_RESERVED) {
             uintptr_t a=vmas[i].start>start ? vmas[i].start : start, b=vmas[i].end<end ? vmas[i].end : end;
@@ -576,7 +603,7 @@ static int32_t unmap_locked(uintptr_t start, uint64_t size) {
         uintptr_t a=vmas[i].start>start ? vmas[i].start : start, b=vmas[i].end<end ? vmas[i].end : end;
         if (host_unmap(a,b-a)) return INVALID;
     }
-    drop_range(start,end);
+    if (drop_range(start,end)) return NO_MEMORY;
     return 0;
 }
 static ABI int32_t direct_unmap(void *address, uint64_t size) {
@@ -665,9 +692,13 @@ static ABI int32_t reserve_range(void **inout, uint64_t size, int flags, uint64_
     return result;
 }
 static int32_t protect_locked(uintptr_t start, uint64_t size, int prot, int type) {
-    uintptr_t end=start+align_up(size,PAGE);
+    if (size>UINT64_MAX-(PAGE-1)) return INVALID;
+    uint64_t aligned=align_up(size,PAGE);
+    if (aligned>UINT64_MAX-start) return INVALID;
+    uintptr_t end=start+aligned;
     start&=~(uintptr_t)(PAGE-1);
     if ((prot & ~0x37) || !covered(start,end,0)) return INVALID;
+    if (vma_reserve(2)) return NO_MEMORY;
     if (host_protect(start,end-start,host_prot(prot))) return INVALID;
     int error; size_t i=carve(start,end,&error);
     if (error) return NO_MEMORY;
