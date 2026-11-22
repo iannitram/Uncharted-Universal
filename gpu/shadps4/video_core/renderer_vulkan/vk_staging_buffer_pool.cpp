@@ -202,6 +202,37 @@ void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache, bool eager) {
     });
 }
 
+u64 StagingBufferPool::ReleaseIdleDeviceMemory() {
+    u64 freed = 0;
+    const u64 current_tick = scheduler.CurrentTick();
+    Ring& ring = rings[u32(MemoryType::DeviceLocal)];
+    for (size_t i = ring.blocks.size(); i-- > 0;) {
+        const Block& block = ring.blocks[i];
+        const u64 tick = block.buffer->LastTick();
+        if (tick < current_tick && scheduler.IsFree(tick)) {
+            freed += block.buffer->SizeBytes();
+            ring.blocks.erase(ring.blocks.begin() + i);
+            if (i < ring.current) {
+                --ring.current;
+            } else if (i == ring.current) {
+                ring.current = 0;
+            }
+        }
+    }
+    if (ring.current >= ring.blocks.size()) {
+        ring.current = 0;
+    }
+    auto& large = large_caches[u32(MemoryType::DeviceLocal)];
+    for (size_t i = large.size(); i-- > 0;) {
+        const LargeBuffer& entry = large[i];
+        if (!entry.held && entry.tick < current_tick && scheduler.IsFree(entry.tick)) {
+            freed += entry.buffer->SizeBytes();
+            large.erase(large.begin() + i);
+        }
+    }
+    return freed;
+}
+
 void StagingBufferPool::PublishStats() const {
     using namespace Core::Devtools::Widget;
     if (!GpuMemoryViewer::IsEnabled()) {

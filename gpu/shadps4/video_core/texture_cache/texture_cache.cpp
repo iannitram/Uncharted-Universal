@@ -690,6 +690,11 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     ImageIds image_ids;
     ForEachImageInRegion(info.guest_address, info.guest_size,
                          [&](ImageId image_id, Image& image) { image_ids.push_back(image_id); });
+    const ImageIds* prev_protected = protected_image_ids;
+    protected_image_ids = &image_ids;
+    SCOPE_EXIT {
+        protected_image_ids = prev_protected;
+    };
 
     ImageId image_id{};
 
@@ -1339,7 +1344,7 @@ static bool LiveMarksOnBigCards() {
 }
 
 void TextureCache::GarbageCollectImages() {
-    bool urgent_pass = false;
+    bool urgent_pass = Vulkan::Vram::urgent.exchange(false, std::memory_order_relaxed);
     vmaSetCurrentFrameIndex(instance.GetAllocator(), static_cast<u32>(gc_tick));
     if (Vulkan::Vram::Log()) {
         static auto last = std::chrono::steady_clock::now();
@@ -1349,21 +1354,26 @@ void TextureCache::GarbageCollectImages() {
             instance.ReportMemory();
         }
     }
+    static const u64 forced_budget = [] {
+        const char* env = std::getenv("BB_GC_BUDGET_MB");
+        return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
+    }();
     if (instance.CanReportMemoryUsage()) {
         u64 budget_now = 0;
         instance.QueryMemory(total_used_memory, budget_now);
-        // A card (or what other programs leave of it) under 5.5 GB works from its live budget.
-        tight_budget = !Vulkan::Vram::Legacy() && !instance.IsIntegrated() && budget_now != 0 &&
-                       budget_now < 5632_MB;
+        // A card (or what other programs leave of it, or a forced test budget) under 5.5 GB
+        // works from its live budget.
+        tight_budget = !Vulkan::Vram::Legacy() &&
+                       ((!instance.IsIntegrated() && budget_now != 0 && budget_now < 5632_MB) ||
+                        (forced_budget != 0 && forced_budget < 5632_MB));
         // bbport: images deleted but not yet destroyed (the GPU may still read them) are already
         // gone as far as the decisions below go; counting them evicted more and more.
-        const u64 pending =
-            tight_budget ? pending_free_bytes.load(std::memory_order_relaxed) : 0;
+        const u64 pending = pending_free_bytes.load(std::memory_order_relaxed);
         total_used_memory = total_used_memory > pending ? total_used_memory - pending : 0;
         if (tight_budget) {
             // Small cards: marks relative to what everything else (buffer arenas, upscaler,
             // swapchain) leaves for images, under the driver's current budget.
-            const u64 budget = budget_now;
+            const u64 budget = forced_budget ? forced_budget : budget_now;
             const u64 live_images = Vulkan::Vram::image_bytes.load(std::memory_order_relaxed);
             const u64 images = std::min(live_images > pending ? live_images - pending : 0,
                                         total_used_memory);
@@ -1374,10 +1384,6 @@ void TextureCache::GarbageCollectImages() {
             trigger_gc_memory = others + room / 100 * 70;
             pressure_gc_memory = others + room / 100 * 85;
             critical_gc_memory = others + room;
-            if (Vulkan::Vram::urgent.exchange(false, std::memory_order_relaxed)) {
-                // An allocation just went over the budget: this pass is a critical one.
-                urgent_pass = true;
-            }
         } else if (!instance.IsIntegrated() && budget_now >= 8_GB && LiveMarksOnBigCards()) {
             // bbport: cards of 8 GB and up. The startup marks keep 60% of up to 8 GB free and
             // compare with everything the process holds, and buffers backing guest memory alone
@@ -1404,10 +1410,6 @@ void TextureCache::GarbageCollectImages() {
         // collector evicted images used two or three frames ago on every submission and wrote
         // GPU-written ones back. Compare with the driver's current budget instead.
         // BB_GC_BUDGET_MB=N: this rule with a fixed budget on any GPU (tests on a desktop).
-        static const u64 forced_budget = [] {
-            const char* env = std::getenv("BB_GC_BUDGET_MB");
-            return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
-        }();
         if (instance.IsIntegrated() || forced_budget) {
             const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
             if (budget != 0) {
@@ -1537,12 +1539,16 @@ void TextureCache::GarbageCollectImages() {
         return false;
     };
 
-    // Try to remove anything old enough and not high priority.
-    configure(false);
-    gc_kept = gc_kept_bytes = 0;
-    lru_cache.ForEachItemBelow(below_tick, clean_up);
+    // Try to remove anything old enough and not high priority. When already over the critical
+    // mark (or running an urgent pass), skip the non-aggressive pass so old GPU-written tiled
+    // images aren't touched to gc_tick before aggressive drop evaluation runs.
+    if (total_used_memory < critical_gc_memory && !urgent_pass) {
+        configure(false);
+        gc_kept = gc_kept_bytes = 0;
+        lru_cache.ForEachItemBelow(below_tick, clean_up);
+    }
 
-    if (total_used_memory >= critical_gc_memory) {
+    if (total_used_memory >= critical_gc_memory || urgent_pass) {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
         gc_kept = gc_kept_bytes = 0;
@@ -1663,7 +1669,7 @@ void TextureCache::DeleteImage(ImageId image_id) {
     // Reclaim image and any image views it references.
     u64 bytes = 0;
     for (const auto& backing : image.backing_images) {
-        bytes += backing.image.size_bytes;
+        bytes += backing.image.vram_bytes;
     }
     pending_free_bytes.fetch_add(bytes, std::memory_order_relaxed);
     scheduler.DeferOperation([this, image_id, bytes] {
@@ -1676,6 +1682,117 @@ void TextureCache::DeleteImage(ImageId image_id) {
         }
         slot_images.erase(image_id);
     });
+}
+
+u64 TextureCache::ReclaimMemory(u64 target_bytes, bool aggressive) {
+    runtime.BeforeImageAccess();
+    const u64 pending_before = pending_free_bytes.load(std::memory_order_relaxed);
+    scheduler.DrainPendingOperations();
+    const u64 pending_after_drain = pending_free_bytes.load(std::memory_order_relaxed);
+    u64 freed_bytes = pending_before > pending_after_drain ? pending_before - pending_after_drain : 0;
+
+    const u64 goal_bytes = std::max<u64>(target_bytes, 32_MB);
+    u64 evicted_count = 0;
+    u64 queued_bytes = 0;
+    u64 dropped_tiled = 0;
+
+    {
+        std::scoped_lock lock{mutex};
+        const u64 active_tick = scheduler.CurrentTick();
+        const auto is_protected = [this](ImageId image_id) {
+            return protected_image_ids &&
+                   std::ranges::find(*protected_image_ids, image_id) != protected_image_ids->end();
+        };
+
+        auto evict_pass = [&](bool allow_drop_tiled) {
+            struct Candidate {
+                ImageId id;
+                bool download;
+                bool tiled;
+                u64 vram_bytes;
+            };
+            boost::container::small_vector<Candidate, 64> candidates;
+            u64 collected_bytes = 0;
+            lru_cache.ForEachItemBelow(gc_tick, [&](ImageId image_id) {
+                if (queued_bytes + collected_bytes >= goal_bytes || candidates.size() >= 256) {
+                    return true;
+                }
+                const auto& image = slot_images[image_id];
+                if (image.binding.is_bound || image.binding.is_target || image.usage.vo_surface ||
+                    is_protected(image_id)) {
+                    return false;
+                }
+                if ((gc_tick > 0 && image.lru_touched_tick >= gc_tick) ||
+                    image.tick_accessed_last >= active_tick) {
+                    return false;
+                }
+                const bool download = image.SafeToDownload();
+                const bool tiled = image.info.IsTiled();
+                if (download && tiled && !allow_drop_tiled) {
+                    return false;
+                }
+                u64 img_bytes = 0;
+                for (const auto& backing : image.backing_images) {
+                    img_bytes += backing.image.vram_bytes ? backing.image.vram_bytes
+                                                          : backing.image.size_bytes;
+                }
+                if (img_bytes == 0) {
+                    return false;
+                }
+                candidates.push_back({image_id, download, tiled, img_bytes});
+                collected_bytes += img_bytes;
+                return false;
+            });
+            for (const auto& c : candidates) {
+                if (False(slot_images[c.id].flags & ImageFlagBits::Registered)) {
+                    continue;
+                }
+                if (c.download && !c.tiled) {
+                    DownloadImageMemory(c.id, true);
+                } else if (c.download && c.tiled) {
+                    ++dropped_tiled;
+                }
+                FreeImage(c.id);
+                ++evicted_count;
+                queued_bytes += c.vram_bytes;
+            }
+        };
+
+        evict_pass(false);
+        if (aggressive && freed_bytes + queued_bytes < goal_bytes) {
+            evict_pass(true);
+        }
+    }
+
+    const u64 pending_now = pending_free_bytes.load(std::memory_order_relaxed);
+    if (evicted_count > 0 || pending_now > 0 || aggressive) {
+        scheduler.Finish();
+        const u64 pending_after_finish = pending_free_bytes.load(std::memory_order_relaxed);
+        if (pending_now > pending_after_finish) {
+            freed_bytes += pending_now - pending_after_finish;
+        }
+    }
+    const u64 staging_freed = runtime.GetStagingPool().ReleaseIdleDeviceMemory();
+    freed_bytes += staging_freed;
+
+    if (evicted_count > 0 || freed_bytes > 0) {
+        Vulkan::Vram::reclaim_passes.fetch_add(1, std::memory_order_relaxed);
+        Vulkan::Vram::reclaimed_images.fetch_add(evicted_count, std::memory_order_relaxed);
+        Vulkan::Vram::reclaimed_bytes.fetch_add(freed_bytes, std::memory_order_relaxed);
+        static std::atomic<u32> logged{0};
+        if (logged.fetch_add(1, std::memory_order_relaxed) < 16 || Vulkan::Vram::Log()) {
+            std::printf("Texture cache: %sreclaim evicted %llu images (%llu dropped tiled) and "
+                        "trimmed %llu MiB scratch, freed %llu MiB for %llu MiB request\n",
+                        aggressive ? "aggressive " : "",
+                        static_cast<unsigned long long>(evicted_count),
+                        static_cast<unsigned long long>(dropped_tiled),
+                        static_cast<unsigned long long>(staging_freed >> 20),
+                        static_cast<unsigned long long>(freed_bytes >> 20),
+                        static_cast<unsigned long long>(target_bytes >> 20));
+            std::fflush(stdout);
+        }
+    }
+    return freed_bytes;
 }
 
 } // namespace VideoCore

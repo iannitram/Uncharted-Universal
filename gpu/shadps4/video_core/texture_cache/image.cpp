@@ -100,7 +100,10 @@ void UniqueImage::Destroy() {
         vmaDestroyImage(allocator, image, allocation);
         image = vk::Image{};
         allocation = {};
-        Vulkan::Vram::image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
+        if (vram_bytes) {
+            Vulkan::Vram::image_bytes.fetch_sub(vram_bytes, std::memory_order_relaxed);
+            vram_bytes = 0;
+        }
         Vulkan::Vram::image_count.fetch_sub(1, std::memory_order_relaxed);
         size_bytes = 0;
     }
@@ -123,28 +126,72 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     VmaAllocationInfo alloc_info{};
     VkResult result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     u64 estimate = 0;
+    const auto query_estimate = [&] {
+        if (!estimate && device) {
+            const vk::DeviceImageMemoryRequirements req{.pCreateInfo = &image_ci};
+            estimate = device.getImageMemoryRequirements(req).memoryRequirements.size;
+        }
+        return estimate;
+    };
     if (Vulkan::Vram::TestLimit() && device) {
-        const vk::DeviceImageMemoryRequirements req{.pCreateInfo = &image_ci};
-        estimate = device.getImageMemoryRequirements(req).memoryRequirements.size;
+        query_estimate();
     }
     if (Vulkan::Vram::Allows(estimate)) {
         result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image, &allocation,
                                 &alloc_info);
     }
-    if (result != VK_SUCCESS && !Vulkan::Vram::Legacy()) {
-        // bbport: over the driver's budget. Evicting from here is not safe (the caller holds the
-        // texture cache and may be walking it): ask the collector to be aggressive at the next
-        // submission and let the driver place the image outside the budget (it pages other
-        // memory out; on a card that really has no room this still fails).
+    bool host_fallback = false;
+    if (result != VK_SUCCESS) {
         Vulkan::Vram::failed_allocs.fetch_add(1, std::memory_order_relaxed);
         Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
-        if (!Vulkan::Vram::Strict() || Vulkan::Vram::Allows(estimate)) {
-            VmaAllocationCreateInfo relaxed = alloc_ci;
-            relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
-            result = vmaCreateImage(allocator, &image_ci_unsafe, &relaxed, &unsafe_image,
-                                    &allocation, &alloc_info);
+        const u64 needed = query_estimate();
+        // bbport: evict idle cached images, wait for deferred frees and trim scratch before
+        // relaxing the budget or falling back to system memory.
+        for (const bool aggressive : {false, true}) {
             if (result == VK_SUCCESS) {
-                Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                break;
+            }
+            if (Vulkan::Vram::Reclaim(needed, aggressive) && Vulkan::Vram::Allows(needed)) {
+                allocation = nullptr;
+                unsafe_image = VK_NULL_HANDLE;
+                result = vmaCreateImage(allocator, &image_ci_unsafe, &alloc_ci, &unsafe_image,
+                                        &allocation, &alloc_info);
+                if (result == VK_SUCCESS) {
+                    Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+        if (result != VK_SUCCESS && !Vulkan::Vram::ExplicitLegacy()) {
+            if (!Vulkan::Vram::Strict() || Vulkan::Vram::Allows(needed)) {
+                VmaAllocationCreateInfo relaxed = alloc_ci;
+                relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+                allocation = nullptr;
+                unsafe_image = VK_NULL_HANDLE;
+                result = vmaCreateImage(allocator, &image_ci_unsafe, &relaxed, &unsafe_image,
+                                        &allocation, &alloc_info);
+                if (result == VK_SUCCESS) {
+                    Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                    static std::atomic<u32> logged{0};
+                    if (logged.fetch_add(1, std::memory_order_relaxed) < 8) {
+                        std::printf("Texture cache: over device budget for %ux%ux%u image (%llu MiB), "
+                                    "allocated outside budget\n",
+                                    image_ci.extent.width, image_ci.extent.height,
+                                    image_ci.extent.depth,
+                                    static_cast<unsigned long long>(alloc_info.size >> 20));
+                    }
+                }
+            }
+            if (result != VK_SUCCESS && (!Vulkan::Vram::Strict() || !Vulkan::Vram::TestLimit())) {
+                VmaAllocationCreateInfo host_ci = alloc_ci;
+                host_ci.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+                host_ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+                allocation = nullptr;
+                unsafe_image = VK_NULL_HANDLE;
+                result = vmaCreateImage(allocator, &image_ci_unsafe, &host_ci, &unsafe_image,
+                                        &allocation, &alloc_info);
+                if (result == VK_SUCCESS) {
+                    host_fallback = true;
+                }
             }
         }
     }
@@ -152,7 +199,24 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
                vk::to_string(vk::Result{result}));
     image = vk::Image{unsafe_image};
     size_bytes = alloc_info.size;
-    Vulkan::Vram::image_bytes.fetch_add(size_bytes, std::memory_order_relaxed);
+    VkMemoryPropertyFlags placed{};
+    vmaGetAllocationMemoryProperties(allocator, allocation, &placed);
+    if (placed & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) {
+        vram_bytes = size_bytes;
+        Vulkan::Vram::image_bytes.fetch_add(vram_bytes, std::memory_order_relaxed);
+    } else {
+        vram_bytes = 0;
+        if (host_fallback) {
+            Vulkan::Vram::host_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            static std::atomic<u32> logged{0};
+            if (logged.fetch_add(1, std::memory_order_relaxed) < 16) {
+                std::printf("Texture cache: out of device memory for %ux%ux%u image (%llu MiB), "
+                            "placed in system memory\n",
+                            image_ci.extent.width, image_ci.extent.height, image_ci.extent.depth,
+                            static_cast<unsigned long long>(size_bytes >> 20));
+            }
+        }
+    }
     Vulkan::Vram::image_count.fetch_add(1, std::memory_order_relaxed);
 }
 

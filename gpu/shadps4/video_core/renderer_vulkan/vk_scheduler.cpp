@@ -422,6 +422,7 @@ void Scheduler::Finish() {
     SubmitInfo info{};
     SubmitExecution(info);
     Wait(presubmit_tick);
+    PopPendingOperations(true);
 }
 
 void Scheduler::WaitSubmitted() {
@@ -441,7 +442,13 @@ void Scheduler::Wait(u64 tick) {
     work_semaphore.Wait(tick);
 }
 
-void Scheduler::PopPendingOperations() {
+void Scheduler::DrainPendingOperations() {
+    if (num_pending_ops.load(std::memory_order_acquire) != 0) {
+        PopPendingOperations(true);
+    }
+}
+
+void Scheduler::PopPendingOperations(bool force_refresh) {
     if (num_pending_ops.load(std::memory_order_acquire) == 0) {
         return; // every draw comes here
     }
@@ -453,7 +460,8 @@ void Scheduler::PopPendingOperations() {
         return;
     }
     if (!work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
-        if ((++pending_polls & 31) != 0 && !BbToggle::Disabled(BbToggle::PendingPollLimit)) {
+        if (!force_refresh && (++pending_polls & 31) != 0 &&
+            !BbToggle::Disabled(BbToggle::PendingPollLimit)) {
             return;
         }
         work_semaphore.Refresh();

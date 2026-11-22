@@ -37,6 +37,15 @@ inline bool TestHard() {
 /// The card's video memory (Instance::CollectDeviceParameters; 0 until known).
 inline std::atomic<u64> device_memory{0};
 
+/// BB_VRAM_LEGACY=1: explicitly requested legacy behaviour (A/B tests).
+inline bool ExplicitLegacy() {
+    static const bool forced = [] {
+        const char* env = std::getenv("BB_VRAM_LEGACY");
+        return env && env[0] == '1';
+    }();
+    return forced;
+}
+
 /// BB_VRAM_LEGACY=1: the behaviour before the low-memory work (A/B tests), =0: the low-memory
 /// work on any card. Unset: the low-memory work on cards up to 8 GiB, which it was made for
 /// (above, the old behaviour ran faster in U3's Cartagena square).
@@ -82,5 +91,36 @@ inline bool Allows(u64 bytes) {
 
 inline std::atomic<bool> urgent{false}; ///< an allocation went over the budget: collect hard
 inline std::atomic<u64> failed_allocs{0}, recovered_allocs{0}, host_fallbacks{0};
+inline std::atomic<u64> reclaim_passes{0}, reclaimed_images{0}, reclaimed_bytes{0};
+
+using ReclaimFn = bool (*)(void* ctx, u64 needed_bytes, bool aggressive);
+inline ReclaimFn reclaim = nullptr;
+inline void* reclaim_ctx = nullptr;
+
+inline void SetReclaim(ReclaimFn fn, void* ctx) {
+    reclaim = fn;
+    reclaim_ctx = ctx;
+}
+
+inline void ClearReclaim(void* ctx) {
+    if (reclaim_ctx == ctx) {
+        reclaim = nullptr;
+        reclaim_ctx = nullptr;
+    }
+}
+
+/// Attempts to reclaim video memory (evict cached images, drain pending frees, trim staging)
+/// before failing or falling back on an out-of-device-memory allocation. Guarded against
+/// recursion (e.g. host staging allocations during synchronous texture readback).
+inline bool Reclaim(u64 needed_bytes, bool aggressive = false) {
+    static thread_local bool in_reclaim = false;
+    if (in_reclaim || !reclaim) {
+        return false;
+    }
+    in_reclaim = true;
+    const bool ok = reclaim(reclaim_ctx, needed_bytes, aggressive);
+    in_reclaim = false;
+    return ok;
+}
 
 } // namespace Vulkan::Vram

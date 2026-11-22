@@ -55,7 +55,8 @@ struct UniqueImage {
         : device{other.device}, allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
           allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
           image{std::exchange(other.image, VK_NULL_HANDLE)}, image_ci{std::move(other.image_ci)},
-          size_bytes{std::exchange(other.size_bytes, 0)} {}
+          size_bytes{std::exchange(other.size_bytes, 0)},
+          vram_bytes{std::exchange(other.vram_bytes, 0)} {}
     UniqueImage& operator=(UniqueImage&& other) {
         if (this == &other) return *this;
         Destroy();
@@ -65,6 +66,7 @@ struct UniqueImage {
         allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
         image_ci = std::move(other.image_ci);
         size_bytes = std::exchange(other.size_bytes, 0);
+        vram_bytes = std::exchange(other.vram_bytes, 0);
         return *this;
     }
 
@@ -87,6 +89,7 @@ public:
     vk::Image image{};
     vk::ImageCreateInfo image_ci{};
     vk::DeviceSize size_bytes{};
+    vk::DeviceSize vram_bytes{}; ///< bbport: device-local bytes counted for this image
 };
 
 struct Image {

@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_vram.h"
 #include "video_core/texture_cache/image.h"
 
 #include <algorithm>
@@ -276,6 +277,31 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
 
     VkResult result = vmaCreateImage(instance.GetAllocator(), &unsafe_image_info, &alloc_info,
                                      &unsafe_image, &frame->allocation, nullptr);
+    if (result != VK_SUCCESS) [[unlikely]] {
+        Vram::failed_allocs.fetch_add(1, std::memory_order_relaxed);
+        Vram::urgent.store(true, std::memory_order_relaxed);
+        VmaAllocationCreateInfo relaxed = alloc_info;
+        relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+        result = vmaCreateImage(instance.GetAllocator(), &unsafe_image_info, &relaxed,
+                                &unsafe_image, &frame->allocation, nullptr);
+        if (result == VK_SUCCESS) {
+            Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+            LOG_WARNING(Render_Vulkan,
+                        "Presenter: frame {}x{} exceeded device budget, allocated outside budget",
+                        width, height);
+        } else {
+            VmaAllocationCreateInfo host_ci = relaxed;
+            host_ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+            result = vmaCreateImage(instance.GetAllocator(), &unsafe_image_info, &host_ci,
+                                    &unsafe_image, &frame->allocation, nullptr);
+            if (result == VK_SUCCESS) {
+                Vram::host_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                LOG_WARNING(Render_Vulkan,
+                            "Presenter: frame {}x{} out of device memory, placed in system memory",
+                            width, height);
+            }
+        }
+    }
     if (result != VK_SUCCESS) [[unlikely]] {
         LOG_CRITICAL(Render_Vulkan, "Failed allocating texture with error {}",
                      vk::to_string(vk::Result{result}));
