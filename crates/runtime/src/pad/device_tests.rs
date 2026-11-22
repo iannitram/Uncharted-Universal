@@ -1132,7 +1132,7 @@ fn mouse_sticks_ask_the_game_for_the_turn_the_mouse_made() {
 #[test]
 fn guest_callback_table_and_exports_are_complete() {
     let table = super::hooks::table();
-    assert_eq!(table.len(), 36);
+    assert_eq!(table.len(), 44);
     let mut hooks = 0;
     for entry in table {
         let (name, pattern, skip, moved, callback, patch) = entry.parts();
@@ -1147,11 +1147,11 @@ fn guest_callback_table_and_exports_are_complete() {
         );
         assert!(skip + moved <= bytes.len(), "{name}");
     }
-    assert_eq!(hooks, 29);
+    assert_eq!(hooks, 37);
     let mut count = 0usize;
     // SAFETY: a writable count.
     let pointer = unsafe { super::hooks::runtime_guest_callbacks(&mut count) };
-    assert!(!pointer.is_null() && count == 36);
+    assert!(!pointer.is_null() && count == 44);
     for symbol in [
         "scePadInit",
         "scePadOpen",

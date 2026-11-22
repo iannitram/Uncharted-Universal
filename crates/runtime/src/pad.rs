@@ -21,6 +21,7 @@ pub mod hooks;
 pub mod host;
 pub mod input;
 pub mod read;
+#[cfg(target_arch = "x86_64")]
 pub mod u2sniper;
 
 #[cfg(test)]
