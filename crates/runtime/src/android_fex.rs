@@ -84,12 +84,21 @@ fn state() -> &'static Mutex<BridgeState> {
     STATE.get_or_init(|| Mutex::new(BridgeState::new()))
 }
 
+/// Current runtime ABI version mirrored across `android/fex_bridge.h`.
+#[no_mangle]
+pub extern "C" fn runtime_fex_abi_version() -> u32 {
+    crate::abi::ffi::uncharted_runtime_version()
+}
+
 /// Creates a new FEX guest context and returns its non-zero handle (`0` on failure).
 #[no_mangle]
 pub extern "C" fn runtime_fex_context_create(initial_fs: u64, initial_gs: u64) -> u64 {
     let mut guard = state().lock().expect("fex bridge mutex poisoned");
     let id = guard.next_id;
-    guard.next_id += 1;
+    guard.next_id = guard.next_id.checked_add(1).unwrap_or(1);
+    if guard.next_id == 0 {
+        guard.next_id = 1;
+    }
     let ctx = FexGuestContext {
         fs_base: initial_fs,
         gs_base: initial_gs,
@@ -111,7 +120,32 @@ pub extern "C" fn runtime_fex_context_destroy(handle: u64) -> i32 {
     }
 }
 
+/// Copies the current [`FexGuestContext`] snapshot for `handle` into `out_ctx`.
+/// Returns `0` on success, `-1` if `out_ctx` is null, or `-2` if `handle` is unknown.
+///
+/// # Safety
+/// `out_ctx` must be null or point to writable [`FexGuestContext`] storage.
+#[no_mangle]
+pub unsafe extern "C" fn runtime_fex_context_snapshot(
+    handle: u64,
+    out_ctx: *mut FexGuestContext,
+) -> i32 {
+    if out_ctx.is_null() {
+        return -1;
+    }
+    let guard = state().lock().expect("fex bridge mutex poisoned");
+    let Some(&ctx) = guard.contexts.get(&handle) else {
+        return -2;
+    };
+    // SAFETY: caller guarantees `out_ctx` is writable.
+    unsafe {
+        *out_ctx = ctx;
+    }
+    0
+}
+
 /// Registers a host callback for `func_id` on the FEX guest-call bridge.
+/// Returns `0` on success, or `-1` if `func` is null.
 ///
 /// # Safety
 /// `func` must remain valid for the lifetime of the bridge or until replaced, and `user_data`
@@ -119,9 +153,12 @@ pub extern "C" fn runtime_fex_context_destroy(handle: u64) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn runtime_fex_register_callback(
     func_id: u32,
-    func: FexHostCallback,
+    func: Option<FexHostCallback>,
     user_data: *mut c_void,
 ) -> i32 {
+    let Some(func) = func else {
+        return -1;
+    };
     let mut guard = state().lock().expect("fex bridge mutex poisoned");
     guard.callbacks.insert(
         func_id,
@@ -131,6 +168,17 @@ pub unsafe extern "C" fn runtime_fex_register_callback(
         },
     );
     0
+}
+
+/// Unregisters the host callback for `func_id`, returning `0` on success or `-1` if absent.
+#[no_mangle]
+pub extern "C" fn runtime_fex_unregister_callback(func_id: u32) -> i32 {
+    let mut guard = state().lock().expect("fex bridge mutex poisoned");
+    if guard.callbacks.remove(&func_id).is_some() {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Dispatches a bridged guest call (`args.func_id`) against `handle`, allowing nested callbacks
@@ -166,8 +214,8 @@ pub unsafe extern "C" fn runtime_fex_call(
     ctx.gpr[1] = call_args.scalars[1];
     ctx.gpr[2] = call_args.pointers[0];
     ctx.gpr[3] = call_args.pointers[1];
-    ctx.xmm[0] = call_args.vectors[0];
-    ctx.xmm[1] = call_args.vectors[1];
+    ctx.gpr[4..8].copy_from_slice(&call_args.scalars[2..6]);
+    ctx.xmm[0..4].copy_from_slice(&call_args.vectors[0..4]);
 
     // Invoke outside the lock so nested `runtime_fex_call` invocations do not deadlock.
     let result = (cb.func)(&mut ctx, &call_args, cb.user_data as *mut c_void);
@@ -189,12 +237,16 @@ pub unsafe extern "C" fn runtime_fex_call(
 }
 
 /// Records a guest fault from the FEX bridge for runtime crash/signal handoff.
+/// Returns `0` on success, or `-1` when `signal <= 0`.
 #[no_mangle]
 pub extern "C" fn runtime_fex_fault_handoff(
     signal: i32,
     fault_rip: u64,
     fault_address: u64,
 ) -> i32 {
+    if signal <= 0 {
+        return -1;
+    }
     let mut guard = state().lock().expect("fex bridge mutex poisoned");
     guard.last_fault = Some(FexFaultInfo {
         signal,
@@ -202,6 +254,26 @@ pub extern "C" fn runtime_fex_fault_handoff(
         fault_rip,
         fault_address,
     });
+    0
+}
+
+/// Copies the most recent fault handoff record into `out_fault`.
+/// Returns `0` on success, `-1` if `out_fault` is null, or `-2` if no fault was recorded.
+///
+/// # Safety
+/// `out_fault` must be null or point to writable [`FexFaultInfo`] storage.
+#[no_mangle]
+pub unsafe extern "C" fn runtime_fex_last_fault(out_fault: *mut FexFaultInfo) -> i32 {
+    if out_fault.is_null() {
+        return -1;
+    }
+    let Some(fault) = last_fault() else {
+        return -2;
+    };
+    // SAFETY: caller guarantees `out_fault` is writable.
+    unsafe {
+        *out_fault = fault;
+    }
     0
 }
 
@@ -222,20 +294,22 @@ mod tests {
         args: *const FexCallArgs,
         user_data: *mut c_void,
     ) -> u64 {
+        // SAFETY: test harness passes valid `ctx` and `args`.
         let ctx = unsafe { &mut *ctx };
+        // SAFETY: test harness passes valid `args`.
         let args = unsafe { &*args };
         if args.func_id == 1001 {
             // Nested call into func_id 1002.
             let handle = user_data as usize as u64;
             let nested_args = FexCallArgs {
                 func_id: 1002,
-                scalars: [7, 8, 0, 0, 0, 0],
-                pointers: [0xdead_0000, 0],
+                scalars: [7, 8, 9, 10, 11, 12],
+                pointers: [0xdead_0000, 0xbeef_0000],
                 vectors: [
                     FexVector128 { lo: 11, hi: 22 },
-                    FexVector128::default(),
-                    FexVector128::default(),
-                    FexVector128::default(),
+                    FexVector128 { lo: 33, hi: 44 },
+                    FexVector128 { lo: 55, hi: 66 },
+                    FexVector128 { lo: 77, hi: 88 },
                 ],
                 ..FexCallArgs::default()
             };
@@ -246,7 +320,35 @@ mod tests {
             );
             return nested_out + args.scalars[0] + ctx.xmm[0].lo;
         }
+        assert_eq!(ctx.gpr[0], args.scalars[0]);
+        assert_eq!(ctx.gpr[1], args.scalars[1]);
+        assert_eq!(ctx.gpr[2], args.pointers[0]);
+        assert_eq!(ctx.gpr[3], args.pointers[1]);
+        assert_eq!(ctx.gpr[4], args.scalars[2]);
+        assert_eq!(ctx.gpr[5], args.scalars[3]);
+        assert_eq!(ctx.gpr[6], args.scalars[4]);
+        assert_eq!(ctx.gpr[7], args.scalars[5]);
+        assert_eq!(ctx.xmm[0], args.vectors[0]);
+        assert_eq!(ctx.xmm[1], args.vectors[1]);
+        assert_eq!(ctx.xmm[2], args.vectors[2]);
+        assert_eq!(ctx.xmm[3], args.vectors[3]);
         args.scalars[0] + args.scalars[1] + args.pointers[0] + args.vectors[0].hi
+    }
+
+    #[test]
+    fn abi_version_and_struct_layout_match_c_header() {
+        assert_eq!(
+            runtime_fex_abi_version(),
+            crate::abi::UNCHARTED_RUNTIME_ABI_VERSION
+        );
+        assert_eq!(core::mem::size_of::<FexVector128>(), 16);
+        assert_eq!(core::mem::align_of::<FexVector128>(), 8);
+        assert_eq!(core::mem::size_of::<FexGuestContext>(), 424);
+        assert_eq!(core::mem::align_of::<FexGuestContext>(), 8);
+        assert_eq!(core::mem::size_of::<FexCallArgs>(), 136);
+        assert_eq!(core::mem::align_of::<FexCallArgs>(), 8);
+        assert_eq!(core::mem::size_of::<FexFaultInfo>(), 24);
+        assert_eq!(core::mem::align_of::<FexFaultInfo>(), 8);
     }
 
     #[test]
@@ -255,14 +357,25 @@ mod tests {
         let h2 = runtime_fex_context_create(0x3333, 0x4444);
         assert!(h1 != 0 && h2 != 0 && h1 != h2);
 
+        let mut snap1 = FexGuestContext::default();
+        let mut snap2 = FexGuestContext::default();
         unsafe {
+            assert_eq!(runtime_fex_context_snapshot(h1, &mut snap1), 0);
+            assert_eq!(runtime_fex_context_snapshot(h2, &mut snap2), 0);
+            assert_eq!((snap1.fs_base, snap1.gs_base), (0x1111, 0x2222));
+            assert_eq!((snap2.fs_base, snap2.gs_base), (0x3333, 0x4444));
+
             assert_eq!(
-                runtime_fex_register_callback(1001, test_callback, h1 as usize as *mut _),
+                runtime_fex_register_callback(1001, Some(test_callback), h1 as usize as *mut _),
                 0
             );
             assert_eq!(
-                runtime_fex_register_callback(1002, test_callback, std::ptr::null_mut()),
+                runtime_fex_register_callback(1002, Some(test_callback), std::ptr::null_mut()),
                 0
+            );
+            assert_eq!(
+                runtime_fex_register_callback(1003, None, std::ptr::null_mut()),
+                -1
             );
         }
 
@@ -284,16 +397,24 @@ mod tests {
         assert_eq!(out, 7 + 8 + 0xdead_0000 + 22 + 100 + 5);
 
         // Fault handoff + teardown.
+        assert_eq!(runtime_fex_fault_handoff(0, 0x1, 0x2), -1);
         assert_eq!(runtime_fex_fault_handoff(11, 0x4000_1234, 0xbad), 0);
-        assert_eq!(
-            last_fault(),
-            Some(FexFaultInfo {
-                signal: 11,
-                _pad: 0,
-                fault_rip: 0x4000_1234,
-                fault_address: 0xbad,
-            })
-        );
+        let expected_fault = FexFaultInfo {
+            signal: 11,
+            _pad: 0,
+            fault_rip: 0x4000_1234,
+            fault_address: 0xbad,
+        };
+        assert_eq!(last_fault(), Some(expected_fault));
+        let mut queried_fault = FexFaultInfo::default();
+        assert_eq!(unsafe { runtime_fex_last_fault(&mut queried_fault) }, 0);
+        assert_eq!(queried_fault, expected_fault);
+        assert_eq!(unsafe { runtime_fex_last_fault(std::ptr::null_mut()) }, -1);
+
+        assert_eq!(runtime_fex_unregister_callback(1001), 0);
+        assert_eq!(runtime_fex_unregister_callback(1001), -1);
+        assert_eq!(runtime_fex_unregister_callback(1002), 0);
+
         assert_eq!(runtime_fex_context_destroy(h1), 0);
         assert_eq!(runtime_fex_context_destroy(h2), 0);
         assert_eq!(runtime_fex_context_destroy(h1), -1);

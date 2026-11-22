@@ -16,6 +16,7 @@
 #include "common/assert.h"
 #include "bbport_overlay.h"
 #include "bbport_toggles.h"
+#include "bbport_video_pacing.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
 #include "common/thread.h"
@@ -127,7 +128,7 @@ void VideoOutDriver::Close(s32 handle) {
 
     // Mark as closed
     main_port.is_open = false;
-    main_port.flip_rate = 0;
+    main_port.flip_rate.store(0, std::memory_order_relaxed);
     main_port.prev_index = -1;
 
     // Clear port information
@@ -694,16 +695,15 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
 
 namespace {
 std::atomic<s64> movie_frame_ns{0};
-
-bool MovieActive(std::chrono::steady_clock::time_point now) {
-    const s64 last = movie_frame_ns.load(std::memory_order_relaxed);
-    return last && now.time_since_epoch().count() - last < 300'000'000;
-}
 } // namespace
 
 void NoteMovieFrame() {
     movie_frame_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                          std::memory_order_relaxed);
+}
+
+void ClearMovieFrame() {
+    movie_frame_ns.store(0, std::memory_order_relaxed);
 }
 
 s64 LastFlipIntervalNs() {
@@ -757,9 +757,9 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // bbport: prerecorded movies (Uncharted's cutscenes) show one video frame per vblank of
     // a 60 Hz display and played too fast at 120 Hz. While a movie is being decoded the guest
     // gets vblanks and flips at 60 Hz; gameplay keeps the configured rate.
-    const bool fast_vblank = EmulatorSettings.GetVblankFrequency() > 60;
-    constexpr std::chrono::nanoseconds movie_period{1000000000 / 60};
-    auto next_movie_vblank = std::chrono::steady_clock::now();
+    const u32 vblank_hz = EmulatorSettings.GetVblankFrequency();
+    const bool fast_vblank = vblank_hz > 60;
+    BbVideoPacing::MovieVblankPacer movie_pacer;
 
     while (!token.stop_requested()) {
         timer.Start();
@@ -774,16 +774,17 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
         const auto now = std::chrono::steady_clock::now();
-        const bool movie = fast_vblank && MovieActive(now);
-        if (movie) {
-            if (now + vblank_period / 2 < next_movie_vblank) {
-                timer.End();
-                continue;
-            }
-            next_movie_vblank = std::max(next_movie_vblank + movie_period, now - movie_period);
+        const auto movie_step = movie_pacer.Step(
+            fast_vblank, movie_frame_ns.load(std::memory_order_relaxed), now, vblank_period);
+        if (movie_step.skip_tick) {
+            timer.End();
+            continue;
         }
+        const bool movie = movie_step.active;
+        const u32 flip_divisor = BbVideoPacing::FlipVblankDivisor(
+            vblank_hz, main_port.flip_rate.load(std::memory_order_relaxed));
         const bool flip_slot = movie || !frame_limit || now >= next_flip;
-        if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
+        if (flip_slot && vblank_status.count % flip_divisor == 0) {
             const auto request = receive_request();
             if (request && frame_limit) {
                 next_flip = next_slot(next_flip);
@@ -826,7 +827,7 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             main_port.vblank_cv.notify_all();
         }
 
-        if (!immediate_flips || main_port.flip_rate != 0 || movie) {
+        if (!immediate_flips || flip_divisor != 1 || movie) {
             timer.End();
             continue;
         }
