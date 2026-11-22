@@ -74,6 +74,68 @@ int main() {
     ConfigureDlssSupport(false, "feature requirement query failed");
     assert(!s.dlss_supported && s.upscaler == UpscalerTaa);
 
+    // XeSS availability and fallback match DLSS.
+    s.upscaler = UpscalerXess;
+    ConfigureXessSupport(true, nullptr);
+    assert(s.xess_supported && s.upscaler == UpscalerXess);
+    ConfigureXessSupport(false, "libxess.dll missing");
+    assert(!s.xess_supported && s.upscaler == UpscalerFsr3);
+    assert(s.xess_problem && std::string_view{s.xess_problem.load()} == "libxess.dll missing");
+
+    // FSR 4 assets missing on an otherwise capable GPU hides FSR 4 and falls back to FSR 3.1.
+    s.upscaler = UpscalerFsr4;
+    s.fsr4_problem = nullptr;
+    ConfigureUpscalerSupport(true, false, false);
+    assert(!s.fsr4_supported && s.upscaler == UpscalerFsr3);
+    assert(s.fsr4_problem && std::string_view{s.fsr4_problem.load()}.find("assets not installed") !=
+                                 std::string_view::npos);
+
+    // RADV driver allow-list & default guard (issue #114): only devices measured clean after the
+    // protected-memory fix keep FSR 3.1 on by default; other GPUs (including PHOENIX2, NAVI31,
+    // or non-RADV drivers) turn the default off unless the player explicitly chose FSR 3.1.
+    assert(FsrDeviceValidated("AMD Radeon 780M Graphics (RADV PHOENIX), driver 26.2.0"));
+    assert(FsrDeviceValidated("AMD Radeon 8060S Graphics (RADV STRIX_HALO), driver 26.2.0"));
+    assert(!FsrDeviceValidated("AMD Radeon 740M Graphics (RADV PHOENIX2), driver 26.2.0"));
+    assert(!FsrDeviceValidated("AMD Radeon RX 7900 XTX (RADV NAVI31), driver 26.2.0"));
+    assert(!FsrDeviceValidated("AMD Radeon(TM) 780M Graphics, driver 24.10.1"));
+    assert(!FsrDeviceValidated(nullptr));
+    assert(DriverDefaultUpscaler(UpscalerFsr3, false, false) == UpscalerOff);
+    assert(DriverDefaultUpscaler(UpscalerFsr3, false, true) == UpscalerFsr3);
+    assert(DriverDefaultUpscaler(UpscalerFsr3, true, false) == UpscalerFsr3);
+
+    {
+        FILE* config = std::fopen(path.c_str(), "w");
+        assert(config);
+        std::fprintf(config, "preset=0\n");
+        std::fclose(config);
+        s.upscaler = UpscalerFsr3;
+        s.startup_upscaler = UpscalerFsr3;
+        s.upscaler_chosen = false;
+        Load();
+        assert(!s.upscaler_chosen && s.upscaler == UpscalerFsr3);
+        ConfigureDriverDefault(3 /* VK_DRIVER_ID_MESA_RADV */,
+                               "AMD Radeon 780M Graphics (RADV PHOENIX), driver 26.2.0");
+        assert(s.upscaler == UpscalerFsr3 && s.startup_upscaler == UpscalerFsr3);
+        ConfigureDriverDefault(3, "AMD Radeon 740M Graphics (RADV PHOENIX2), driver 26.2.0");
+        assert(s.upscaler == UpscalerOff && s.startup_upscaler == UpscalerOff);
+
+        // Null driver_name must not crash and must treat the device as unvalidated.
+        s.upscaler = UpscalerFsr3;
+        s.startup_upscaler = UpscalerFsr3;
+        ConfigureDriverDefault(3, nullptr);
+        assert(s.upscaler == UpscalerOff && s.startup_upscaler == UpscalerOff);
+
+        // Explicit player choice in ini survives on unvalidated drivers.
+        config = std::fopen(path.c_str(), "w");
+        assert(config);
+        std::fprintf(config, "upscaler=fsr3\n");
+        std::fclose(config);
+        Load();
+        assert(s.upscaler_chosen && s.upscaler == UpscalerFsr3);
+        ConfigureDriverDefault(3, "AMD Radeon RX 7900 XTX (RADV NAVI31), driver 26.2.0");
+        assert(s.upscaler == UpscalerFsr3);
+    }
+
     for (bool fsr4 : {false, true}) {
         for (bool fsr411 : {false, true}) {
             for (int requested = 0; requested < UpscalerCount; ++requested) {

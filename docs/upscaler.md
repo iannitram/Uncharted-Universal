@@ -377,7 +377,13 @@ now fixed by patch 0004 (`gpu/patches/fsr-vulkan/0004-ffx_vk-never-pick-a-protec
 so they are not needed for normal runs and are kept only for troubleshooting.
 
 Status of the PHOENIX / STRIX_HALO default (issue #114): the cause is the one patch 0004 fixes (FSR 3.1's
-device-local resources landed in a protected memory type). The allow-list keeps FSR 3.1 on for
-`(RADV PHOENIX)` and `(RADV STRIX_HALO)`. Still to check on a handheld: the Uncharted 1 boat-deck at 1080p
-and 1280x800 with default settings. If it is still noisy, remove the entries from `validated` in
-`gpu/shim/bbport_settings.cpp`.
+device-local resources landed in a protected memory type on RADV PHOENIX; RADV STRIX_HALO lists no
+`VK_MEMORY_PROPERTY_PROTECTED_BIT` memory types). Patch 0005 (`gpu/patches/fsr-vulkan/0005-ffx_vk_portable-never-pick-protected-or-coherent-memory.patch`)
+and `fsr411.cpp` extend the same protected / unrequested device-coherent memory-type guard to the
+remaining FSR-Vulkan portable/bridge/FSR 4 allocators. An audit of `vk_temporal_upscaler.cpp`,
+`ffx_vk.cpp`, and `ffx_fsr3upscaler.cpp` found no remaining FP16, subgroup-size-control, or
+uninitialized-resource bugs; `ConfigureDriverDefault` also guards against a null device name. The
+allow-list keeps FSR 3.1 on for `(RADV PHOENIX)` and `(RADV STRIX_HALO)`. Still to check on a
+handheld: the Uncharted 1 boat-deck at 1080p and 1280x800 with default settings (`needs-owner-device`).
+If it is still noisy, remove the entries from `validated` in `gpu/shim/bbport_settings.cpp` (and
+`FSR3_VALIDATED_DEVICES` in `crates/core/src/tune.rs`).

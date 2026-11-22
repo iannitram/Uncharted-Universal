@@ -1,0 +1,95 @@
+From 546acd1943d0b798dabf4630a0e3e73dbd8979f6 Mon Sep 17 00:00:00 2001
+From: iannitram <4624371+iannitram@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 11:04:36 -0700
+Subject: [PATCH] ffx_vk_portable: never pick protected or unrequested coherent
+ memory
+
+---
+ src/ffx_vk_fsr3_3_1_5_bridge.cpp   | 10 ++++++++--
+ src/ffx_vk_fsr3_3_1_6_framegen.cpp | 10 ++++++++--
+ src/ffx_vk_fsr3_portable.cpp       |  2 ++
+ src/ffx_vk_fsr4_v07.c              | 12 ++++++++++--
+ 4 files changed, 28 insertions(+), 6 deletions(-)
+
+diff --git a/src/ffx_vk_fsr3_3_1_5_bridge.cpp b/src/ffx_vk_fsr3_3_1_5_bridge.cpp
+index 2ac0e2e..c24fd9a 100644
+--- a/src/ffx_vk_fsr3_3_1_5_bridge.cpp
++++ b/src/ffx_vk_fsr3_3_1_5_bridge.cpp
+@@ -181,8 +181,14 @@ static uint32_t find_memory_type(VkPhysicalDevice physicalDevice, uint32_t typeB
+     VkPhysicalDeviceMemoryProperties properties{};
+     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
+     for (uint32_t index = 0; index < properties.memoryTypeCount; ++index) {
+-        if ((typeBits & (1u << index)) &&
+-            (properties.memoryTypes[index].propertyFlags & required) == required)
++        const VkMemoryPropertyFlags flags = properties.memoryTypes[index].propertyFlags;
++        if ((flags & VK_MEMORY_PROPERTY_PROTECTED_BIT) &&
++            !(required & VK_MEMORY_PROPERTY_PROTECTED_BIT))
++            continue;
++        if ((flags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) &&
++            !(required & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD))
++            continue;
++        if ((typeBits & (1u << index)) && (flags & required) == required)
+             return index;
+     }
+     return UINT32_MAX;
+diff --git a/src/ffx_vk_fsr3_3_1_6_framegen.cpp b/src/ffx_vk_fsr3_3_1_6_framegen.cpp
+index a28321d..57fb707 100644
+--- a/src/ffx_vk_fsr3_3_1_6_framegen.cpp
++++ b/src/ffx_vk_fsr3_3_1_6_framegen.cpp
+@@ -99,8 +99,14 @@ static uint32_t find_memory_type(VkPhysicalDevice physicalDevice, uint32_t bits,
+     VkPhysicalDeviceMemoryProperties properties{};
+     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &properties);
+     for (uint32_t index = 0u; index < properties.memoryTypeCount; ++index) {
+-        if ((bits & (1u << index)) != 0u &&
+-            (properties.memoryTypes[index].propertyFlags & required) == required)
++        const VkMemoryPropertyFlags flags = properties.memoryTypes[index].propertyFlags;
++        if ((flags & VK_MEMORY_PROPERTY_PROTECTED_BIT) != 0u &&
++            (required & VK_MEMORY_PROPERTY_PROTECTED_BIT) == 0u)
++            continue;
++        if ((flags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) != 0u &&
++            (required & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) == 0u)
++            continue;
++        if ((bits & (1u << index)) != 0u && (flags & required) == required)
+             return index;
+     }
+     return UINT32_MAX;
+diff --git a/src/ffx_vk_fsr3_portable.cpp b/src/ffx_vk_fsr3_portable.cpp
+index 578f9a3..2ab2986 100644
+--- a/src/ffx_vk_fsr3_portable.cpp
++++ b/src/ffx_vk_fsr3_portable.cpp
+@@ -187,6 +187,8 @@ static uint32_t findMemoryType(
+         if (!(allowedTypes & (1u << index)))
+             continue;
+         const VkMemoryPropertyFlags flags = properties.memoryTypes[index].propertyFlags;
++        if (flags & VK_MEMORY_PROPERTY_PROTECTED_BIT)
++            continue;
+         if (deviceCoherentMemoryEnabled != VK_TRUE &&
+             (flags & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD))
+             continue;
+diff --git a/src/ffx_vk_fsr4_v07.c b/src/ffx_vk_fsr4_v07.c
+index eb42c16..7520cbc 100644
+--- a/src/ffx_vk_fsr4_v07.c
++++ b/src/ffx_vk_fsr4_v07.c
+@@ -405,9 +405,17 @@ static uint32_t findMemType(VkPhysicalDevice phys, uint32_t bits, VkMemoryProper
+ {
+     VkPhysicalDeviceMemoryProperties p;
+     vkGetPhysicalDeviceMemoryProperties(phys, &p);
+-    for (uint32_t i = 0; i < p.memoryTypeCount; i++)
+-        if ((bits & (1u<<i)) && (p.memoryTypes[i].propertyFlags & f) == f)
++    for (uint32_t i = 0; i < p.memoryTypeCount; i++) {
++        VkMemoryPropertyFlags pf = p.memoryTypes[i].propertyFlags;
++        if ((pf & VK_MEMORY_PROPERTY_PROTECTED_BIT) &&
++            !(f & VK_MEMORY_PROPERTY_PROTECTED_BIT))
++            continue;
++        if ((pf & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD) &&
++            !(f & VK_MEMORY_PROPERTY_DEVICE_COHERENT_BIT_AMD))
++            continue;
++        if ((bits & (1u<<i)) && (pf & f) == f)
+             return i;
++    }
+     return UINT32_MAX;
+ }
+ 
+-- 
+2.55.0
+
