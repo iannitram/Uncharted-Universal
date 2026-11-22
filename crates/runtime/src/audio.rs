@@ -464,6 +464,7 @@ struct Port {
     out_channels: usize,
     volume: [i32; 8],
     stream: Option<Stream>,
+    put_failed: bool,
     /// The next return of `sceAudioOutOutput` ([`pace`]).
     next_deadline_ns: u64,
     level: Level,
@@ -556,6 +557,11 @@ fn speaker_count() -> usize {
             }
         ));
     }
+    if queried && *count >= 6 {
+        note(
+            "Runtime: speakers: surround mode routes dialogue to the center channel (FC); set BB_AUDIO_STEREO=1 if the physical output plays only stereo",
+        );
+    }
     *count
 }
 
@@ -588,12 +594,20 @@ fn format_name(spec: Spec) -> &'static str {
     }
 }
 
-/// The requested format first, then the [`PLAIN`] ones. Once a plain format worked, later ports
-/// start with it.
-fn open_formats(plain: &mut Option<usize>, id: usize, want: Spec) -> Option<Stream> {
+/// Tries `want` directly first (unless a prior port already locked into [`PLAIN`]), then falls
+/// back to [`PLAIN`] stereo S16. When an 8-channel port falls back to stereo [`PLAIN`], it
+/// returns 2 output channels so [`fold`] mixes center dialogue into L/R at -3 dB instead of
+/// relying on SDL's quieter surround downmix.
+fn open_formats_with<T>(
+    plain: &mut Option<usize>,
+    id: usize,
+    layout_channels: usize,
+    want: Spec,
+    mut open: impl FnMut(Spec, Option<Spec>) -> Option<T>,
+) -> Option<(T, usize)> {
     if plain.is_none() {
-        if let Some(stream) = device::open(want, None) {
-            return Some(stream);
+        if let Some(stream) = open(want, None) {
+            return Some((stream, want.channels));
         }
         note(&format!(
             "Runtime: audio port {id}: SDL could not open the device as {} ch {} {} Hz ({})",
@@ -603,14 +617,24 @@ fn open_formats(plain: &mut Option<usize>, id: usize, want: Spec) -> Option<Stre
             device::error()
         ));
     }
-    for (index, spec) in PLAIN.iter().enumerate().skip(plain.unwrap_or(0)) {
-        if let Some(stream) = device::open(*spec, Some(want)) {
+    let out_channels = if layout_channels == 8 {
+        2
+    } else {
+        want.channels
+    };
+    let input = Spec {
+        channels: out_channels,
+        ..want
+    };
+    for (index, &spec) in PLAIN.iter().enumerate().skip(plain.unwrap_or(0)) {
+        let source = (spec != input).then_some(input);
+        if let Some(stream) = open(spec, source) {
             *plain = Some(index);
             note(&format!(
                 "Runtime: audio port {id}: opened the device as stereo S16 {} Hz instead (SDL converts the game's audio)",
                 spec.freq
             ));
-            return Some(stream);
+            return Some((stream, out_channels));
         }
         note(&format!(
             "Runtime: audio port {id}: SDL could not open the device as stereo S16 {} Hz either ({})",
@@ -621,11 +645,27 @@ fn open_formats(plain: &mut Option<usize>, id: usize, want: Spec) -> Option<Stre
     None
 }
 
+/// The requested format first, then the [`PLAIN`] ones. Once a plain format worked, later ports
+/// start with it.
+fn open_formats(
+    plain: &mut Option<usize>,
+    id: usize,
+    layout_channels: usize,
+    want: Spec,
+) -> Option<(Stream, usize)> {
+    open_formats_with(plain, id, layout_channels, want, device::open)
+}
+
 /// The stream of a new port: the requested format, the plain formats, then (once per process,
 /// when the user did not pick a backend) SDL's DirectSound driver in place of WASAPI. `None`:
 /// the port runs on the timer sink.
-fn open_stream(table: &mut Table, id: usize, want: Spec) -> Option<Stream> {
-    let stream = open_formats(&mut table.plain, id, want);
+fn open_stream(
+    table: &mut Table,
+    id: usize,
+    layout_channels: usize,
+    want: Spec,
+) -> Option<(Stream, usize)> {
+    let stream = open_formats(&mut table.plain, id, layout_channels, want);
     if stream.is_some()
         || table.switched
         || table.explicit_driver
@@ -675,7 +715,7 @@ fn open_stream(table: &mut Table, id: usize, want: Spec) -> Option<Stream> {
         return None;
     }
     table.plain = None;
-    let stream = open_formats(&mut table.plain, id, want);
+    let stream = open_formats(&mut table.plain, id, layout_channels, want);
     if stream.is_some() {
         note(&format!(
             "Runtime: audio port {id}: sound works on the directsound driver"
@@ -747,6 +787,7 @@ fn open(kind: i32, length: u32, freq: u32, param: u32) -> i32 {
         out_channels: 0,
         volume: [VOLUME_0DB; 8],
         stream: None,
+        put_failed: false,
         next_deadline_ns: 0,
         level: Level::default(),
         dump: None,
@@ -757,19 +798,49 @@ fn open(kind: i32, length: u32, freq: u32, param: u32) -> i32 {
     if sdl_audio(&mut table) {
         // A stereo-only game mix leaves the surround channels empty: SDL's own 7.1 to stereo
         // downmix scales the front pair by about 0.3 (far too quiet), so fold here instead.
-        port.out_channels = if layout.channels == 8 {
+        let requested_channels = if layout.channels == 8 {
             speaker_count()
         } else {
             layout.channels
         };
         let want = Spec {
             float: layout.float,
-            channels: port.out_channels,
+            channels: requested_channels,
             freq: RATE as i32,
         };
-        port.stream = open_stream(&mut table, id, want);
-        match &port.stream {
-            Some(stream) => stream.resume(),
+        match open_stream(&mut table, id, layout.channels, want) {
+            Some((stream, out_channels)) => {
+                port.out_channels = out_channels;
+                if !stream.resume() {
+                    warn(&format!(
+                        "Runtime: audio port {id}: SDL_ResumeAudioStreamDevice failed ({})",
+                        device::error()
+                    ));
+                }
+                if let Some((src, dst)) = stream.format() {
+                    if dst.channels != out_channels
+                        || dst.freq != RATE as i32
+                        || dst.float != layout.float
+                    {
+                        note(&format!(
+                            "Runtime: audio port {id}: SDL stream {} ch {} {} Hz -> device {} ch {} {} Hz",
+                            src.channels,
+                            format_name(src),
+                            src.freq,
+                            dst.channels,
+                            format_name(dst),
+                            dst.freq
+                        ));
+                    }
+                    if dst.channels < out_channels {
+                        warn(&format!(
+                            "Runtime: audio port {id}: device accepted {} ch for {out_channels} ch output (center/surround channels may be attenuated or dropped)",
+                            dst.channels
+                        ));
+                    }
+                }
+                port.stream = Some(stream);
+            }
             None => warn(&format!(
                 "Runtime: SDL audio stream failed ({}); port {id} uses the timer sink",
                 device::error()
@@ -915,14 +986,22 @@ fn output_buffer(id: usize, port: &mut Port, data: &[u8], pace_port: bool) {
         };
         let buffer = queue.len() as i32;
         let silence = port.level.step(stream.queued(), buffer, period);
+        let mut put_ok = true;
         if silence > 0 {
             static SILENCE: [u8; MAX_FRAMES * 8 * 4] = [0; MAX_FRAMES * 8 * 4];
-            stream.put(&SILENCE[..silence as usize]);
+            put_ok &= stream.put(&SILENCE[..silence as usize]);
         }
         port.next_deadline_ns = port
             .next_deadline_ns
             .wrapping_add(port.level.adjust_ns as u64);
-        stream.put(queue);
+        put_ok &= stream.put(queue);
+        if !put_ok && !port.put_failed {
+            port.put_failed = true;
+            warn(&format!(
+                "Runtime: audio port {id}: SDL_PutAudioStreamData failed ({})",
+                device::error()
+            ));
+        }
     }
     port.converted = converted;
 }
@@ -1610,5 +1689,110 @@ mod tests {
             let last: extern "sysv64" fn(i32, *mut u64) -> i32 = std::mem::transmute(last);
             assert_eq!(last(handle, std::ptr::null_mut()), ERR_NOT_OPENED);
         }
+    }
+
+    #[test]
+    fn open_formats_folds_8ch_to_stereo_when_falling_back_to_plain() {
+        let mut plain = None;
+        let mut calls = Vec::new();
+        let want_8ch = Spec {
+            float: true,
+            channels: 8,
+            freq: RATE as i32,
+        };
+        let (_, out_channels) = open_formats_with(&mut plain, 0, 8, want_8ch, |dev, src| {
+            calls.push((dev, src));
+            (dev == PLAIN[0]).then_some(())
+        })
+        .unwrap();
+        assert_eq!(plain, Some(0));
+        assert_eq!(
+            out_channels, 2,
+            "PLAIN is stereo: 8ch ports fold down to 2ch here instead of using SDL surround downmix"
+        );
+        assert_eq!(
+            calls,
+            vec![
+                (want_8ch, None),
+                (
+                    PLAIN[0],
+                    Some(Spec {
+                        float: true,
+                        channels: 2,
+                        freq: RATE as i32
+                    })
+                ),
+            ]
+        );
+
+        // Once PLAIN[0] is locked, a 5.1-wanting 8ch S16 port also folds to 2ch and needs no
+        // SDL conversion at all (Spec matches PLAIN[0]).
+        calls.clear();
+        let want_6ch_s16 = Spec {
+            float: false,
+            channels: 6,
+            freq: RATE as i32,
+        };
+        let (_, out_channels) = open_formats_with(&mut plain, 1, 8, want_6ch_s16, |dev, src| {
+            calls.push((dev, src));
+            (dev == PLAIN[0]).then_some(())
+        })
+        .unwrap();
+        assert_eq!(out_channels, 2);
+        assert_eq!(calls, vec![(PLAIN[0], None)]);
+
+        // A mono (voice/personal) port falling back to PLAIN keeps out_channels=1 so SDL upmixes.
+        calls.clear();
+        let want_1ch = Spec {
+            float: true,
+            channels: 1,
+            freq: RATE as i32,
+        };
+        let (_, out_channels) = open_formats_with(&mut plain, 9, 1, want_1ch, |dev, src| {
+            calls.push((dev, src));
+            (dev == PLAIN[0]).then_some(())
+        })
+        .unwrap();
+        assert_eq!(out_channels, 1);
+        assert_eq!(calls, vec![(PLAIN[0], Some(want_1ch))]);
+
+        // Direct 8ch open succeeds without fallback and preserves 8ch output.
+        let mut plain_direct = None;
+        let (_, out_channels) = open_formats_with(&mut plain_direct, 0, 8, want_8ch, |dev, src| {
+            (dev == want_8ch && src.is_none()).then_some(())
+        })
+        .unwrap();
+        assert_eq!(plain_direct, None);
+        assert_eq!(out_channels, 8);
+    }
+
+    #[test]
+    fn fold_preserves_ps4_center_dialogue_across_speaker_layouts() {
+        // PS4 7.1 order: L(0), R(1), C(2, dialogue), LFE(3), SL(4), SR(5), BL(6), BR(7).
+        let mut converted = Vec::new();
+        let mut folded = Vec::new();
+
+        // F32 7.1 with signal only on PS4 Center (index 2).
+        let ps4_f32 = f32s(&[0.0, 0.0, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        convert(&ps4_f32, Layout::of(5), 1, &[VOLUME_0DB; 8], &mut converted);
+        fold(&converted, true, 1, 2, &mut folded);
+        assert_eq!(
+            folded,
+            f32s(&[0.8 * MINUS_3_DB, 0.8 * MINUS_3_DB]),
+            "stereo fold mixes PS4 center dialogue into L and R at -3 dB"
+        );
+        fold(&converted, true, 1, 6, &mut folded);
+        assert_eq!(
+            folded,
+            f32s(&[0.0, 0.0, 0.8, 0.0, 0.0, 0.0]),
+            "5.1 fold keeps PS4 center dialogue in FC"
+        );
+
+        // S16 7.1 with signal only on PS4 Center (index 2).
+        let ps4_s16 = s16(&[0, 0, 16384, 0, 0, 0, 0, 0]);
+        convert(&ps4_s16, Layout::of(2), 1, &[VOLUME_0DB; 8], &mut converted);
+        fold(&converted, false, 1, 2, &mut folded);
+        let expected_s16 = ((0.5 * MINUS_3_DB) * 32767.0) as i16;
+        assert_eq!(folded, s16(&[expected_s16, expected_s16]));
     }
 }

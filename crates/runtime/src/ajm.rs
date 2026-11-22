@@ -682,6 +682,12 @@ impl Instance {
         self.at9 = Some(decoder);
         self.frames = 0;
         self.superframe_remain = self.info.superframe_size as u32;
+        if !self.initialized {
+            warn(&format!(
+                "Runtime: Ajm ATRAC9 init failed (config {:02x?})",
+                self.config
+            ));
+        }
         if trace() {
             note(&format!(
                 "Audio trace: ATRAC9 init {}: {} ch, {} Hz, frame {} samples, {} frames/superframe, superframe {} bytes, format {}, flags {:#x}",
@@ -882,9 +888,12 @@ impl Instance {
     }
 
     fn mp3_reset(&mut self) {
-        if let Some(decoder) = self.mp3.as_mut() {
-            decoder.reset();
-        }
+        // Drop the decoder instead of calling `MpaDecoder::reset()`, which keeps its internal
+        // `AudioBuffer` bound to the previous `SignalSpec` and fails every frame if a reused
+        // instance switches channel count (mono/stereo) or sample rate.
+        self.mp3 = None;
+        self.mp3_channels = 0;
+        self.mp3_rate = 0;
     }
 
     /// One MP3 frame of `fr.frame_size` bytes at the start of the input; returns result flags
@@ -898,6 +907,17 @@ impl Instance {
     ) -> (u32, u32) {
         let size = fr.frame_size as usize;
         let head = &input[..size];
+        if self.mp3.is_some()
+            && self.mp3_channels != 0
+            && (self.mp3_channels != fr.num_channels || self.mp3_rate != fr.sample_rate)
+        {
+            self.mp3_reset();
+            if !self.mp3_open() {
+                *internal = -1;
+                *input = &input[size..];
+                return (0, 0);
+            }
+        }
         self.mp3_header = u32::from_be_bytes([head[0], head[1], head[2], head[3]]);
         self.mp3_channels = fr.num_channels;
         self.mp3_rate = fr.sample_rate;
@@ -916,7 +936,13 @@ impl Instance {
                     planar.copy_planar_ref(buffer);
                     Some((planar.samples().to_vec(), frames, spec.channels.count()))
                 }
-                Err(_) => {
+                Err(err) => {
+                    if trace() {
+                        note(&format!(
+                            "Audio trace: Ajm MP3 decode error ({} ch, {} Hz): {err}",
+                            fr.num_channels, fr.sample_rate
+                        ));
+                    }
                     *internal = -1;
                     None
                 }

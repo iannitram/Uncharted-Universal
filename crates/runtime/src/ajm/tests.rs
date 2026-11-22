@@ -919,6 +919,73 @@ fn a_corrupt_mp3_body_never_aborts_the_job() {
     );
 }
 
+#[test]
+fn mp3_reset_and_midstream_format_change_decode_different_channel_counts_and_rates() {
+    let (mut ajm, context, instance) = rig(0, REVISION);
+    let stereo = silent_frame(STEREO, 417);
+    let mono = silent_frame(MONO, 417);
+    // MPEG-2 Layer III: 22050 Hz, 80 kbps, stereo, 576 samples/ch (261 bytes).
+    let mpeg2_stereo = silent_frame([0xff, 0xf3, 0x90, 0x00], 261);
+
+    let mut output = vec![0u8; 4608];
+    let side = run(
+        &mut ajm,
+        context,
+        instance,
+        SIDEBAND_STREAM,
+        &stereo,
+        &mut output,
+    );
+    assert_eq!(u32_of(&side, 0), 0);
+    assert_eq!(u32_of(&side, 4), 0);
+    assert_eq!(u32_of(&side, 12), 1152 * 2 * 2);
+
+    // Reset the instance and feed a mono 44100 Hz frame: MpaDecoder must accept the new spec.
+    let ctrl_side = [0u8; 8];
+    let reset_job = build_control(
+        instance,
+        CONTROL_RESET,
+        ChunkBuffer::default(),
+        buffer(&ctrl_side),
+        0,
+    );
+    ajm.batch_start(context, &reset_job).unwrap();
+
+    let mut output = vec![0u8; 4608];
+    let side = run(
+        &mut ajm,
+        context,
+        instance,
+        SIDEBAND_STREAM | SIDEBAND_FORMAT,
+        &mono,
+        &mut output,
+    );
+    assert_eq!(u32_of(&side, 0), 0);
+    assert_eq!(u32_of(&side, 4), 0, "mono after reset must not error");
+    assert_eq!(u32_of(&side, 12), 1152 * 2, "1152 mono S16 samples");
+    assert_eq!(u32_of(&side[24..48], 0), 1, "mono channel count");
+
+    // Mid-stream format change without CONTROL_RESET (mono 44100 -> MPEG-2 stereo 22050).
+    let mut output = vec![0u8; 4608];
+    let side = run(
+        &mut ajm,
+        context,
+        instance,
+        SIDEBAND_STREAM | SIDEBAND_FORMAT,
+        &mpeg2_stereo,
+        &mut output,
+    );
+    assert_eq!(u32_of(&side, 0), 0);
+    assert_eq!(
+        u32_of(&side, 4),
+        0,
+        "mid-stream rate/channel change must not error"
+    );
+    assert_eq!(u32_of(&side, 12), 576 * 2 * 2, "576 stereo S16 samples");
+    assert_eq!(u32_of(&side[24..48], 0), 2);
+    assert_eq!(u32_of(&side[24..48], 8), 22050);
+}
+
 // ---- exports ----
 
 #[test]

@@ -30,9 +30,9 @@ mod sdl {
     use super::Spec;
     use sdl3_sys::audio::{
         SDL_AudioSpec, SDL_AudioStream, SDL_DestroyAudioStream, SDL_GetAudioDeviceFormat,
-        SDL_GetAudioStreamQueued, SDL_GetCurrentAudioDriver, SDL_OpenAudioDeviceStream,
-        SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice, SDL_SetAudioStreamFormat,
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_F32, SDL_AUDIO_S16,
+        SDL_GetAudioStreamFormat, SDL_GetAudioStreamQueued, SDL_GetCurrentAudioDriver,
+        SDL_OpenAudioDeviceStream, SDL_PutAudioStreamData, SDL_ResumeAudioStreamDevice,
+        SDL_SetAudioStreamFormat, SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, SDL_AUDIO_F32, SDL_AUDIO_S16,
     };
     use sdl3_sys::error::SDL_GetError;
     use sdl3_sys::hints::{SDL_GetHint, SDL_ResetHint, SDL_SetHint, SDL_HINT_AUDIO_DRIVER};
@@ -58,6 +58,14 @@ mod sdl {
         }
     }
 
+    fn from_sdl(spec: SDL_AudioSpec) -> Spec {
+        Spec {
+            float: spec.format == SDL_AUDIO_F32,
+            channels: usize::try_from(spec.channels).unwrap_or(0),
+            freq: spec.freq,
+        }
+    }
+
     /// One SDL audio stream bound to the default playback device; destroyed on drop.
     pub(in crate::audio) struct Stream(NonNull<SDL_AudioStream>);
 
@@ -72,17 +80,30 @@ mod sdl {
         }
 
         /// Queues `data` (a whole number of frames of the stream's input format).
-        pub fn put(&self, data: &[u8]) {
+        pub fn put(&self, data: &[u8]) -> bool {
             // SAFETY: a live stream; SDL copies `data.len()` bytes from `data`.
             unsafe {
                 SDL_PutAudioStreamData(self.0.as_ptr(), data.as_ptr().cast(), data.len() as c_int)
-            };
+            }
         }
 
         /// Starts the device: SDL opens it paused.
-        pub fn resume(&self) {
+        pub fn resume(&self) -> bool {
             // SAFETY: a live stream.
-            unsafe { SDL_ResumeAudioStreamDevice(self.0.as_ptr()) };
+            unsafe { SDL_ResumeAudioStreamDevice(self.0.as_ptr()) }
+        }
+
+        /// The input and device specs SDL negotiated for this stream.
+        pub fn format(&self) -> Option<(Spec, Spec)> {
+            let mut src = SDL_AudioSpec {
+                format: SDL_AUDIO_S16,
+                channels: 0,
+                freq: 0,
+            };
+            let mut dst = src;
+            // SAFETY: a live stream and writable `SDL_AudioSpec` structs.
+            let ok = unsafe { SDL_GetAudioStreamFormat(self.0.as_ptr(), &mut src, &mut dst) };
+            ok.then(|| (from_sdl(src), from_sdl(dst)))
         }
     }
 
@@ -180,11 +201,15 @@ mod none {
             match *self {}
         }
 
-        pub fn put(&self, _data: &[u8]) {
+        pub fn put(&self, _data: &[u8]) -> bool {
             match *self {}
         }
 
-        pub fn resume(&self) {
+        pub fn resume(&self) -> bool {
+            match *self {}
+        }
+
+        pub fn format(&self) -> Option<(Spec, Spec)> {
             match *self {}
         }
     }
