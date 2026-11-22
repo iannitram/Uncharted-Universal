@@ -31,6 +31,16 @@ public:
     s32 Reset();
 
 private:
+    struct SwsCache {
+        SwsContext* ctx = nullptr;
+        int src_w = 0, src_h = 0, src_fmt = -1;
+        int dst_w = 0, dst_h = 0, dst_fmt = -1;
+        int flags = 0;
+
+        ~SwsCache();
+        SwsContext* Get(int sw, int sh, int sfmt, int dw, int dh, int dfmt, int sflags);
+    };
+
     AVFrame* ConvertNV12Frame(AVFrame& frame);
     /// Linux fork: a frame larger than the decoder's configured maximum, scaled down to fit it.
     AVFrame* FitToMaxSize(AVFrame& frame);
@@ -38,17 +48,20 @@ private:
     /// size the movie player reads it with, into the scratch frame of the game's frame buffer at
     /// base. True when written.
     bool WriteMovieCopy(const AVFrame& frame, u64 base);
+    /// Normalizes a received frame and emits it into the guest buffer and output info.
+    void EmitFrame(AVFrame* frame, OrbisVideodec2FrameBuffer& frame_buffer,
+                   OrbisVideodec2OutputInfo& output_info);
     /// Copies a decoded frame into the game's buffer and fills the output info (Decode, Flush).
     void Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer,
                 OrbisVideodec2OutputInfo& output_info, u32 height_align = 16);
 
 private:
     AVCodecContext* m_codec_context = nullptr;
-    SwsContext* m_sws_context = nullptr;
-    SwsContext* m_scale_context = nullptr;
+    SwsCache m_sws_cache;
+    SwsCache m_scale_cache;
     AVFrame* m_scaled = nullptr;
     std::vector<u8> m_movie_copy;
-    SwsContext* m_fit_context = nullptr;
+    SwsCache m_fit_cache;
     u32 m_max_width = 0;
     u32 m_max_height = 0;
 };
