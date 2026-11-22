@@ -11,6 +11,7 @@ work directory; this file records their identifiers and upstream notice paths.
 | Component | Pinned source | License | Notice location |
 | --- | --- | --- | --- |
 | FEXCore and pinned submodules | [FEX](https://github.com/FEX-Emu/FEX/tree/f2b679f6028ce1c38875233aecfcf5d3f8ebecec) | MIT; bundled projects have individual notices | `FEX/LICENSE`, `FEX/External/*` |
+| Synthetic FEX guest smoke design reference | [zenithblue-oss/shadps4-arm64](https://github.com/zenithblue-oss/shadps4-arm64/tree/be6bc2e9c60799e071dd2fafa6216e8d80ec619c) | MIT (`LICENSES/MIT.txt`) | `LICENSES/MIT.txt` (authored `android/synthetic/` smoke checks retain repo `GPL-2.0-only`, `fexcore_smoke_entry.cpp` uses MIT matching FEX) |
 | Mesa Turnip | [Mesa](https://gitlab.freedesktop.org/mesa/mesa/-/tree/mesa-26.2.5) | MIT, with per-file notices | `mesa/docs/license.rst`, source-file SPDX headers |
 | libadrenotools | [bylaws/libadrenotools](https://github.com/bylaws/libadrenotools/tree/8fae8ce254dfc1344527e05301e43f37dea2df80) | BSD-2-Clause | `libadrenotools/LICENSE` |
 | SDL 3 | [SDL](https://github.com/libsdl-org/SDL/tree/release-3.4.18) | Zlib | `SDL/LICENSE.txt` |

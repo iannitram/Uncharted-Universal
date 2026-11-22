@@ -174,6 +174,9 @@ jobs:
         with:
           cache-bin: false
       - run: cargo build -p uncharted_runtime --lib --target aarch64-linux-android
+      - run: cargo test -p uncharted_runtime --lib android_fex
+      - name: Run synthetic FEX guest smoke harness (host + NDK cross-check if NDK installed)
+        run: bash android/scripts/verify_fex_smoke.sh
 
   ios:
     # The runtime builds as a library for iOS (ROADMAP 8.02, #407); the iOS app links it (8.05).
