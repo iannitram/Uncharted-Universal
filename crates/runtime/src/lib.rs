@@ -76,6 +76,7 @@ pub mod content;
 /// cbindgen:ignore
 #[cfg(all(target_arch = "x86_64", any(target_os = "linux", windows)))]
 pub mod cpu_patch;
+/// cbindgen:ignore
 pub mod crash;
 pub mod display;
 #[cfg(all(

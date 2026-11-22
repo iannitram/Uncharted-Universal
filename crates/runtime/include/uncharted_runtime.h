@@ -474,6 +474,11 @@ void runtime_set_main_tls(const void *data, uint64_t filesz, uint64_t memsz, uin
 #endif
 
 #if (defined(__linux__) && defined(__x86_64__))
+// Windows: returns the TEB `TlsSlots` byte offset (`gs:[offset]`) holding the guest TCB.
+uint32_t runtime_thread_tcb_offset(void);
+#endif
+
+#if (defined(__linux__) && defined(__x86_64__))
 // # Safety
 // `name` must be null or a valid NUL-terminated C string.
 void runtime_thread_attach_host(const char *name);
