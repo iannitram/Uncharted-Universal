@@ -33,6 +33,7 @@
 #include "bbport_threads.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_vram.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/texture_cache/image_view.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -278,9 +279,25 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     static Rasterizer* busy_check;
     busy_check = this;
     g_draw_pipe_busy = [] { return busy_check->OnStageA() && !busy_check->DrawPipeIdle(); };
+    Vulkan::Vram::SetReclaim(
+        [](void* ctx, u64 needed_bytes, bool aggressive) {
+            return static_cast<Rasterizer*>(ctx)->ReclaimVideoMemory(needed_bytes, aggressive);
+        },
+        this);
 }
 
-Rasterizer::~Rasterizer() = default;
+Rasterizer::~Rasterizer() {
+    Vulkan::Vram::ClearReclaim(this);
+}
+
+bool Rasterizer::ReclaimVideoMemory(u64 needed_bytes, bool aggressive) {
+    if (!IsGpuSideThread()) {
+        Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
+        return false;
+    }
+    DrainDrawPipe();
+    return texture_cache.ReclaimMemory(needed_bytes, aggressive) > 0;
+}
 
 inline const AmdGpu::Regs& Rasterizer::Regs() const {
     return stage_regs ? *stage_regs : liverpool->regs;

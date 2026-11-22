@@ -1760,20 +1760,18 @@ u64 BufferCache::AllocateArenaMemory(u64 size, vk::DeviceMemory& memory) {
     if (const auto offset = carve(false)) {
         return *offset;
     }
-    if (host_arena_active) {
-        if (const auto offset = carve(true)) {
-            return *offset;
-        }
-    }
     vk::MemoryAllocateInfo alloc_info = {
         .allocationSize = std::max(size, chunk_size),
         .memoryTypeIndex = arena_memory_type_index,
     };
     vk::Result result = vk::Result::eErrorOutOfDeviceMemory;
-    if (!host_arena_active) {
-        for (const u64 try_size : {std::max(size, chunk_size), size}) {
+    const auto try_alloc_device = [&](bool check_budget) -> bool {
+        const std::array<u64, 2> sizes = {std::max(size, chunk_size), size};
+        const size_t count = (sizes[0] == sizes[1]) ? 1 : 2;
+        for (size_t i = 0; i < count; ++i) {
+            const u64 try_size = sizes[i];
             alloc_info.allocationSize = try_size;
-            if (!Vulkan::Vram::Allows(try_size)) {
+            if (check_budget && !Vulkan::Vram::Allows(try_size)) {
                 continue;
             }
             const auto r = instance.GetDevice().allocateMemory(alloc_info);
@@ -1783,40 +1781,77 @@ u64 BufferCache::AllocateArenaMemory(u64 size, vk::DeviceMemory& memory) {
                 Vulkan::Vram::arena_bytes.fetch_add(try_size, std::memory_order_relaxed);
                 Vulkan::Vram::arena_count.fetch_add(1, std::memory_order_relaxed);
                 memory = r.value;
+                return true;
+            }
+        }
+        return false;
+    };
+    if (!host_arena_active && try_alloc_device(true)) {
+        return 0;
+    }
+    if (host_arena_active) {
+        if (const auto offset = carve(true)) {
+            return *offset;
+        }
+        // Cheaply check if device memory became available again before adding another host chunk.
+        if (try_alloc_device(true)) {
+            return 0;
+        }
+    } else {
+        Vulkan::Vram::failed_allocs.fetch_add(1, std::memory_order_relaxed);
+        Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
+        for (const bool aggressive : {false, true}) {
+            if (Vulkan::Vram::Reclaim(size, aggressive) && try_alloc_device(true)) {
+                Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
                 return 0;
             }
         }
-    }
-    Vulkan::Vram::failed_allocs.fetch_add(1, std::memory_order_relaxed);
-    Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
-    if (arena_host_memory_type_index == ~0u && !Vulkan::Vram::Strict() && !host_arena_active) {
-        // Sparse binds cannot use system memory on this driver (NVIDIA): go over the budget and
-        // let the driver page (the simulated card, BB_TEST_VRAM_MB, is let through here).
-        alloc_info.allocationSize = std::max(size, chunk_size);
-        const auto r = instance.GetDevice().allocateMemory(alloc_info);
-        if (r.result == vk::Result::eSuccess) {
-            arena_chunks.push_back({r.value, alloc_info.allocationSize, size, false});
-            Vulkan::Vram::arena_bytes.fetch_add(alloc_info.allocationSize,
-                                                std::memory_order_relaxed);
-            Vulkan::Vram::arena_count.fetch_add(1, std::memory_order_relaxed);
-            Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
-            memory = r.value;
-            return 0;
+        if (arena_host_memory_type_index == ~0u && !Vulkan::Vram::Strict()) {
+            // Sparse binds cannot use system memory on this driver (NVIDIA): go over the budget
+            // and let the driver page (the simulated card, BB_TEST_VRAM_MB, is let through here).
+            if (try_alloc_device(false)) {
+                Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                return 0;
+            }
         }
-        result = r.result;
+        if (const auto offset = carve(true)) {
+            return *offset;
+        }
     }
-    ASSERT_MSG(arena_host_memory_type_index != ~0u && !Vulkan::Vram::Legacy(),
+    if (arena_host_memory_type_index == ~0u || Vulkan::Vram::ExplicitLegacy()) {
+        std::printf("Buffer cache: video memory full: no room for %llu MiB of arena (%s); "
+                    "only VRAM can hold sparse arena memory on this GPU\n",
+                    static_cast<unsigned long long>(size >> 20), vk::to_string(result).c_str());
+        instance.ReportMemory("OOM");
+        std::fflush(stdout);
+    }
+    ASSERT_MSG(arena_host_memory_type_index != ~0u && !Vulkan::Vram::ExplicitLegacy(),
                "Failed allocating arena memory: vk::Result={}", vk::to_string(result));
     alloc_info.memoryTypeIndex = arena_host_memory_type_index;
-    alloc_info.allocationSize = std::max(size, chunk_size);
+    vk::DeviceMemory host_memory{};
+    u64 host_alloc_size = 0;
+    vk::Result host_result = vk::Result::eErrorOutOfDeviceMemory;
+    const std::array<u64, 2> host_sizes = {std::max(size, chunk_size), size};
+    const size_t host_count = (host_sizes[0] == host_sizes[1]) ? 1 : 2;
+    for (size_t i = 0; i < host_count; ++i) {
+        alloc_info.allocationSize = host_sizes[i];
+        const auto r = instance.GetDevice().allocateMemory(alloc_info);
+        host_result = r.result;
+        if (host_result == vk::Result::eSuccess) {
+            host_memory = r.value;
+            host_alloc_size = host_sizes[i];
+            break;
+        }
+    }
+    ASSERT_MSG(host_result == vk::Result::eSuccess,
+               "Failed allocating host fallback arena memory: vk::Result={}",
+               vk::to_string(host_result));
     host_arena_active = true;
     Vulkan::Vram::host_fallbacks.fetch_add(1, std::memory_order_relaxed);
     Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
-    const auto host_memory = Vulkan::Check(instance.GetDevice().allocateMemory(alloc_info));
-    arena_chunks.push_back({host_memory, alloc_info.allocationSize, size, true});
+    arena_chunks.push_back({host_memory, host_alloc_size, size, true});
     const u64 host_total =
-        Vulkan::Vram::arena_host_bytes.fetch_add(alloc_info.allocationSize) +
-        alloc_info.allocationSize;
+        Vulkan::Vram::arena_host_bytes.fetch_add(host_alloc_size) + host_alloc_size;
     std::printf("Buffer cache: no video memory for %llu MiB of arena (%s), using system memory "
                 "(%llu MiB there so far)\n",
                 static_cast<unsigned long long>(size >> 20), vk::to_string(result).c_str(),

@@ -325,6 +325,9 @@ public:
     /// Runs the garbage collector.
     void RunGarbageCollector();
 
+    /// Evicts cached images and drains completed frees/staging to reclaim at least target_bytes.
+    u64 ReclaimMemory(u64 target_bytes, bool aggressive);
+
     template <typename Func>
     void ForEachImageInRegion(VAddr cpu_addr, size_t size, Func&& func) {
         using FuncReturn = typename std::invoke_result<Func, ImageId, Image&>::type;
@@ -468,7 +471,8 @@ private:
     /// bbport: whether the image is such a result: at most 4x4 pixels, linear or 1x1.
     [[nodiscard]] static bool TinyReadback(const Image& image);
     PageTable page_table;
-    std::mutex mutex;
+    std::recursive_mutex mutex;
+    const ImageIds* protected_image_ids = nullptr;
     /// gow3 (#138): under `mutex`. GPU-modified images hold the written data themselves.
     void ApplyBackingWrites();
     std::mutex backing_writes_mutex;

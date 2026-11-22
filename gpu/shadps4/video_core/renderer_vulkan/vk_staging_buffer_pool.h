@@ -49,6 +49,9 @@ public:
     /// Releases idle memory.
     void TickFrame();
 
+    /// Releases any GPU-idle device-local staging blocks/buffers immediately (OOM recovery).
+    u64 ReleaseIdleDeviceMemory();
+
 private:
     struct Block {
         std::unique_ptr<VideoCore::StreamBuffer> buffer;

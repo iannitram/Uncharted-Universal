@@ -59,6 +59,9 @@ public:
         return texture_cache;
     }
 
+    /// Attempts to reclaim video memory (evict cached images, finish GPU work, trim scratch).
+    bool ReclaimVideoMemory(u64 needed_bytes, bool aggressive);
+
     void Draw(bool is_indexed, u32 index_offset = 0, const PreparedDraw* prepared = nullptr);
 
     /// bbport: draw preparation workers (vk_draw_prep.h), fed and consumed by Liverpool.

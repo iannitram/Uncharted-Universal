@@ -1156,7 +1156,8 @@ void Instance::ReportMemory(const char* why) const {
     }
     std::printf("VRAM%s%s: allocs %llu+%llu (limit %u); process %llu MiB, driver budget %llu of %llu MiB; VMA blocks %llu MiB, "
                 "allocations %llu MiB; images %llu (%llu MiB), arenas %llu (%llu MiB, %llu MiB in system memory), buffers "
-                "%llu MiB; allocation failures %llu, recovered %llu, host fallbacks %llu\n",
+                "%llu MiB; allocation failures %llu, recovered %llu, host fallbacks %llu, "
+                "reclaims %llu (%llu images, %llu MiB)\n",
                 why[0] ? " " : "", why, (unsigned long long)vma_block_count,
                 (unsigned long long)Vram::arena_count.load(),
                 properties.limits.maxMemoryAllocationCount, (unsigned long long)(usage >> 20),
@@ -1170,7 +1171,10 @@ void Instance::ReportMemory(const char* why) const {
                 (unsigned long long)(Vram::buffer_bytes.load() >> 20),
                 (unsigned long long)Vram::failed_allocs.load(),
                 (unsigned long long)Vram::recovered_allocs.load(),
-                (unsigned long long)Vram::host_fallbacks.load());
+                (unsigned long long)Vram::host_fallbacks.load(),
+                (unsigned long long)Vram::reclaim_passes.load(),
+                (unsigned long long)Vram::reclaimed_images.load(),
+                (unsigned long long)(Vram::reclaimed_bytes.load() >> 20));
 }
 
 vk::FormatFeatureFlags2 Instance::GetFormatFeatureFlags(vk::Format format) const {

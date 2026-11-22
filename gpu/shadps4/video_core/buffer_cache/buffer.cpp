@@ -177,17 +177,59 @@ void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
             result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &alloc_ci, &unsafe_buffer,
                                      &allocation, out_alloc_info);
         }
-        if (result != VK_SUCCESS && !Vulkan::Vram::Legacy()) {
-            // bbport: the card is full (driver budget): the buffer goes to system memory.
+        if (result != VK_SUCCESS) {
             Vulkan::Vram::failed_allocs.fetch_add(1, std::memory_order_relaxed);
-            VmaAllocationCreateInfo host_ci = alloc_ci;
-            host_ci.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
-            host_ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-            allocation = nullptr;
-            result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &host_ci, &unsafe_buffer,
-                                     &allocation, out_alloc_info);
-            if (result == VK_SUCCESS) {
-                Vulkan::Vram::host_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            if (wants_device) {
+                Vulkan::Vram::urgent.store(true, std::memory_order_relaxed);
+                for (const bool aggressive : {false, true}) {
+                    if (result == VK_SUCCESS) {
+                        break;
+                    }
+                    if (Vulkan::Vram::Reclaim(buffer_ci.size, aggressive) &&
+                        Vulkan::Vram::Allows(buffer_ci.size)) {
+                        allocation = nullptr;
+                        unsafe_buffer = VK_NULL_HANDLE;
+                        result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &alloc_ci,
+                                                 &unsafe_buffer, &allocation, out_alloc_info);
+                        if (result == VK_SUCCESS) {
+                            Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+            }
+            if (result != VK_SUCCESS && !Vulkan::Vram::ExplicitLegacy()) {
+                if (wants_device &&
+                    (!Vulkan::Vram::Strict() || Vulkan::Vram::Allows(buffer_ci.size))) {
+                    VmaAllocationCreateInfo relaxed = alloc_ci;
+                    relaxed.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+                    allocation = nullptr;
+                    unsafe_buffer = VK_NULL_HANDLE;
+                    result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &relaxed, &unsafe_buffer,
+                                             &allocation, out_alloc_info);
+                    if (result == VK_SUCCESS) {
+                        Vulkan::Vram::recovered_allocs.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+                if (result != VK_SUCCESS && (!Vulkan::Vram::Strict() || !Vulkan::Vram::TestLimit())) {
+                    // bbport: the card is full (driver budget): the buffer goes to system memory.
+                    VmaAllocationCreateInfo host_ci = alloc_ci;
+                    host_ci.flags &= ~VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT;
+                    host_ci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+                    allocation = nullptr;
+                    unsafe_buffer = VK_NULL_HANDLE;
+                    result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &host_ci, &unsafe_buffer,
+                                             &allocation, out_alloc_info);
+                    if (result == VK_SUCCESS) {
+                        Vulkan::Vram::host_fallbacks.fetch_add(1, std::memory_order_relaxed);
+                        static std::atomic<u32> logged{0};
+                        if (logged.fetch_add(1, std::memory_order_relaxed) < 16) {
+                            std::printf("Buffer cache: out of device memory for %llu MiB %s buffer, "
+                                        "placed in system memory\n",
+                                        static_cast<unsigned long long>(buffer_ci.size >> 20),
+                                        std::string(BufferTypeName(mem_type)).c_str());
+                        }
+                    }
+                }
             }
         }
         ASSERT_MSG(result == VK_SUCCESS, "Failed allocating buffer with error {}",

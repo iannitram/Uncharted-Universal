@@ -703,7 +703,7 @@ public:
     static void ReportStall();
 
     /// Attempts to execute operations whose tick the GPU has caught up with.
-    void PopPendingOperations();
+    void PopPendingOperations(bool force_refresh = false);
 
     /// Starts a new rendering scope with provided state.
     void BeginRendering(const RenderState& new_state);
@@ -905,6 +905,9 @@ public:
         pending_ops.emplace(std::move(func), CurrentTick());
         num_pending_ops.fetch_add(1, std::memory_order_release);
     }
+
+    /// Executes any deferred operations whose GPU tick has already completed.
+    void DrainPendingOperations();
 
     /// Defers an operation until the gpu has reached the current cpu tick.
     /// Runs as soon as possible in another thread.

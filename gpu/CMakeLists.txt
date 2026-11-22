@@ -409,6 +409,11 @@ target_include_directories(expand-image-test PRIVATE shim shadps4)
 target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(expand-image-test PRIVATE bbgpu)
 
+add_executable(vram-fallback-test EXCLUDE_FROM_ALL ../tests/test_vram_fallback.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(vram-fallback-test PRIVATE shim shadps4)
+target_compile_options(vram-fallback-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+target_link_libraries(vram-fallback-test PRIVATE bbgpu)
+
 # Vulkan backend smoke test (command submission and readback, no game graphics): needs a Vulkan
 # device, so CI runs it on Mesa lavapipe (.github/workflows/build.yml). It was bb-probe --vulkan-only.
 add_executable(vulkan-smoke-test EXCLUDE_FROM_ALL ../tests/test_vulkan_smoke.c)
