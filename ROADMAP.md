@@ -40,7 +40,9 @@ From `SPEC.md` to 1.0 (the SPEC was approved 2026-11-17, with the changes of tha
 
 ## Game files
 
-On the RTX 3090 Ti desktop (`desktop-3090ti`), recorded 2026-11-12. These files never go into a repo or a bundle (M9).
+These files never go into a repo or a bundle (M9).
+
+### RTX 3090 Ti desktop (`desktop-3090ti`, recorded 2026-11-12)
 
 | | Path |
 |---|---|
@@ -48,6 +50,15 @@ On the RTX 3090 Ti desktop (`desktop-3090ti`), recorded 2026-11-12. These files 
 | Installed copy (55.7 GB: 15,195 files in 336 folders, 59,807,175,456 bytes, counted 2026-11-12) | `B:\games-donotdelete\Uncharted-Universal\CUSA02320\` (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`, `sce_discmap.plt`, `sce_module`, `sce_sys`, `shareddata`, `u1data`, `u2data`, `u3data`) |
 
 How it was made: the shadPS4 fork's `shadps4.exe --extract-pkg <pkg> --extract-dir <new empty folder> --extract-threads 8`. shadPS4's `config.toml` `installDirs` points at `B:/games-donotdelete/Uncharted-Universal`.
+
+### Strix Halo SteamOS machine (recorded 2026-11-22)
+
+| | Path |
+|---|---|
+| Local extracted dump (56 GB, US v1.02) | `/home/deck/Games/The Nathan Drake Collection` (also linked locally at gitignored repo root `game/`) |
+| External copy on Clem | `/run/media/deck/Clem/Roms/The Nathan Drake Collection` (raw pkg alongside: `Uncharted-The-Nathan-Drake-Collection-US-EN-1.02.pkg`) |
+
+> **Note for agents (SELF container vs. encrypted dump):** This port executes the game's original x86-64 machine code natively on the host (no CPU emulation) via `crates/runtime` + `gpu/`. Offline prep (`crates/core::prepare::load_image`, formerly `scripts/prepare.py`) accepts PS4 SELF containers (magic `0x1D3D154F`) or plain ELFs and rejects only segments whose SELF segment flags have `encrypted` (`0x2`) or `compressed` (`0x8`) set. Standard Linux `file` reports `data` for PS4 SELF files purely because of the `0x1D3D154F` header magic — **that does not mean the dump is encrypted**. Verify by checking SELF segment flags (or `uncharted-universal check`); all five binaries (`eboot.bin`, `big2-ps4_Shipping.elf`, `big3-ps4_Shipping.elf`, `sce_module/libc.prx`, `sce_module/libSceFios2.prx`) in the Strix Halo dump have `encrypted=0, compressed=0` and are ready to prepare and run.
 
 ## Features, by Must
 

@@ -43,6 +43,15 @@ These issues have their foundation on `main`; the issues stay open (or their mod
 
 Apple peer research is on local branch `research/apple-native-peers` / `6c246ba`; it adds bounded Mac-port references to `PEERS.md` and establishes no iOS no-JIT or Uncharted engine compatibility claim.
 
+## Game dump & SELF container format
+
+On x86-64 hosts (Linux/SteamOS and Windows), "native" means the game's original x86-64 machine code runs directly on the host CPU with PS4 OS services reimplemented in `crates/runtime` (and remaining C shims in `src/`) and rendering handled by the vendored shadPS4 Vulkan video core in `gpu/`.
+
+Offline prep (`crates/core::prepare::load_image` and `crates/core::link`, which replaced legacy `scripts/prepare.py` and `scripts/link_modules.py`) merges the game executable (`eboot.bin`, `big2-ps4_Shipping.elf`, or `big3-ps4_Shipping.elf`) with `sce_module/libc.prx` and `sce_module/libSceFios2.prx` into `out/<game>/boot-linked.bin`.
+
+- **PS4 SELF containers are expected:** Extracted shadPS4 / fPKG dumps keep the PS4 SELF container header (magic `0x1D3D154F`), so Linux `file` reports them as `data`. **Do not mistake `data` or SELF magic for an encrypted dump.** `prepare::load_image` parses SELF headers directly and only rejects segments whose SELF segment flags set `encrypted` (`0x2`) or `compressed` (`0x8`).
+- **Locating the dump locally:** Point `BB_GAME_DIR` (or `BB_GAME_DIR_U1`..`U3`) at the extracted dump, or use the gitignored local symlink `game/` in the repo root (on the Strix Halo SteamOS machine, pointing to `/home/deck/Games/The Nathan Drake Collection`; see `ROADMAP.md` `## Game files`). Never commit game files or machine-specific symlinks (M9).
+
 ## Platforms (R04)
 
 | Device family | 1.0 device | Game code | Renderer | Built on (hub) | Launcher | Save sync in | CI |
