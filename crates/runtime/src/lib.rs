@@ -66,6 +66,8 @@ pub mod abi;
 // structs are Rust-only, not part of the C header.
 /// cbindgen:ignore
 pub mod ajm;
+/// cbindgen:ignore
+pub mod android_fex;
 pub mod audio;
 pub mod benchmark;
 pub mod benchmark_run;
