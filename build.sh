@@ -69,7 +69,7 @@ MINGW*|MSYS*)
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="$opt" -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="$opt" >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}, PGO $pgo, -O${BB_OPT:-2}"
     if ! ninja -C out/gpu bb-probe bb-gpu-capabilities > out/gpu-build.log 2>&1; then
-        awk 'substr($0, 1, 1) != "["' out/gpu-build.log | tail -40 >&2 || true
+        awk 'substr($0, 1, 1) != "[" && $0 !~ /-Wbackend-plugin/' out/gpu-build.log | tail -60 >&2 || true
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
     cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/

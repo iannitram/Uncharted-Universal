@@ -15,8 +15,9 @@ static BENCHMARK_CRASH_FN: AtomicUsize = AtomicUsize::new(0);
 /// Optional C/GPU hooks invoked by the fault handler when linked into a GPU-enabled runner.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FaultHooks {
-    pub gpu_handle_fault: Option<unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_void) -> i32>,
-    pub gpu_dump_writes: Option<unsafe extern "C" fn(*mut libc::c_void)>,
+    pub gpu_handle_fault:
+        Option<unsafe extern "C" fn(*mut std::ffi::c_void, *mut std::ffi::c_void) -> i32>,
+    pub gpu_dump_writes: Option<unsafe extern "C" fn(*mut std::ffi::c_void)>,
     pub benchmark_crash: Option<unsafe extern "C" fn()>,
 }
 

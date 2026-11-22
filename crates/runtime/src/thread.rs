@@ -6,6 +6,7 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void, CStr};
+#[cfg(unix)]
 use std::mem;
 use std::ptr::{self, null_mut};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
