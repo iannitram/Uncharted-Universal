@@ -116,6 +116,14 @@ jobs:
             target/debug/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl \
             -o /tmp/file-mods-test
           /tmp/file-mods-test
+      - name: C++ FEX guest-call bridge ABI link test (#209, Linux)
+        if: matrix.os == 'linux'
+        run: |
+          c++ -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -I. \
+            tests/test_android_fex_bridge.cpp android/fex_bridge.cpp \
+            target/debug/libuncharted_runtime.a -lgcc_s -lutil -lrt -lpthread -lm -ldl \
+            -o /tmp/android-fex-bridge-test
+          /tmp/android-fex-bridge-test
       - name: Build the runtime library for aarch64-apple-darwin (8.02, macOS)
         # The Mac app links this library (8.05). The runner must be arm64: the check fails on any
         # other architecture, so the Mac build is known to be Apple silicon. gpu/ is not built here

@@ -6,8 +6,9 @@
 //! FMOD's output thread reads 256-frame slots out of its mixer's 512-frame ring, and returning
 //! in bursts (whenever the device pulls a quantum) lets it overtake the mixer and play stale
 //! halves, a click every 10.7 ms. The lowest SDL queue level of each window of 32 buffers is
-//! steered to two buffers (silence prefill on underrun, period/32 cadence corrections), which
-//! also absorbs device clock drift. Without an audio device (headless runs, `BB_AUDIO=none`, or
+//! steered to at least ~24 ms (`low_buffers`: 5 buffers for 256-frame ports, adapting upward if a
+//! high-latency DAC starves) via period/32 cadence corrections, which also absorbs device clock
+//! drift and resampling jitter. Without an audio device (headless runs, `BB_AUDIO=none`, or
 //! any build but the loader's: [`device`]) ports only follow the clock.
 //!
 //! Environment: `BB_AUDIO=none` (no device), `SDL_AUDIO_DRIVER` or any other `BB_AUDIO` value
@@ -67,6 +68,12 @@ const PLAIN: [Spec; 2] = [
 ];
 /// The queue level is controlled over this many buffers.
 const WINDOW: u32 = 32;
+/// Minimum target floor in nanoseconds before the next refill (~24 ms): 5 buffers for 256-frame
+/// ports (26.7 ms), 3 for 512 frames (32 ms), 2 for 1024/2048 frames (42.7/85.3 ms). Clears both
+/// 21.3 ms PipeWire quanta and 23.2 ms 44.1 kHz DAC periods with SDL resampler lookahead.
+const MIN_FLOOR_NS: u64 = 24_000_000;
+/// Maximum extra target buffers added adaptively when a high-quantum device starves mid-stream.
+const MAX_EXTRA_BUFFERS: i32 = 4;
 /// `BB_AUDIO_STATS` prints one line per port this often.
 const STATS_NS: u64 = 5_000_000_000;
 
@@ -241,11 +248,13 @@ fn period_ns(frames: usize) -> u64 {
 }
 
 /// The cadence of a paced output: `next` is the port's next return time (0 before the first).
-/// The first buffer, or one more than 8 periods late (a stall), restarts the cadence at `now` and
-/// returns at once; otherwise the caller sleeps until the returned deadline. Either way the next
-/// deadline is one period later. The arithmetic wraps, as the C `uint64_t` did.
+/// The first buffer, or one more than a full period late (a stall that would otherwise burst
+/// two or more consecutive un-slept returns and overtake FMOD's 512-frame ring), restarts the
+/// cadence at `now` and returns at once; jitter within one period keeps the cadence so the
+/// long-term 48 kHz rate does not drift. Either way the next deadline is one period later.
 fn pace(next: &mut u64, now: u64, period: u64) -> Option<u64> {
-    let wait = if *next == 0 || now > next.wrapping_add(8 * period) {
+    let late_ns = now.wrapping_sub(*next) as i64;
+    let wait = if *next == 0 || late_ns > period as i64 {
         *next = now;
         None
     } else {
@@ -255,28 +264,54 @@ fn pace(next: &mut u64, now: u64, period: u64) -> Option<u64> {
     wait
 }
 
-/// The SDL queue level control of one port. The device drains the queue in quanta (21 ms on
-/// PipeWire), so the level is a sawtooth: its minimum over [`WINDOW`] buffers is what is
-/// steered to two buffers.
+/// The SDL queue level control of one port. The device drains the queue in quanta (e.g. 21 ms
+/// on PipeWire, ~23 ms on 44.1 kHz DACs), so the level is a sawtooth: its minimum over
+/// [`WINDOW`] buffers is steered to [`Self::low_buffers`] buffers.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Level {
-    /// Added to every deadline: +period/32 when the minimum stayed above four buffers (slow
-    /// down), -period/32 below two (speed up), 0 between.
+    /// Added to every deadline: +period/32 when the minimum stayed above `low + 2 * buffer` (slow
+    /// down), -period/32 below `low` (speed up), 0 between.
     adjust_ns: i64,
     window_min: i32,
     window_count: u32,
+    /// Set after the first buffer so startup prefill and mid-stream underruns differ.
+    started: bool,
+    /// Extra target buffers added on mid-stream starvation to adapt to larger DAC quanta.
+    extra_buffers: i32,
 }
 
 impl Level {
+    fn low_buffers(&self, period: u64) -> i32 {
+        let base = MIN_FLOOR_NS.div_ceil(period.max(1)).max(2) as i32;
+        base + self.extra_buffers
+    }
+
     /// Before queueing a buffer of `buffer` bytes with `queued` bytes waiting: the bytes of
-    /// silence to queue first (less than one buffer queued: fill up to two, at most one buffer).
+    /// silence to queue first.
+    ///
+    /// On the first buffer, prefill up to `low` so the stream starts with a full cushion without
+    /// treating the initial empty queue as an underrun. Once playing, never inject silence while
+    /// audio is still queued (`queued > 0`), since splitting a live waveform with zeros causes
+    /// clicks; only when `queued == 0` (actual starvation) do we prefill one buffer, clear any
+    /// slow-down offset, and raise `extra_buffers`. `window_min` always tracks the real `queued`
+    /// level so low troughs force `-step` speed-up.
     fn step(&mut self, queued: i32, buffer: i32, period: u64) -> i32 {
-        let low = 2 * buffer;
-        let (silence, queued) = if queued < buffer {
-            ((low - queued).min(buffer), low)
+        let queued = queued.max(0);
+        if !self.started {
+            self.started = true;
+            let low = self.low_buffers(period) * buffer;
+            return (low - queued).max(0);
+        }
+        let silence = if queued == 0 {
+            if self.extra_buffers < MAX_EXTRA_BUFFERS {
+                self.extra_buffers += 1;
+            }
+            self.adjust_ns = self.adjust_ns.min(0);
+            buffer
         } else {
-            (0, queued)
+            0
         };
+        let low = self.low_buffers(period) * buffer;
         if self.window_count == 0 || queued < self.window_min {
             self.window_min = queued;
         }
@@ -942,28 +977,6 @@ fn output_buffer(id: usize, port: &mut Port, data: &[u8], pace_port: bool) {
         }
         stats.last_ns = now;
         stats.buffers += 1;
-        if let Some(stream) = &port.stream {
-            let queued = stream.queued();
-            stats.min_queued = stats.min_queued.min(queued);
-            if queued == 0 {
-                stats.starved += 1;
-            }
-        }
-        if now - stats.start_ns >= STATS_NS {
-            note(&format!(
-                "Audio stats port {id}: {} buffers/5s (expected {}), max gap {:.2} ms, min queued {} bytes, starved {}",
-                stats.buffers,
-                5 * RATE as usize / port.frames,
-                stats.max_gap_ns as f64 / 1e6,
-                stats.min_queued,
-                stats.starved
-            ));
-            *stats = Stats {
-                start_ns: now,
-                last_ns: now,
-                ..Stats::new()
-            };
-        }
     }
     if pace_port {
         if let Some(deadline) = pace(&mut port.next_deadline_ns, now_ns(), period) {
@@ -985,15 +998,29 @@ fn output_buffer(id: usize, port: &mut Port, data: &[u8], pace_port: bool) {
             &converted
         };
         let buffer = queue.len() as i32;
-        let silence = port.level.step(stream.queued(), buffer, period);
+        let queued = stream.queued();
+        if let Some(stats) = &mut port.stats {
+            stats.min_queued = stats.min_queued.min(queued);
+            if queued == 0 {
+                stats.starved += 1;
+            }
+        }
+        let silence = port.level.step(queued, buffer, period);
         let mut put_ok = true;
         if silence > 0 {
             static SILENCE: [u8; MAX_FRAMES * 8 * 4] = [0; MAX_FRAMES * 8 * 4];
-            put_ok &= stream.put(&SILENCE[..silence as usize]);
+            let mut remaining = silence as usize;
+            while remaining > 0 {
+                let chunk = remaining.min(SILENCE.len());
+                put_ok &= stream.put(&SILENCE[..chunk]);
+                remaining -= chunk;
+            }
         }
-        port.next_deadline_ns = port
-            .next_deadline_ns
-            .wrapping_add(port.level.adjust_ns as u64);
+        if pace_port {
+            port.next_deadline_ns = port
+                .next_deadline_ns
+                .wrapping_add(port.level.adjust_ns as u64);
+        }
         put_ok &= stream.put(queue);
         if !put_ok && !port.put_failed {
             port.put_failed = true;
@@ -1001,6 +1028,24 @@ fn output_buffer(id: usize, port: &mut Port, data: &[u8], pace_port: bool) {
                 "Runtime: audio port {id}: SDL_PutAudioStreamData failed ({})",
                 device::error()
             ));
+        }
+    }
+    if let Some(stats) = &mut port.stats {
+        let now = now_ns();
+        if now - stats.start_ns >= STATS_NS {
+            note(&format!(
+                "Audio stats port {id}: {} buffers/5s (expected {}), max gap {:.2} ms, min queued {} bytes, starved {}",
+                stats.buffers,
+                5 * RATE as usize / port.frames,
+                stats.max_gap_ns as f64 / 1e6,
+                stats.min_queued,
+                stats.starved
+            ));
+            *stats = Stats {
+                start_ns: now,
+                last_ns: now,
+                ..Stats::new()
+            };
         }
     }
     port.converted = converted;
@@ -1022,9 +1067,14 @@ unsafe fn outputs(params: *const OutputParam, count: u32) -> i32 {
     // SAFETY: the caller passes `count` entries.
     let params = unsafe { std::slice::from_raw_parts(params, count as usize) };
     let mut result = 0;
-    for (index, param) in params.iter().enumerate() {
+    let mut paced = false;
+    for param in params {
+        let pace_port = !paced && !param.data.is_null();
+        if pace_port {
+            paced = true;
+        }
         // SAFETY: each entry's buffer follows `output_port` (caller).
-        result = unsafe { output_port(param.handle, param.data, index == 0) };
+        result = unsafe { output_port(param.handle, param.data, pace_port) };
         if result < 0 {
             return result;
         }
@@ -1383,60 +1433,61 @@ mod tests {
         // Early buffers wait for their deadline, one period apart, whenever they arrive.
         assert_eq!(pace(&mut next, 1_500, period), Some(1_000 + period));
         assert_eq!(pace(&mut next, 1_600, period), Some(1_000 + 2 * period));
-        // A late one (less than 8 periods) does not wait long but keeps the cadence.
-        let late = 1_000 + 5 * period;
-        assert_eq!(pace(&mut next, late, period), Some(1_000 + 3 * period));
+        // Jitter within one period keeps the cadence so the long-term 48 kHz rate stays exact.
+        let jittered = 1_000 + 3 * period + period / 2;
+        assert_eq!(pace(&mut next, jittered, period), Some(1_000 + 3 * period));
         assert_eq!(next, 1_000 + 4 * period);
     }
 
     #[test]
-    fn pace_restarts_after_a_stall() {
+    fn pace_restarts_after_a_stall_without_bursting() {
         let period = period_ns(256);
         let mut next = 0;
         pace(&mut next, 1_000, period);
-        let stalled = 1_000 + period + 8 * period + 1;
+        // More than 1 period late would otherwise cause 2+ consecutive 0-sleep returns and let
+        // FMOD overtake its 512-frame mixer ring: restart the cadence at `now` instead.
+        let stalled = 1_000 + 2 * period + 1;
         assert_eq!(pace(&mut next, stalled, period), None);
         assert_eq!(next, stalled + period);
-        // Exactly 8 periods late is not a stall yet.
+        // Exactly 1 period late still preserves cadence (next deadline is `now`, 1 return only).
         let mut next = 0;
         pace(&mut next, 1_000, period);
         let deadline = 1_000 + period;
-        assert_eq!(
-            pace(&mut next, deadline + 8 * period, period),
-            Some(deadline)
-        );
+        assert_eq!(pace(&mut next, deadline + period, period), Some(deadline));
+        assert_eq!(next, deadline + period);
     }
 
     #[test]
-    fn level_prefills_silence_on_underrun() {
+    fn level_prefills_on_start_and_never_splits_live_audio_with_silence() {
         let buffer = 1024; // 256 frames of S16 stereo
         let period = period_ns(256);
         let mut level = Level::default();
-        assert_eq!(level.step(0, buffer, period), buffer, "empty: one buffer");
-        assert_eq!(
-            level.step(1000, buffer, period),
-            1024,
-            "never more than one"
-        );
-        assert_eq!(
-            level.step(1500, buffer, period),
-            0,
-            "a buffer or more: none"
-        );
-        let mut level = Level::default();
-        assert_eq!(level.step(100, 4096, period), 4096);
-        assert_eq!(level.step(5000, 4096, period), 0);
-        // Up to two buffers is always more than one below a buffer: the cap decides.
-        assert_eq!(level.step(3000, 4096, period), 4096);
+        assert_eq!(level.low_buffers(period), 5, "256 frames -> ~26.7 ms floor");
+        // First buffer prefills up to the target floor so playback starts with full cushion.
+        assert_eq!(level.step(0, buffer, period), 5 * buffer);
+        // Once started, never inject silence while any audio remains queued (even < 1 buffer).
+        assert_eq!(level.step(buffer - 1, buffer, period), 0);
+        assert_eq!(level.step(1, buffer, period), 0);
+        assert_eq!(level.step(1500, buffer, period), 0);
+        // Only a complete mid-stream starvation (queued == 0) injects one recovery buffer of
+        // silence and raises the adaptive floor.
+        assert_eq!(level.step(0, buffer, period), buffer);
+        assert_eq!(level.extra_buffers, 1);
+
+        // Larger 512/2048-frame ports keep proportional floors (3 and 2 buffers).
+        assert_eq!(Level::default().low_buffers(period_ns(512)), 3);
+        assert_eq!(Level::default().low_buffers(period_ns(2048)), 2);
     }
 
     #[test]
-    fn level_steers_the_window_minimum_to_two_buffers() {
+    fn level_steers_the_window_minimum_and_never_hides_underruns() {
         let buffer = 1024;
         let period = period_ns(256);
         let step = (period / 32) as i64;
         let run = |queued: i32| {
             let mut level = Level::default();
+            // Startup prefill call does not pollute the first window.
+            level.step(0, buffer, period);
             for _ in 0..31 {
                 level.step(queued, buffer, period);
                 assert_eq!(level.adjust_ns, 0, "decided once per window");
@@ -1444,20 +1495,86 @@ mod tests {
             level.step(queued, buffer, period);
             level
         };
-        assert_eq!(run(5 * buffer).adjust_ns, step, "too full: slow down");
-        assert_eq!(run(4 * buffer).adjust_ns, 0, "four buffers: keep");
-        assert_eq!(run(2 * buffer).adjust_ns, 0, "two buffers: keep");
-        assert_eq!(run(buffer + 1).adjust_ns, -step, "too low: speed up");
-        // An underrun counts as two buffers (the prefill), not as empty.
-        assert_eq!(run(0).adjust_ns, 0);
+        let low_bufs = Level::default().low_buffers(period);
+        assert_eq!(
+            run((low_bufs + 3) * buffer).adjust_ns,
+            step,
+            "above deadband: slow down"
+        );
+        assert_eq!(
+            run((low_bufs + 2) * buffer).adjust_ns,
+            0,
+            "upper deadband: keep"
+        );
+        assert_eq!(run(low_bufs * buffer).adjust_ns, 0, "at floor: keep");
+        assert_eq!(
+            run((low_bufs - 1) * buffer).adjust_ns,
+            -step,
+            "below floor: speed up"
+        );
+        // Mid-stream underruns are NOT masked: window_min sees 0, forces -step, and adapts floor.
+        let starved = run(0);
+        assert_eq!(starved.adjust_ns, -step);
+        assert_eq!(starved.extra_buffers, MAX_EXTRA_BUFFERS);
+        // Even a single starvation clears an active slow-down (+step) immediately.
+        let mut slowing = run((low_bufs + 3) * buffer);
+        assert_eq!(slowing.adjust_ns, step);
+        slowing.step(0, buffer, period);
+        assert_eq!(slowing.adjust_ns, 0);
         // The minimum decides: one low buffer in a full window speeds up.
         let mut level = Level::default();
+        level.step(0, buffer, period);
         for index in 0..32 {
-            let queued = if index == 7 { buffer + 10 } else { 8 * buffer };
+            let queued = if index == 7 {
+                (low_bufs - 1) * buffer
+            } else {
+                (low_bufs + 4) * buffer
+            };
             level.step(queued, buffer, period);
         }
         assert_eq!(level.adjust_ns, -step);
         assert_eq!(level.window_count, 0, "a new window starts");
+    }
+
+    #[test]
+    fn level_prevents_underruns_across_44100_hz_dac_quantum_sawtooth() {
+        // Simulate a 44.1 kHz DAC pulling 1024-frame hardware periods (~23.22 ms = 4.35 buffers
+        // of 256 @ 48 kHz, alternating 4 and 5 buffers) + 0.15% clock drift faster than host.
+        let frames = 256usize;
+        let buffer = (frames * 2 * 2) as i32; // stereo S16: 1024 bytes
+        let period = period_ns(frames);
+        let mut level = Level::default();
+        let mut queued_bytes: f64 = 0.0;
+        let mut host_ns = 0u64;
+        let mut next_dac_ns = 2_000_000u64; // arbitrary phase offset (2 ms after open)
+        let dac_period_ns = 23_219_955u64 * 9985 / 10000; // 1024/44100 s, 0.15% fast DAC
+        let dac_pull_bytes = (1024.0 * 48_000.0 / 44_100.0) * 4.0; // bytes consumed per DAC pull
+
+        let mut midstream_starved = 0u32;
+        let mut midstream_silence = 0u32;
+        for iter in 0..1000 {
+            while next_dac_ns <= host_ns {
+                queued_bytes = (queued_bytes - dac_pull_bytes).max(0.0);
+                next_dac_ns += dac_period_ns;
+            }
+            let queued_now = queued_bytes.round() as i32;
+            let silence = level.step(queued_now, buffer, period);
+            if iter > 0 {
+                if queued_now == 0 {
+                    midstream_starved += 1;
+                }
+                if silence > 0 {
+                    midstream_silence += 1;
+                }
+            }
+            queued_bytes += f64::from(silence + buffer);
+            host_ns = host_ns.saturating_add((period as i64 + level.adjust_ns) as u64);
+        }
+        assert_eq!(midstream_starved, 0, "DAC sawtooth must never starve");
+        assert_eq!(
+            midstream_silence, 0,
+            "no mid-stream silence injection allowed"
+        );
     }
 
     #[test]
@@ -1574,6 +1691,21 @@ mod tests {
                 512 * 8,
                 "the last port's samples"
             );
+            // When the first entry has null data, pacing falls to the first non-null entry.
+            let second_only = [
+                OutputParam {
+                    handle: stereo,
+                    data: std::ptr::null(),
+                },
+                OutputParam {
+                    handle: surround,
+                    data: wide.as_ptr(),
+                },
+            ];
+            let t0 = now_ns();
+            assert_eq!(outputs(second_only.as_ptr(), 2), 512 * 8);
+            assert_eq!(outputs(second_only.as_ptr(), 2), 512 * 8);
+            assert!(now_ns() - t0 >= period_ns(512) - 500_000);
             assert_eq!(outputs(std::ptr::null(), 1), ERR_INVALID_POINTER);
             assert_eq!(outputs(params.as_ptr(), 0), ERR_PORT_FULL);
             assert_eq!(outputs(params.as_ptr(), 26), ERR_PORT_FULL);

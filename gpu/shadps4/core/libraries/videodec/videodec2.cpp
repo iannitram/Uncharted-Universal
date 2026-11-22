@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 
 #include "common/alignment.h"
@@ -16,6 +17,7 @@
 namespace Libraries::Videodec2 {
 
 static constexpr u64 kMinimumMemorySize = 16_MB; ///> Fake minimum memory size for querying
+static std::atomic<u32> active_decoders{0};
 
 static u64 ComputeFrameSizeBytes(s32 width, s32 height) {
     if (width <= 0 || height <= 0) {
@@ -174,6 +176,7 @@ s32 PS4_SYSV_ABI sceVideodec2CreateDecoder(const OrbisVideodec2DecoderConfigInfo
     }
 
     *decoder = new VdecDecoder(*decoder_cfg_info, *decoder_mem_info);
+    active_decoders.fetch_add(1, std::memory_order_relaxed);
     return ORBIS_OK;
 }
 
@@ -186,6 +189,9 @@ s32 PS4_SYSV_ABI sceVideodec2DeleteDecoder(OrbisVideodec2Decoder decoder) {
     }
 
     delete decoder;
+    if (active_decoders.fetch_sub(1, std::memory_order_relaxed) <= 1) {
+        Libraries::VideoOut::ClearMovieFrame();
+    }
     return ORBIS_OK;
 }
 
@@ -243,6 +249,7 @@ s32 PS4_SYSV_ABI sceVideodec2Reset(OrbisVideodec2Decoder decoder) {
         return ORBIS_VIDEODEC2_ERROR_DECODER_INSTANCE;
     }
 
+    Libraries::VideoOut::ClearMovieFrame();
     return decoder->Reset();
 }
 
