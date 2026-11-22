@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <deque>
 #include <functional>
 
@@ -23,6 +24,9 @@ namespace Libraries::VideoOut {
 /// bbport: steady_clock time (ns) of the last prerecorded movie frame decoded (Videodec2).
 /// While movies play, the present thread shows the guest a 60 Hz display (see PresentThread).
 void NoteMovieFrame();
+
+/// bbport: clears movie-active pacing when the video decoder closes or resets.
+void ClearMovieFrame();
 
 /// bbport diagnosis: the time (ns) between the guest's last two flip submissions.
 s64 LastFlipIntervalNs();
@@ -47,7 +51,7 @@ struct VideoOutPort {
     std::mutex port_mutex;
     std::condition_variable vo_cv;
     std::condition_variable vblank_cv;
-    int flip_rate = 0;
+    std::atomic<int> flip_rate{0};
     int prev_index = -1;
     bool is_open = false;
     bool is_hdr = false;
