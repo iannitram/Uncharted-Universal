@@ -564,10 +564,9 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
 
-    static constexpr std::array<vk::PipelineStageFlags, 2> wait_stage_masks = {
-        vk::PipelineStageFlagBits::eAllCommands,
-        vk::PipelineStageFlagBits::eColorAttachmentOutput,
-    };
+    // shadPS4 #5231 (43e4c470): wait on all commands for every semaphore slot so transfer/layout
+    // transitions are covered and >2 wait semaphores never read past the stage mask array.
+    static constexpr auto wait_stage_masks = SubmitWaitStageMasks();
 
     const vk::TimelineSemaphoreSubmitInfo timeline_si = {
         .waitSemaphoreValueCount = info.num_wait_semas,
