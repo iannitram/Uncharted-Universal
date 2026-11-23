@@ -20,6 +20,7 @@ const REPORTED_SETTINGS: &[&str] = &[
     "BB_OUTPUT_RES",
     "BB_VBLANK_HZ",
     "BB_FPS_LIMIT",
+    "BB_MAX_FRAME_DELTA_MS",
     "BB_UPSCALER",
     "BB_UPSCALE_QUALITY",
     "BB_FSR_SHARPNESS",
@@ -106,6 +107,7 @@ fn normalize_report_setting(key: &str, value: &str) -> Option<String> {
         }
         "BB_VBLANK_HZ" => normalize_unsigned(value, 0, 1_000),
         "BB_FPS_LIMIT" => normalize_unsigned(value, 0, 1_000),
+        "BB_MAX_FRAME_DELTA_MS" => normalize_unsigned(value, 0, 1_000),
         "BB_UPSCALER" => normalize_enum(
             value,
             &[
