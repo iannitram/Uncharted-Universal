@@ -141,3 +141,48 @@ pub fn fov(screen: (u32, u32)) -> Result<Fov> {
         }
     })
 }
+
+/// Live window or fold/unfold dimension change (in pixels) above which a restart prompt should
+/// be offered for a full re-render (M21e, #436).
+pub const RESIZE_RESTART_THRESHOLD_PX: u32 = 16;
+
+/// Returns `true` when a live window resize or fold/unfold diverges from `startup` by more than
+/// [`RESIZE_RESTART_THRESHOLD_PX`] in width or height, so the presenter rescales the active
+/// frame and offers a restart prompt for a full re-render. Zero sizes never prompt.
+pub fn resize_needs_restart(startup: (u32, u32), current: (u32, u32)) -> bool {
+    startup.0 > 0
+        && startup.1 > 0
+        && current.0 > 0
+        && current.1 > 0
+        && (startup.0.abs_diff(current.0) > RESIZE_RESTART_THRESHOLD_PX
+            || startup.1.abs_diff(current.1) > RESIZE_RESTART_THRESHOLD_PX)
+}
+
+/// Live resize / fold-unfold presentation and restart decision (M21e, Stage 7.07).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ResizeDecision {
+    /// Centered presenter rectangle that rescales `startup_render` onto `current_screen` without
+    /// stretching.
+    pub presenter_rect: Rect,
+    /// Centered 16:9 HUD safe area on `current_screen`.
+    pub safe_area: Rect,
+    /// Target FOV mode and factors for `current_screen`.
+    pub fov: Fov,
+    /// `true` when `current_screen` diverges enough from `startup_render` to offer a restart
+    /// prompt for a full re-render.
+    pub needs_restart: bool,
+}
+
+/// Evaluates a mid-game window resize or fold/unfold transition from `startup_render` to
+/// `current_screen`. Zero sizes return `Error::RenderSize(..)`.
+pub fn evaluate_resize(
+    startup_render: (u32, u32),
+    current_screen: (u32, u32),
+) -> Result<ResizeDecision> {
+    Ok(ResizeDecision {
+        presenter_rect: fit_rect(current_screen, startup_render)?,
+        safe_area: safe_area(current_screen)?,
+        fov: fov(current_screen)?,
+        needs_restart: resize_needs_restart(startup_render, current_screen),
+    })
+}
