@@ -3,10 +3,31 @@
 //! profile. The player's own variables always win. Replaces `fix_defaults` and the environment
 //! assembly in `main` of `run.py`.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::games::Game;
 use crate::profile::DeviceProfile;
 use std::collections::BTreeMap;
+
+/// Maximum duration accepted for `BB_BENCHMARK=<seconds>` (24 hours, matching `uncharted_runtime`).
+pub const MAX_BENCHMARK_SECONDS: u32 = 86_400;
+
+/// Validate `BB_BENCHMARK=<seconds>` (whole decimal seconds in `1..=86400`).
+pub fn benchmark_seconds(value: &str) -> Result<u32> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::Launch(
+            "BB_BENCHMARK must be a whole number of seconds".to_owned(),
+        ));
+    }
+    let seconds = value.parse::<u32>().map_err(|_| {
+        Error::Launch("BB_BENCHMARK must be between 1 and 86400 seconds".to_owned())
+    })?;
+    if seconds == 0 || seconds > MAX_BENCHMARK_SECONDS {
+        return Err(Error::Launch(
+            "BB_BENCHMARK must be between 1 and 86400 seconds".to_owned(),
+        ));
+    }
+    Ok(seconds)
+}
 
 /// The player's settings, as the settings page stores them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -95,6 +116,11 @@ pub fn build_env(
     }
     env.extend(settings.extra.clone());
     env.extend(player_env.clone());
+
+    if let Some(raw) = env.get("BB_BENCHMARK").cloned() {
+        let seconds = benchmark_seconds(&raw)?;
+        env.insert("BB_BENCHMARK".to_owned(), seconds.to_string());
+    }
 
     // Values `run.py` derives again on every start, so a stale one never survives.
     for name in [
