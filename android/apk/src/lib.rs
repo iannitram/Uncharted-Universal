@@ -1,4 +1,5 @@
-//! Stage 7.03 Android APK scaffold for the Slint launcher:
+//! Stage 7.03–7.07 Android APK scaffold for the Slint launcher:
+//! - [`display`]: Pixel Fold 1 inside/outside screen detection and full M21 visual adaptation.
 //! - [`driver`]: explicit fail-closed Turnip / system Vulkan driver selection mirroring
 //!   `android/driver_loader.h`.
 //! - [`gamepad`]: Android `KeyEvent` / `MotionEvent` controller-to-Slint input code adapter.
@@ -6,6 +7,7 @@
 //!   Stage 7.04 first-boot download prompt hook.
 //! - [`entry`]: `NativeActivity` entry stub and host-testable startup bootstrapper.
 
+pub mod display;
 pub mod driver;
 pub mod entry;
 pub mod game;
