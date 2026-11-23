@@ -48,6 +48,7 @@ void DomainShaderTransform(const IR::Program& program, const RuntimeInfo& runtim
 bool MultiwaveLdsBarriers(u64 pgm_hash);
 void SharedMemoryBarrierPass(IR::Program& program, const RuntimeInfo& runtime_info,
                              const Profile& profile);
+void SharedMemoryBoundsPass(IR::Program& program, const RuntimeInfo& runtime_info);
 void SharedMemorySimplifyPass(IR::Program& program, const Profile& profile);
 void SharedMemoryToStoragePass(IR::Program& program, const RuntimeInfo& runtime_info,
                                const Profile& profile);
