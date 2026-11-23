@@ -27,7 +27,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 13u; // bbport: motion shaders hold address stand-ins (10); scalar instructions split EXEC scopes (11); both lines merged, GCN NaN semantics (shadPS4 PR #5257) and WorkgroupSplit (12); both on merging upstream 0.3.11 (13)
+static constexpr u32 ShaderBinaryVersion = 14u; // bbport: motion shaders hold address stand-ins (10); scalar instructions split EXEC scopes (11); both lines merged, GCN NaN semantics (shadPS4 PR #5257) and WorkgroupSplit (12); both on merging upstream 0.3.11 (13); shared memory bounds pass + compute runtime_info shared_memory_size (14)
 static constexpr u32 ShaderMetaVersion = 9u; // bbport: ImageResource::needs_native; RuntimeInfo::Properties::dx10_clamp (Linux line, 8); InfoPersistent::cs_split_eligible (upstream, 8); both (9)
 static constexpr u32 PipelineKeyVersion = 6u; // bbport: Info layout (cs_split_eligible)
 /// bbport (BilalReloaded): the cache name of a shader's SPIR-V. Shaders that gained multi-wave
