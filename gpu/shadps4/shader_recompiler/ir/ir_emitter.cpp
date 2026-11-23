@@ -2169,6 +2169,13 @@ Value IREmitter::ImageGradient(const Value& handle, const Value& coords,
                 offset, lod_clamp);
 }
 
+Value IREmitter::ImageGradientDref(const Value& handle, const Value& coords, const F32& dref,
+                                   const Value& derivatives_dx, const Value& derivatives_dy,
+                                   const Value& offset, TextureInstInfo info) {
+    return Inst(Opcode::ImageGradientDref, Flags{info}, handle, coords, dref, derivatives_dx,
+                derivatives_dy, offset);
+}
+
 Value IREmitter::ImageRead(const Value& handle, const Value& coords, const U32& lod,
                            const U32& multisampling, TextureInstInfo info) {
     return Inst(Opcode::ImageRead, Flags{info}, handle, coords, lod, multisampling);
