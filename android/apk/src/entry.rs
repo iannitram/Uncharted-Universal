@@ -3,6 +3,7 @@
 //! Validates Android manifest/packaging preconditions and explicit Turnip/system Vulkan driver
 //! identity before Slint window creation or `uncharted_runtime` launch.
 
+use crate::display::{DisplayAdaptation, DisplayError, DisplayMetrics, DisplayState};
 use crate::driver::{
     open_validated_driver, DriverLoaderProbe, DriverMode, DriverValidationError, TurnipDriverConfig,
 };
@@ -26,6 +27,7 @@ pub struct AndroidLaunchConfig {
     pub bundled_game_assets: bool,
     /// Whether prepared per-game files are already present on device storage.
     pub game_files_present: bool,
+    pub display: DisplayMetrics,
     pub driver: TurnipDriverConfig,
 }
 
@@ -43,6 +45,7 @@ impl AndroidLaunchConfig {
             target_sdk_version: TARGET_ANDROID_API,
             bundled_game_assets: false,
             game_files_present: false,
+            display: DisplayMetrics::default(),
             driver: TurnipDriverConfig::bundled_turnip(
                 native_library_dir,
                 app_storage_dir,
@@ -59,8 +62,14 @@ impl AndroidLaunchConfig {
             target_sdk_version: TARGET_ANDROID_API,
             bundled_game_assets: false,
             game_files_present: false,
+            display: DisplayMetrics::default(),
             driver: TurnipDriverConfig::system_mali(),
         }
+    }
+
+    pub fn with_display(mut self, width: u32, height: u32) -> Self {
+        self.display = DisplayMetrics::new(width, height);
+        self
     }
 
     pub fn with_bundled_turnip(
@@ -96,7 +105,14 @@ pub enum BootstrapError {
         min_sdk: u32,
         target_sdk: u32,
     },
+    Display(DisplayError),
     Driver(DriverValidationError),
+}
+
+impl From<DisplayError> for BootstrapError {
+    fn from(err: DisplayError) -> Self {
+        Self::Display(err)
+    }
 }
 
 impl From<DriverValidationError> for BootstrapError {
@@ -132,6 +148,7 @@ impl fmt::Display for BootstrapError {
                 f,
                 "Android targetSdkVersion {target_sdk} < minSdkVersion {min_sdk}"
             ),
+            Self::Display(err) => write!(f, "{err}"),
             Self::Driver(err) => write!(f, "{err}"),
         }
     }
@@ -140,7 +157,7 @@ impl fmt::Display for BootstrapError {
 impl std::error::Error for BootstrapError {}
 
 /// Bootstrapped Android APK session holding the validated Vulkan driver handle, gamepad router,
-/// and Stage 7.04 first-boot download hook.
+/// Stage 7.04 first-boot download hook, and Stage 7.07 M21 display adaptation state.
 pub struct AndroidApkSession<H> {
     pub game: AndroidGame,
     pub package_name: String,
@@ -149,9 +166,44 @@ pub struct AndroidApkSession<H> {
     pub driver_handle: H,
     pub gamepad: AndroidGamepadAdapter,
     pub first_boot: FirstBootState,
+    pub display: DisplayState,
 }
 
 impl<H> AndroidApkSession<H> {
+    /// Connects a controller and hides the on-screen touch overlay.
+    pub fn connect_gamepad(&mut self, device_id: i32, vendor_id: Option<u16>, name: &str) {
+        self.gamepad.connect_device(device_id, vendor_id, name);
+        self.sync_touch_overlay_visibility();
+    }
+
+    /// Disconnects a controller and restores the on-screen touch overlay when none remain.
+    pub fn disconnect_gamepad(&mut self, device_id: i32) {
+        self.gamepad.disconnect_device(device_id);
+        self.sync_touch_overlay_visibility();
+    }
+
+    /// Synchronizes touch-overlay visibility with `self.gamepad.device_count()`.
+    pub fn sync_touch_overlay_visibility(&mut self) -> &DisplayAdaptation {
+        self.display
+            .set_controller_connected(self.gamepad.device_count() > 0)
+    }
+
+    /// Applies a live Android `WindowMetrics` / `Configuration` fold/unfold resize event.
+    pub fn on_display_change(
+        &mut self,
+        width: u32,
+        height: u32,
+        timestamp_ms: u64,
+    ) -> Result<&DisplayAdaptation, DisplayError> {
+        self.display
+            .on_display_change(DisplayMetrics::new(width, height), timestamp_ms)
+    }
+
+    /// Advances the resize-restart debounce clock.
+    pub fn tick_display(&mut self, now_ms: u64) -> &DisplayAdaptation {
+        self.display.tick(now_ms)
+    }
+
     /// Routes a hardware/virtual gamepad key event through the Slint adapter and applies it to
     /// the Stage 7.04 first-boot prompt when active.
     pub fn route_first_boot_key(&mut self, event: AndroidKeyEvent) -> Option<FirstBootDecision> {
@@ -200,6 +252,7 @@ pub fn bootstrap_session<P: DriverLoaderProbe>(
         });
     }
 
+    let display = DisplayState::new(config.display, false)?;
     let validated = open_validated_driver(&config.driver, probe)?;
     Ok(AndroidApkSession {
         game: config.game,
@@ -209,6 +262,7 @@ pub fn bootstrap_session<P: DriverLoaderProbe>(
         driver_handle: validated.handle,
         gamepad: AndroidGamepadAdapter::default(),
         first_boot: FirstBootState::evaluate(config.game, config.game_files_present),
+        display,
     })
 }
 
@@ -525,5 +579,55 @@ mod tests {
 
         assert_eq!(seen_ids.len(), 3);
         assert_eq!(seen_labels.len(), 3);
+    }
+
+    #[test]
+    fn session_handles_pixel_fold_transitions_and_controller_touch_hiding() {
+        use crate::display::{
+            FoldScreen, FovMode, PIXEL_FOLD_COVER_LANDSCAPE, PIXEL_FOLD_COVER_PORTRAIT,
+            PIXEL_FOLD_INSIDE_LANDSCAPE, RESIZE_DEBOUNCE_MS,
+        };
+
+        let cfg = AndroidLaunchConfig::for_game_with_system_mali(AndroidGame::U2)
+            .with_display(PIXEL_FOLD_COVER_PORTRAIT.0, PIXEL_FOLD_COVER_PORTRAIT.1);
+        let mut probe = TestProbe {
+            reported: Ok("ARM Mali-G715".to_owned()),
+            closed: 0,
+        };
+        let mut session = bootstrap_session(&cfg, &mut probe).expect("bootstrap succeeds");
+        assert_eq!(session.display.current().screen, FoldScreen::PixelFoldCover);
+        assert_eq!(session.display.current().fov.mode, FovMode::VertPlus);
+        assert!(session.display.current().touch_overlay.visible);
+
+        // Connecting a gamepad hides touch overlay immediately.
+        session.connect_gamepad(11, Some(0x054c), "DualSense Wireless Controller");
+        assert!(!session.display.current().touch_overlay.visible);
+
+        // Rotate to Cover Landscape -> HorPlus, then unfold to Inside -> VertPlus.
+        let land = session
+            .on_display_change(
+                PIXEL_FOLD_COVER_LANDSCAPE.0,
+                PIXEL_FOLD_COVER_LANDSCAPE.1,
+                50,
+            )
+            .unwrap();
+        assert_eq!(land.fov.mode, FovMode::HorPlus);
+        assert!(!land.touch_overlay.visible);
+
+        let inside = session
+            .on_display_change(
+                PIXEL_FOLD_INSIDE_LANDSCAPE.0,
+                PIXEL_FOLD_INSIDE_LANDSCAPE.1,
+                50 + RESIZE_DEBOUNCE_MS,
+            )
+            .unwrap();
+        assert_eq!(inside.screen, FoldScreen::PixelFoldInside);
+        assert_eq!(inside.fov.mode, FovMode::VertPlus);
+        assert!(inside.needs_restart);
+        assert!(!inside.touch_overlay.visible);
+
+        // Disconnecting the gamepad restores touch overlay.
+        session.disconnect_gamepad(11);
+        assert!(session.display.current().touch_overlay.visible);
     }
 }
