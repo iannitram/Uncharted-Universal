@@ -86,6 +86,7 @@ struct ImageInfo {
     u32 guest_size{};
     u8 bank_swizzle{};
     bool alt_tile{};
+    u32 micro_mip_mask{};
 
     VAddr stencil_addr{};
     u32 stencil_size{};

@@ -32,6 +32,7 @@ struct TilingInfo {
     u32 bank_swizzle;
     u32 num_slices;
     u32 num_mips;
+    u32 micro_mip_mask;
     std::array<ImageInfo::MipInfo, 16> mips;
 };
 
@@ -234,6 +235,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     params.bank_swizzle = info.bank_swizzle;
     params.num_slices = info.props.is_volume ? info.size.depth : info.resources.layers;
     params.num_mips = info.resources.levels;
+    params.micro_mip_mask = info.micro_mip_mask;
     for (u32 mip = 0; mip < params.num_mips; ++mip) {
         auto& mip_info = params.mips[mip];
         mip_info = info.mips_layout[mip];
@@ -264,7 +266,7 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         .offset = staging.offset,
         .range = info.guest_size,
     };
-    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
+    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8) + 63) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, false), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);
@@ -291,6 +293,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
     params.bank_swizzle = info.bank_swizzle;
     params.num_slices = info.props.is_volume ? info.size.depth : info.resources.layers;
     params.num_mips = static_cast<u32>(buffer_copies.size());
+    params.micro_mip_mask = info.micro_mip_mask;
     for (u32 mip = 0; mip < params.num_mips; ++mip) {
         auto& mip_info = params.mips[mip];
         mip_info = info.mips_layout[mip];
@@ -324,7 +327,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
         .offset = staging.offset,
         .range = info.guest_size,
     };
-    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
+    const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8) + 63) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, true), tiled_buffer_info, linear_buffer_info,
                          params_buffer_info, dim_x);

@@ -159,6 +159,7 @@ bool ImageInfo::IsCompatible(const ImageInfo& info) const {
 
 void ImageInfo::UpdateSize() {
     guest_size = 0;
+    micro_mip_mask = 0;
     for (s32 mip = 0; mip < resources.levels; ++mip) {
         u32 mip_w = pitch >> mip;
         u32 mip_h = size.height >> mip;
@@ -190,9 +191,15 @@ void ImageInfo::UpdateSize() {
             mip_d += (-mip_d) & (thickness - 1);
             if (AmdGpu::IsMacroTiled(array_mode)) {
                 ASSERT(!props.is_block);
+                bool downgraded = false;
                 std::tie(mip_info.pitch, mip_info.height, mip_info.size) = ImageSizeMacroTiled(
-                    mip_w, mip_h, thickness, num_bits, num_samples, tile_mode, mip, alt_tile);
+                    mip_w, mip_h, thickness, num_bits, num_samples, tile_mode, mip, alt_tile,
+                    &downgraded);
+                if (downgraded) {
+                    micro_mip_mask |= (1u << mip);
+                }
             } else {
+                micro_mip_mask |= (1u << mip);
                 std::tie(mip_info.pitch, mip_info.height, mip_info.size) =
                     ImageSizeMicroTiled(mip_w, mip_h, thickness, num_bits, num_samples);
             }
