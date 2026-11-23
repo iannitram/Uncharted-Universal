@@ -1683,6 +1683,7 @@ void BufferCache::SynchronizeDmaBuffers() {
 }
 
 const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
+    TouchArenaWindows(first_block, last_block); // in use (ReclaimArenaMemory)
     const u64 first_page = first_block >> blocks_per_arena_page_shift;
     const u64 last_page = last_block >> blocks_per_arena_page_shift;
     ASSERT_MSG(last_page - first_page <= 1,
@@ -1723,7 +1724,7 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
             .resourceOffset = (start - base_block) << block_shift,
             .size = (end - start) << block_shift,
             .memory = backing.memory,
-            .memoryOffset = backing.offset + ((start - backing.start) << block_shift),
+            .memoryOffset = (backing.offset + (start - backing.start)) << block_shift,
         });
     });
 
@@ -1873,9 +1874,47 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     }
     BbStats::Timer timer{BbStats::t_resident};
 
-    const u64 needed = u64{resident_blocks} << block_shift;
+    // bbport (ReclaimArenaMemory, after BilalReloaded's port / Mevlock, GPL-2.0): memory given
+    // back is bound again first, new memory only for what it does not cover; unbinds of these
+    // ranges still pending or deferred are dropped.
+    struct Piece {
+        u64 start, end;
+        vk::DeviceMemory memory;
+        u64 offset;
+    };
+    boost::container::small_vector<Piece, 8> pieces;
+    boost::container::small_vector<std::pair<u64, u64>, 8> fresh;
+    u64 fresh_blocks = 0;
+    for (const auto& range : bind_ranges) {
+        if (has_pending_unbinds || !deferred_unbinds.empty()) {
+            TrimPendingUnbinds(arena, range.start, range.end);
+        }
+        u64 start = range.start;
+        while (start < range.end && !free_runs.empty()) {
+            auto& run = free_runs.back();
+            const u64 count = std::min(run.blocks, range.end - start);
+            pieces.push_back({start, start + count, run.memory, run.offset});
+            run.offset += count << block_shift;
+            run.blocks -= count;
+            if (!run.blocks) {
+                free_runs.pop_back();
+            }
+            start += count;
+        }
+        if (start < range.end) {
+            fresh.emplace_back(start, range.end);
+            fresh_blocks += range.end - start;
+        }
+    }
     vk::DeviceMemory device_memory{};
-    const u64 chunk_offset = AllocateArenaMemory(needed, device_memory);
+    if (fresh_blocks) {
+        u64 fresh_offset = AllocateArenaMemory(fresh_blocks << block_shift, device_memory);
+        for (const auto& [start, end] : fresh) {
+            pieces.push_back({start, end, device_memory, fresh_offset});
+            fresh_offset += (end - start) << block_shift;
+        }
+    }
+    resident_in_use_blocks += resident_blocks;
     static const bool arena_log = [] {
         const char* env = std::getenv("BB_ARENA_LOG");
         return env && env[0] == '1';
@@ -1906,16 +1945,15 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     const auto staging =
         staging_pool.Request(resident_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
 
-    u64 memory_offset = chunk_offset;
     ArenaBinds* binds = BindsForArena(arena);
     auto* bda_addrs = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
     u64 offset = staging.offset;
-    for (const auto& range : bind_ranges) {
+    for (const auto& range : pieces) {
         Backing backing;
         backing.start = range.start;
         backing.end = range.end;
-        backing.memory = device_memory;
-        backing.offset = memory_offset;
+        backing.memory = range.memory;
+        backing.offset = range.offset >> block_shift;
         resident_ranges.Add(backing);
 
         LOG_INFO(Render, "Making range start={}, end={} resident", backing.start, backing.end);
@@ -1923,8 +1961,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         const auto& bind = binds->binds.emplace_back(vk::SparseMemoryBind{
             .resourceOffset = (range.start << block_shift) - arena->cpu_addr,
             .size = (range.end - range.start) << block_shift,
-            .memory = device_memory,
-            .memoryOffset = memory_offset,
+            .memory = range.memory,
+            .memoryOffset = range.offset,
         });
         if ((range.start << block_shift) < arena->cpu_addr ||
             bind.resourceOffset + bind.size > arena->size_bytes) {
@@ -1937,7 +1975,6 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
                         static_cast<unsigned long long>(first_block << block_shift),
                         static_cast<unsigned long long>((last_block + 1) << block_shift));
         }
-        memory_offset += bind.size;
 
         for (u32 block = 0; block < bind.size; block += block_size) {
             *(bda_addrs++) = arena->BufferDeviceAddress() + bind.resourceOffset + block;
@@ -2216,7 +2253,13 @@ void BufferCache::DumpArenas() const {
 }
 
 void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
+    QueueFinishedUnbinds();
     if (pending_binds.empty()) {
+        if (has_pending_unbinds) {
+            has_pending_unbinds = false;
+            free_runs.insert(free_runs.end(), quarantined_runs.begin(), quarantined_runs.end());
+            quarantined_runs.clear();
+        }
         return;
     }
 
@@ -2224,11 +2267,26 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     buffer_binds.reserve(pending_binds.size());
 
     for (const auto& binds : pending_binds) {
+        // bbport: TrimPendingUnbinds can empty an arena's list; a bind info with no binds is
+        // invalid and would drop the whole submission with its signal.
+        if (binds.binds.empty()) {
+            continue;
+        }
         buffer_binds.emplace_back(vk::SparseBufferMemoryBindInfo{
             .buffer = binds.arena->Handle(),
             .bindCount = static_cast<u32>(binds.binds.size()),
             .pBinds = binds.binds.data(),
         });
+    }
+
+    if (buffer_binds.empty()) {
+        pending_binds.clear();
+        if (has_pending_unbinds) {
+            has_pending_unbinds = false;
+            free_runs.insert(free_runs.end(), quarantined_runs.begin(), quarantined_runs.end());
+            quarantined_runs.clear();
+        }
+        return;
     }
 
     const u64 signal_tick = memory_semaphore.NextTick();
@@ -2263,6 +2321,10 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     if (submit_result == vk::Result::eErrorDeviceLost) {
         std::printf("Device lost during a sparse bind\n");
         Vulkan::DeviceLost(instance.GetDevice());
+    } else if (submit_result != vk::Result::eSuccess) {
+        std::printf("Arena: sparse bind failed (%s), %zu arenas\n",
+                    vk::to_string(submit_result).c_str(), buffer_binds.size());
+        std::fflush(stdout);
     }
     static const bool arena_log = [] {
         const char* env = std::getenv("BB_ARENA_LOG");
@@ -2286,6 +2348,327 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     }
 
     pending_binds.clear();
+    // bbport (ReclaimArenaMemory): memory whose unbinds are now submitted may be bound elsewhere.
+    if (has_pending_unbinds) {
+        has_pending_unbinds = false;
+        free_runs.insert(free_runs.end(), quarantined_runs.begin(), quarantined_runs.end());
+        quarantined_runs.clear();
+    }
+}
+
+void BufferCache::TrimPendingUnbinds(const Buffer* arena, u64 first_block, u64 end_block) {
+    const u64 lo = (first_block << block_shift) - arena->cpu_addr;
+    const u64 hi = (end_block << block_shift) - arena->cpu_addr;
+    for (auto& pending : pending_binds) {
+        TrimArenaUnbinds(pending, arena, lo, hi);
+    }
+    // Deferred unbinds of the range go too (its memory is still released with its batch).
+    for (auto& batch : deferred_unbinds) {
+        for (auto& pending : batch.binds) {
+            TrimArenaUnbinds(pending, arena, lo, hi);
+        }
+    }
+}
+
+void BufferCache::QueueFinishedUnbinds() {
+    if (deferred_unbinds.empty() || !scheduler.IsFree(deferred_unbinds.front().tick)) {
+        return;
+    }
+    auto it = deferred_unbinds.begin();
+    for (; it != deferred_unbinds.end() && scheduler.IsFree(it->tick); ++it) {
+        // An arena entry left empty by trimming still frees the runs at the next submission.
+        for (const auto& batch : it->binds) {
+            auto& pending = BindsForArena(batch.arena)->binds;
+            pending.insert(pending.end(), batch.binds.begin(), batch.binds.end());
+        }
+        quarantined_runs.insert(quarantined_runs.end(), it->runs.begin(), it->runs.end());
+        ++deferred_unbinds_submitted;
+    }
+    deferred_unbinds.erase(deferred_unbinds.begin(), it);
+    has_pending_unbinds = true;
+}
+
+u64 BufferCache::WatchArenaBlocks(u64 first_block, u64 end_block, bool watch) {
+    boost::container::small_vector<Backing, 8> pieces;
+    u64 blocks = 0;
+    resident_ranges.ForEachInRange(first_block, end_block, [&](const Backing& backing) {
+        const u64 start = std::max(first_block, backing.start);
+        const u64 end = std::min(end_block, backing.end);
+        if (start < end) {
+            pieces.push_back(backing.SubRange(start, end));
+            blocks += end - start;
+        }
+    });
+    if (!blocks) {
+        return 0;
+    }
+    boost::container::small_vector<vk::BufferCopy, 8> copies;
+    const auto staging =
+        staging_pool.Request(blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+    auto* bda_addrs = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
+    u64 offset = staging.offset;
+    for (const auto& piece : pieces) {
+        const VAddr address = piece.start << block_shift;
+        const Buffer* arena = address_space[address >> arena_page_bits];
+        ASSERT_MSG(arena && address >= arena->cpu_addr, "Watched arena range outside its arena");
+        for (u64 block = piece.start; block < piece.end; ++block) {
+            *(bda_addrs++) = (arena->BufferDeviceAddress() + (block << block_shift) - arena->cpu_addr) |
+                             (watch ? 1u : 0u);
+        }
+        const u64 copy_size = (piece.end - piece.start) * sizeof(vk::DeviceAddress);
+        copies.emplace_back(offset, piece.start * sizeof(vk::DeviceAddress), copy_size);
+        offset += copy_size;
+    }
+    staging.Flush();
+    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    return blocks;
+}
+
+u64 BufferCache::ReleaseArenaBlocks(u64 first_block, u64 end_block) {
+    boost::container::small_vector<Backing, 8> pieces;
+    resident_ranges.ForEachInRange(first_block, end_block, [&](const Backing& backing) {
+        const u64 start = std::max(first_block, backing.start);
+        const u64 end = std::min(end_block, backing.end);
+        if (start < end) {
+            pieces.push_back(backing.SubRange(start, end));
+        }
+    });
+    if (pieces.empty()) {
+        return 0;
+    }
+    resident_ranges.Remove(first_block, end_block,
+                           [](const Backing& backing, u64 a, u64 b) { return backing.SubRange(a, b); });
+    u64 blocks = 0;
+    for (const auto& piece : pieces) {
+        blocks += piece.end - piece.start;
+    }
+    // bbport (after Mevlock, uncharted_pc-dev@2d0b81552, GPL-2.0): the unbinds wait until the GPU
+    // has finished the command buffer being recorded now (BB_ARENA_UNBIND_DEFER=0: submitted with
+    // the next submission, as before). Work already submitted, and draws already in this command
+    // buffer, may still read these ranges through their old page table entries.
+    static const bool defer_unbinds = [] {
+        const char* env = std::getenv("BB_ARENA_UNBIND_DEFER");
+        return !(env && env[0] == '0');
+    }();
+    const bool deferred = defer_unbinds;
+    if (deferred) {
+        const u64 tick = scheduler.CurrentTick();
+        if (deferred_unbinds.empty() || deferred_unbinds.back().tick != tick) {
+            deferred_unbinds.push_back({.tick = tick});
+        }
+    }
+    // The page table entries of the blocks become 0, as for memory never made resident (shaders
+    // reading guest memory directly then see no data instead of another range's).
+    boost::container::small_vector<vk::BufferCopy, 8> copies;
+    const auto staging =
+        staging_pool.Request(blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+    std::memset(staging.mapped, 0, blocks * sizeof(vk::DeviceAddress));
+    u64 offset = staging.offset;
+    for (const auto& piece : pieces) {
+        const VAddr address = piece.start << block_shift;
+        const u64 size = (piece.end - piece.start) << block_shift;
+        const Buffer* arena = address_space[address >> arena_page_bits];
+        ASSERT_MSG(arena && address >= arena->cpu_addr &&
+                       address + size <= arena->cpu_addr + arena->size_bytes,
+                   "Released arena range outside its arena");
+        const vk::SparseMemoryBind unbind = {
+            .resourceOffset = address - arena->cpu_addr,
+            .size = size,
+        };
+        const FreeArenaRun run = {piece.memory, piece.offset << block_shift, piece.end - piece.start};
+        if (deferred) {
+            auto& batch = deferred_unbinds.back();
+            auto it = std::ranges::find(batch.binds, arena, &ArenaBinds::arena);
+            (it != batch.binds.end() ? *it : batch.binds.emplace_back(arena)).binds.push_back(unbind);
+            batch.runs.push_back(run);
+        } else {
+            BindsForArena(arena)->binds.push_back(unbind);
+            quarantined_runs.push_back(run);
+        }
+        // The guest copy is the only one now: the next use uploads it.
+        memory_tracker->MarkRegionAsCpuModified(address, size);
+        const u64 copy_size = (piece.end - piece.start) * sizeof(vk::DeviceAddress);
+        copies.emplace_back(offset, piece.start * sizeof(vk::DeviceAddress), copy_size);
+        offset += copy_size;
+    }
+    staging.Flush();
+    runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    has_pending_unbinds |= !deferred;
+    resident_in_use_blocks -= blocks;
+    return blocks;
+}
+
+void BufferCache::ReclaimArenaMemory() {
+    // bbport (after BilalReloaded's port / Mevlock, uncharted_pc-dev@535a21994, 2d0b81552,
+    // 8174c3153, GPL-2.0): once the arenas hold more than their limit, 1 MiB windows no arena
+    // use touched for BB_ARENA_RECLAIM_AGE_S (default 60) are placed on probation with the page
+    // table watch bit (bit 0) set, then given back oldest-first until the arenas hold 3/4 of the
+    // limit. BB_ARENA_LIMIT_MB (default max(768, budget/4)); BB_ARENA_RECLAIM=0: off;
+    // BB_ARENA_PROBATION=0: give back at once without probation.
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_ARENA_RECLAIM");
+        return !(env && env[0] == '0');
+    }();
+    if (!enabled) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_reclaim_epoch) {
+        return;
+    }
+    next_reclaim_epoch = now + std::chrono::seconds(2);
+    reclaim_epoch = static_cast<u16>(reclaim_epoch + 1);
+    if (!reclaim_epoch) {
+        reclaim_epoch = 1;
+    }
+    epoch_start_tick[reclaim_epoch % ReclaimEpochRing] = scheduler.CurrentTick();
+
+    static const u64 limit = [this] {
+        u64 env_mib = 0;
+        if (const char* env = std::getenv("BB_ARENA_LIMIT_MB"); env && env[0]) {
+            env_mib = std::strtoull(env, nullptr, 10);
+        }
+        const u64 computed = ComputeArenaReclaimLimitBytes(instance.GetTotalMemoryBudget(), env_mib);
+        std::printf("GPU: buffer arenas give back memory unused for a while above %llu MiB "
+                    "(BB_ARENA_LIMIT_MB; BB_ARENA_RECLAIM=0: off)\n",
+                    static_cast<unsigned long long>(computed >> 20));
+        std::fflush(stdout);
+        return computed;
+    }();
+    static const u16 age_epochs = [] {
+        const char* env = std::getenv("BB_ARENA_RECLAIM_AGE_S");
+        const int seconds = env && env[0] ? std::atoi(env) : 60;
+        return static_cast<u16>(std::clamp(seconds, 6, 2 * (int(ReclaimEpochRing) - 4)) / 2);
+    }();
+    static const u16 probation_epochs = [] {
+        const char* env = std::getenv("BB_ARENA_PROBATION");
+        return ComputeProbationEpochs(age_epochs, env && env[0] == '0');
+    }();
+
+    const auto gpu_data = [&](VAddr lo, u64 size) {
+        if (gpu_modified_ranges.Intersects(lo, size) ||
+            memory_tracker->IsRegionGpuModified(lo, size)) {
+            return true;
+        }
+        std::scoped_lock lk{landing_mutex};
+        for (const auto& l : landing_queue) {
+            for (std::size_t i = 0; i < l->targets.size(); ++i) {
+                const VAddr t = l->targets[i];
+                const u64 sz = l->copies[i].size;
+                if (t < lo + size && t + sz > lo) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    const bool over = (resident_in_use_blocks << block_shift) > limit;
+    u64 released = 0, probation_blocks = 0;
+    u32 windows = 0, busy = 0, rescued = 0, watched = 0;
+    std::erase_if(probation, [&](const ProbationWindow& p) {
+        const VAddr lo = p.window << ReclaimWindowBits;
+        const u64 size = u64(1) << ReclaimWindowBits;
+        const u64 first = lo >> block_shift;
+        const u64 end = (lo + size) >> block_shift;
+        if (!over || window_epoch[p.window].load(std::memory_order_relaxed) != p.last_epoch) {
+            WatchArenaBlocks(first, end, false);
+            rescued += over;
+            return true;
+        }
+        const u16 waited = static_cast<u16>(reclaim_epoch - p.since);
+        if (waited < probation_epochs ||
+            !scheduler.IsFree(epoch_start_tick[static_cast<u16>(reclaim_epoch - 1) % ReclaimEpochRing])) {
+            probation_blocks += p.blocks;
+            return false;
+        }
+        if (gpu_data(lo, size)) {
+            WatchArenaBlocks(first, end, false);
+            ++busy;
+            return true;
+        }
+        if (const u64 blocks = ReleaseArenaBlocks(first, end)) {
+            released += blocks;
+            ++windows;
+        }
+        return true;
+    });
+    probation_rescued += rescued;
+
+    if (!over) {
+        return;
+    }
+    const u64 target = limit / 4 * 3;
+
+    // Windows with resident memory, the longest unused first.
+    std::vector<std::pair<u16, u64>> candidates;
+    u64 previous = ~u64{0};
+    for (const auto& backing : resident_ranges) {
+        const u64 first = (backing.start << block_shift) >> ReclaimWindowBits;
+        const u64 last = ((backing.end << block_shift) - 1) >> ReclaimWindowBits;
+        for (u64 w = first; w <= last; ++w) {
+            if (w == previous) {
+                continue;
+            }
+            previous = w;
+            const u16 epoch = window_epoch[w].load(std::memory_order_relaxed);
+            const u16 age = static_cast<u16>(reclaim_epoch - epoch);
+            if (epoch && age < age_epochs) {
+                continue;
+            }
+            candidates.emplace_back(epoch ? age : u16(0xFFFF), w);
+        }
+    }
+    std::ranges::sort(candidates, std::greater{});
+
+    for (const auto& [age, w] : candidates) {
+        if (((resident_in_use_blocks - probation_blocks) << block_shift) <= target) {
+            break;
+        }
+        if (std::ranges::find(probation, w, &ProbationWindow::window) != probation.end()) {
+            continue;
+        }
+        const VAddr lo = w << ReclaimWindowBits;
+        const u64 size = u64(1) << ReclaimWindowBits;
+        // The GPU has finished everything submitted up to the end of the window's last epoch.
+        if (const u16 epoch = window_epoch[w].load(std::memory_order_relaxed);
+            epoch && age < ReclaimEpochRing - 2 &&
+            !scheduler.IsFree(epoch_start_tick[static_cast<u16>(epoch + 1) % ReclaimEpochRing])) {
+            ++busy;
+            continue;
+        }
+        if (gpu_data(lo, size)) {
+            ++busy;
+            continue;
+        }
+        const u64 first = lo >> block_shift;
+        const u64 end = (lo + size) >> block_shift;
+        if (probation_epochs) {
+            if (const u64 blocks = WatchArenaBlocks(first, end, true)) {
+                probation.push_back({w, reclaim_epoch, window_epoch[w].load(std::memory_order_relaxed),
+                                     blocks});
+                probation_blocks += blocks;
+                ++watched;
+            }
+        } else if (const u64 blocks = ReleaseArenaBlocks(first, end)) {
+            released += blocks;
+            ++windows;
+        }
+    }
+    if (windows || busy || watched || rescued) {
+        std::printf("GPU: buffer arenas gave back %llu MiB (%u windows unused for %u s or more; %u "
+                    "kept: GPU data or in use); %llu MiB in use, limit %llu MiB; unbinds after the "
+                    "GPU: %llu done, %zu waiting; probation: %u started, %u used again (%llu in "
+                    "all), %zu on it\n",
+                    static_cast<unsigned long long>((released << block_shift) >> 20), windows,
+                    u32(age_epochs) * 2, busy,
+                    static_cast<unsigned long long>((resident_in_use_blocks << block_shift) >> 20),
+                    static_cast<unsigned long long>(limit >> 20),
+                    static_cast<unsigned long long>(deferred_unbinds_submitted),
+                    deferred_unbinds.size(), watched, rescued,
+                    static_cast<unsigned long long>(probation_rescued), probation.size());
+        std::fflush(stdout);
+    }
 }
 
 } // namespace VideoCore

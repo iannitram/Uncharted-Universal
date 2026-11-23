@@ -6,6 +6,7 @@
 #include "bbport_copy.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -19,6 +20,7 @@
 
 #include "common/interval_set.h"
 #include "common/types.h"
+#include "video_core/buffer_cache/arena_probation.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/fault_manager.h"
 #include "video_core/buffer_cache/range_set.h"
@@ -166,6 +168,11 @@ public:
 
     /// Commits pending sparse buffer memory binds. Must be called before every scheduler submit.
     void SubmitPendingArenaBinds(Vulkan::SubmitInfo& info);
+
+    /// bbport (VRAM give-back & probation, after BilalReloaded's port / Mevlock, GPL-2.0): once
+    /// the arenas hold more than their limit, watches and then gives back 1 MiB windows unused
+    /// for a while (GPU thread, from Rasterizer::OnSubmit; at most every 2 s).
+    void ReclaimArenaMemory();
 
     /// bbport: the arenas' guest and GPU address ranges and the resident block ranges (GPU
     /// crash report).
@@ -315,7 +322,7 @@ private:
 
     struct Backing : public Interval {
         vk::DeviceMemory memory;
-        u64 offset;
+        u64 offset; ///< into `memory`, in blocks (matching start, end, CanMergeWith, and SubRange)
         constexpr bool CanMergeWith(const Backing& other) const noexcept {
             return memory == other.memory && offset + (end - start) == other.offset;
         }
@@ -324,6 +331,44 @@ private:
         }
     };
     IntervalList<Backing> resident_ranges;
+
+    /// bbport (ReclaimArenaMemory, after BilalReloaded's port / Mevlock, GPL-2.0): the 2 s epoch
+    /// in which each 1 MiB window of guest GPU memory was last used through an arena (0: never),
+    /// the scheduler tick at the start of each recent epoch, and arena memory given back after
+    /// probation and GPU-timeline-deferred unbinds.
+    static constexpr u32 ReclaimWindowBits = 20;
+    static constexpr u32 ReclaimEpochRing = 64;
+    std::unique_ptr<std::atomic<u16>[]> window_epoch{
+        new std::atomic<u16>[u64(1) << (ADDRESS_SPACE_BITS - ReclaimWindowBits)]{}};
+    u16 reclaim_epoch = 1;
+    std::chrono::steady_clock::time_point next_reclaim_epoch{};
+    std::array<u64, ReclaimEpochRing> epoch_start_tick{};
+    std::vector<FreeArenaRun> free_runs, quarantined_runs;
+    std::vector<DeferredArenaUnbinds<ArenaBinds>> deferred_unbinds;
+    u64 deferred_unbinds_submitted = 0;
+    std::vector<ProbationWindow> probation;
+    u64 probation_rescued = 0;
+    u64 resident_in_use_blocks = 0;
+    bool has_pending_unbinds = false;
+    void TouchArenaWindows(u64 first_block, u64 last_block) {
+        const u16 epoch = reclaim_epoch;
+        const u64 last = std::min<u64>(((last_block << block_shift) >> ReclaimWindowBits),
+                                       (u64(1) << (ADDRESS_SPACE_BITS - ReclaimWindowBits)) - 1);
+        for (u64 w = (first_block << block_shift) >> ReclaimWindowBits; w <= last; ++w) {
+            if (window_epoch[w].load(std::memory_order_relaxed) != epoch) {
+                window_epoch[w].store(epoch, std::memory_order_relaxed);
+            }
+        }
+    }
+    /// Moves deferred unbinds whose tick the GPU has finished into pending_binds.
+    void QueueFinishedUnbinds();
+    /// Rewrites the page table entries of the resident blocks in [first_block, end_block), with
+    /// the watch bit (bit 0) or without; returns the resident blocks.
+    u64 WatchArenaBlocks(u64 first_block, u64 end_block, bool watch);
+    /// Releases the resident blocks in [first_block, end_block); returns how many.
+    u64 ReleaseArenaBlocks(u64 first_block, u64 end_block);
+    /// Drops pending/deferred unbinds of `arena` inside [first_block, end_block) (bound again).
+    void TrimPendingUnbinds(const Buffer* arena, u64 first_block, u64 end_block);
 
     /// bbport: arena memory chunks (see AllocateArenaMemory).
     struct ArenaChunk {
