@@ -306,4 +306,11 @@ private:
     s32 curr_qid{-1};
 };
 
+/// Returns true when SignalFlip should defer GfxFlip via SignalAfterHostCopies(..., off_recorder=true)
+/// rather than blocking the draw-recording thread in WaitDeferredSignals().
+[[nodiscard]] constexpr bool ShouldDeferFlipSignal(bool on_stage_b,
+                                                   bool recorder_fences_enabled) noexcept {
+    return on_stage_b && recorder_fences_enabled;
+}
+
 } // namespace AmdGpu

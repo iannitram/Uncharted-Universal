@@ -253,9 +253,7 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal, u64 landing_
                                       bool off_recorder) {
     if (!IsRecordingDeferred()) {
         WaitHostCopies();
-        if (VideoCore::LandingGate::Active()) {
-            WaitDeferredSignals();
-        }
+        WaitDeferredSignals();
         VideoCore::LandingGate::Wait(landing_seq);
         signal();
         return;
