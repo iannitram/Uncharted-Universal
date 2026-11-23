@@ -8,6 +8,7 @@
 
 use crate::bundle::{self, sha256_hex, Bundle, Kind};
 use crate::error::{Error, Result};
+use crate::games::Game;
 use crate::platform::Os;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -51,6 +52,29 @@ pub struct AndroidHubManifest {
 /// [`bundle::is_forbidden`].
 pub fn is_valid_apk_path(rel_path: &str) -> bool {
     !bundle::is_forbidden(rel_path) && rel_path.to_ascii_lowercase().ends_with(".apk")
+}
+
+/// Distinct Android `applicationId` / `package` for each Stage 7.03 per-game thin APK (`#524`).
+pub const fn android_apk_application_id(game: Game) -> &'static str {
+    match game {
+        Game::U1 => "org.uncharted.universal.u1",
+        Game::U2 => "org.uncharted.universal.u2",
+        Game::U3 => "org.uncharted.universal.u3",
+    }
+}
+
+/// Distinct Android `android:label` for each Stage 7.03 per-game thin APK (`#524`).
+pub const fn android_apk_label(game: Game) -> &'static str {
+    match game {
+        Game::U1 => "Uncharted 1",
+        Game::U2 => "Uncharted 2",
+        Game::U3 => "Uncharted 3",
+    }
+}
+
+/// Canonical relative `.apk` path for a per-game thin APK served by the build hub.
+pub fn android_apk_rel_path(game: Game, version: &str) -> String {
+    format!("apk/uncharted-{}-{version}.apk", game.key())
 }
 
 fn is_sha256_hex(value: &str) -> bool {
@@ -652,5 +676,26 @@ mod tests {
         ));
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn per_game_thin_apk_specs_are_distinct_and_valid() {
+        let mut ids = std::collections::HashSet::new();
+        let mut labels = std::collections::HashSet::new();
+        let mut paths = std::collections::HashSet::new();
+
+        for game in Game::ALL {
+            let id = android_apk_application_id(game);
+            let label = android_apk_label(game);
+            let path = android_apk_rel_path(game, "0.3.15");
+            assert!(ids.insert(id));
+            assert!(labels.insert(label));
+            assert!(is_valid_apk_path(&path));
+            assert!(paths.insert(path));
+        }
+
+        assert_eq!(ids.len(), 3);
+        assert_eq!(labels.len(), 3);
+        assert_eq!(paths.len(), 3);
     }
 }

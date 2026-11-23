@@ -15,3 +15,9 @@ publish = false
 name = "uncharted_android_apk"
 path = "src/lib.rs"
 crate-type = ["rlib", "staticlib"]
+
+[features]
+default = []
+game-u1 = []
+game-u2 = []
+game-u3 = []
