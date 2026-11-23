@@ -81,6 +81,12 @@ vertical field of view is kept) and does not stretch. Menus keep their 16:9 layo
 middle with the backdrop filling the width. Movies play with bars at the sides. The launcher
 picks the width from a height and a shape (16:9, 21:9, 32:9) or follows the window or screen.
 
+For 2D HUD, menus, pause, and map passes redirected in `gpu/` (`M21b`), `bbgpu_safe_area`
+(matching `uncharted_runtime_safe_area` / `aspect::safe_area`) computes the centered 16:9
+safe-area rectangle inside the output frame. `UiComposition::Anchor` and `Rasterizer` anchor
+16:9 UI viewports, scissors, and screen-space push constants into that safe area without
+stretching across 6:5, 3:2, 16:9, 16:10, and 17.4:9.
+
 ## Limits
 
 - Checked on Uncharted 2 1.02: 2560x1440, 2880x1620, 3200x1800 and 3440x1440 render correctly,
