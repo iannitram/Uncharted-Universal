@@ -445,6 +445,13 @@ target_compile_definitions(vram-probation-test PRIVATE VULKAN_HPP_NO_CONSTRUCTOR
 target_compile_options(vram-probation-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-sign-compare)
 target_link_libraries(vram-probation-test PRIVATE Vulkan::Headers Boost::headers)
 
+add_executable(clear-state-and-submit-waits-test EXCLUDE_FROM_ALL
+    ../tests/test_clear_state_and_submit_waits.cpp
+    shadps4/video_core/amdgpu/regs.cpp)
+target_include_directories(clear-state-and-submit-waits-test PRIVATE shim shadps4)
+target_compile_options(clear-state-and-submit-waits-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
+target_link_libraries(clear-state-and-submit-waits-test PRIVATE Vulkan::Headers Boost::headers)
+
 add_executable(movie-scaling-test EXCLUDE_FROM_ALL ../tests/test_movie_scaling.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(movie-scaling-test PRIVATE shim shadps4)
 target_compile_options(movie-scaling-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)

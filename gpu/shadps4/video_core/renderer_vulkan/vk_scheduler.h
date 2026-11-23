@@ -90,6 +90,14 @@ struct SubmitInfo {
     }
 };
 
+/// Returns the wait stage mask array matching `SubmitInfo::wait_semas`, covering all stages for
+/// every semaphore slot (shadPS4 #5231 / 43e4c470, via UFC-3 5d48fec7e7).
+constexpr auto SubmitWaitStageMasks() {
+    std::array<vk::PipelineStageFlags, std::tuple_size_v<decltype(SubmitInfo::wait_semas)>> masks{};
+    masks.fill(vk::PipelineStageFlagBits::eAllCommands);
+    return masks;
+}
+
 using Viewports = boost::container::static_vector<vk::Viewport, AmdGpu::NUM_VIEWPORTS>;
 using Scissors = boost::container::static_vector<vk::Rect2D, AmdGpu::NUM_VIEWPORTS>;
 using ColorWriteMasks = std::array<vk::ColorComponentFlags, AmdGpu::NUM_COLOR_BUFFERS>;
