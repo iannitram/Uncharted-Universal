@@ -35,9 +35,26 @@ struct DecodeStepResult {
     int av_error = 0;
 };
 
+/// Resolves an output frame's presentation timestamp, avoiding FFmpeg's `AV_NOPTS_VALUE`
+/// (`INT64_MIN`) sentinel which would appear as a huge future `u64` timestamp and stall A/V sync.
+inline std::uint64_t ResolveOutputPts(std::int64_t frame_pts, std::int64_t best_effort_ts,
+                                      std::int64_t av_nopts_value,
+                                      std::uint64_t& last_valid_pts) {
+    if (frame_pts != av_nopts_value) {
+        last_valid_pts = static_cast<std::uint64_t>(frame_pts);
+        return last_valid_pts;
+    }
+    if (best_effort_ts != av_nopts_value) {
+        last_valid_pts = static_cast<std::uint64_t>(best_effort_ts);
+        return last_valid_pts;
+    }
+    return last_valid_pts;
+}
+
 /// Coordinates one FFmpeg send_packet / receive_frame decode step without stalling when
 /// multithreaded frame decoding fills the internal output queue (`AVERROR(EAGAIN)` on send)
-/// or encounters a seek/scene-change EOF or corrupt packet (`AVERROR_INVALIDDATA`).
+/// or encounters a seek/scene-change EOF or corrupt packet (`AVERROR_INVALIDDATA`) on either
+/// send or deferred frame-thread receive.
 template <typename SendFn, typename ReceiveFn, typename FlushFn>
 DecodeStepResult RunDecodeStep(SendFn&& send_packet, ReceiveFn&& receive_frame,
                                FlushFn&& flush_buffers, int err_eagain, int err_eof,
@@ -59,11 +76,27 @@ DecodeStepResult RunDecodeStep(SendFn&& send_packet, ReceiveFn&& receive_frame,
                 result.status = DecodeStepStatus::FrameReady;
                 return result;
             }
-        } else if (drain_ret != err_eagain && drain_ret != err_eof) {
+        } else if (drain_ret == err_eof) {
+            // Decoder reached EOF before draining; flush so the new packet can be sent below.
+            flush_buffers();
+            result.flushed = true;
+            ++stats.send_eof_flushes;
+            send_ret = send_packet();
+        } else if (drain_ret == err_invaliddata) {
+            // Frame-threaded decode surfaced a corrupt buffered AU while draining.
+            flush_buffers();
+            result.flushed = true;
+            ++stats.send_invalid_flushes;
+            send_ret = send_packet();
+        } else if (drain_ret != err_eagain) {
             ++stats.receive_errors;
             stats.last_error = drain_ret;
             result.status = DecodeStepStatus::FatalError;
             result.av_error = drain_ret;
+            return result;
+        } else {
+            // Both send and receive returned EAGAIN; ask caller for more input instead of failing.
+            result.status = DecodeStepStatus::NeedMoreInput;
             return result;
         }
     }
@@ -73,11 +106,14 @@ DecodeStepResult RunDecodeStep(SendFn&& send_packet, ReceiveFn&& receive_frame,
         result.flushed = true;
         ++stats.send_eof_flushes;
         send_ret = send_packet();
-    } else if (send_ret == err_invaliddata) {
-        flush_buffers();
-        result.flushed = true;
-        ++stats.send_invalid_flushes;
-        send_ret = send_packet();
+    }
+    if (send_ret == err_invaliddata) {
+        if (!result.flushed) {
+            flush_buffers();
+            result.flushed = true;
+            ++stats.send_invalid_flushes;
+            send_ret = send_packet();
+        }
         if (send_ret == err_invaliddata) {
             // Corrupt/seek-boundary AU: skip cleanly instead of freezing playback.
             ++stats.corrupt_packets_skipped;
@@ -112,6 +148,19 @@ DecodeStepResult RunDecodeStep(SendFn&& send_packet, ReceiveFn&& receive_frame,
         return result;
     }
     if (recv_ret == err_eagain || recv_ret == err_eof) {
+        result.status = DecodeStepStatus::NeedMoreInput;
+        return result;
+    }
+    if (recv_ret == err_invaliddata) {
+        // With FF_THREAD_FRAME, a corrupt AU can be accepted by send_packet and fail later on
+        // receive_frame; flush and skip instead of returning a fatal API error.
+        flush_buffers();
+        result.flushed = true;
+        result.skipped_corrupt = true;
+        result.av_error = recv_ret;
+        ++stats.send_invalid_flushes;
+        ++stats.corrupt_packets_skipped;
+        stats.last_error = recv_ret;
         result.status = DecodeStepStatus::NeedMoreInput;
         return result;
     }

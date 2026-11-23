@@ -114,6 +114,12 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
         LOG_ERROR(Lib_Vdec2, "ORBIS_VIDEODEC2_ERROR_ACCESS_UNIT_SIZE");
         return ORBIS_VIDEODEC2_ERROR_ACCESS_UNIT_SIZE;
     }
+    if (!frame_buffer.frame_buffer) {
+        LOG_ERROR(Lib_Vdec2, "ORBIS_VIDEODEC2_ERROR_FRAME_BUFFER_POINTER");
+        return ORBIS_VIDEODEC2_ERROR_FRAME_BUFFER_POINTER;
+    }
+
+    std::scoped_lock lock{m_decoder_mutex};
 
     AVPacket* packet = av_packet_alloc();
     if (!packet) {
@@ -174,6 +180,8 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
     output_info.is_valid = false;
     output_info.picture_count = 0;
 
+    std::scoped_lock lock{m_decoder_mutex};
+
     AVFrame* frame = av_frame_alloc();
     if (!frame) {
         LOG_ERROR(Lib_Vdec2, "Failed to allocate frame");
@@ -182,7 +190,14 @@ s32 VdecDecoder::Flush(OrbisVideodec2FrameBuffer& frame_buffer,
 
     avcodec_send_packet(m_codec_context, nullptr);
     int ret = avcodec_receive_frame(m_codec_context, frame);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+    if (ret == AVERROR(EAGAIN)) {
+        av_frame_free(&frame);
+        return ORBIS_OK;
+    } else if (ret == AVERROR_EOF || ret == AVERROR_INVALIDDATA) {
+        if (ret == AVERROR_INVALIDDATA) {
+            LOG_WARNING(Lib_Vdec2, "Flushing decoder after invalid buffered frame during drain");
+        }
+        avcodec_flush_buffers(m_codec_context);
         av_frame_free(&frame);
         return ORBIS_OK;
     } else if (ret < 0) {
@@ -273,6 +288,12 @@ void VdecDecoder::Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer
         output_info.frame_pitch_in_bytes = pitch;
     }
 
+    const u64 pts_data = ResolveOutputPts(frame.pts, frame.best_effort_timestamp, AV_NOPTS_VALUE,
+                                          m_last_valid_pts);
+    const u64 dts_data = (frame.pkt_dts == AV_NOPTS_VALUE || frame.pkt_dts < 0)
+                             ? 0ULL
+                             : static_cast<u64>(frame.pkt_dts);
+
     if (is_avc) {
         auto& picture_info = *(OrbisVideodec2AvcPictureInfo*)((u8*)output_info.frame_buffer +
                                                               output_info.frame_buffer_size);
@@ -280,8 +301,8 @@ void VdecDecoder::Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer
         picture_info = {};
         picture_info.is_valid = true;
 
-        picture_info.pts_data = frame.pts;
-        picture_info.dts_data = frame.pkt_dts;
+        picture_info.pts_data = pts_data;
+        picture_info.dts_data = dts_data;
         picture_info.attached_data = reinterpret_cast<u64>(frame.opaque);
 
         picture_info.frame_crop_top_offset = 0;
@@ -294,8 +315,8 @@ void VdecDecoder::Output(AVFrame& frame, OrbisVideodec2FrameBuffer& frame_buffer
         picture_info = {};
         picture_info.is_valid = true;
 
-        picture_info.pts_data = frame.pts;
-        picture_info.dts_data = frame.pkt_dts;
+        picture_info.pts_data = pts_data;
+        picture_info.dts_data = dts_data;
         picture_info.attached_data = reinterpret_cast<u64>(frame.opaque);
 
         picture_info.frame_crop_top_offset = 0;
@@ -391,7 +412,9 @@ bool VdecDecoder::WriteMovieCopy(const AVFrame& frame, u64 base) {
 }
 
 s32 VdecDecoder::Reset() {
+    std::scoped_lock lock{m_decoder_mutex};
     avcodec_flush_buffers(m_codec_context);
+    m_last_valid_pts = 0;
     return ORBIS_OK;
 }
 
@@ -419,6 +442,7 @@ AVFrame* VdecDecoder::FitToMaxSize(AVFrame& frame) {
     AVFrame* fitted = av_frame_alloc();
     fitted->pts = frame.pts;
     fitted->pkt_dts = frame.pkt_dts;
+    fitted->best_effort_timestamp = frame.best_effort_timestamp;
     fitted->format = AV_PIX_FMT_NV12;
     fitted->width = int(width);
     fitted->height = int(height);
@@ -449,6 +473,7 @@ AVFrame* VdecDecoder::ConvertNV12Frame(AVFrame& frame) {
     }
     nv12_frame->pts = frame.pts;
     nv12_frame->pkt_dts = frame.pkt_dts < 0 ? 0 : frame.pkt_dts;
+    nv12_frame->best_effort_timestamp = frame.best_effort_timestamp;
     nv12_frame->format = AV_PIX_FMT_NV12;
     nv12_frame->width = frame.width;
     nv12_frame->height = frame.height;

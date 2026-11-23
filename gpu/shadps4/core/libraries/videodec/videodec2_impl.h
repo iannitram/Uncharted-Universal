@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <vector>
 
 #include "videodec2.h"
@@ -65,6 +66,8 @@ private:
     SwsCache m_fit_cache;
     u32 m_max_width = 0;
     u32 m_max_height = 0;
+    u64 m_last_valid_pts = 0;
+    std::mutex m_decoder_mutex;
     DecodeRecoveryStats m_recovery_stats{};
 };
 
