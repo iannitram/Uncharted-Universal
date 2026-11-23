@@ -277,6 +277,10 @@ fn regular_file_in_tree(root: &Path, rel_path: &str) -> std::io::Result<()> {
 /// Installs a checked build: `verify(b, staged)` first (nothing changes if it fails); then moves
 /// each `DEVICE_OWNED` entry the old `install_dir` has into `staged`, swaps the folders, and
 /// deletes the old one. Saves are backed up by `update` before this runs (M19).
+///
+/// Any failed step rolls back earlier moves (`put_back`) so `install_dir` keeps its
+/// device-owned entries and `staged` stays intact (ported from `iannitram/totk-native`
+/// `c038153`, MIT).
 pub fn install(b: &Bundle, staged: &Path, install_dir: &Path) -> Result<()> {
     match std::fs::symlink_metadata(staged.join(".uu-transfer-incomplete")) {
         Ok(_) => {
@@ -289,6 +293,17 @@ pub fn install(b: &Bundle, staged: &Path, install_dir: &Path) -> Result<()> {
     }
     verify(b, staged)?;
 
+    if !install_dir.exists() {
+        std::fs::rename(staged, install_dir)?;
+        return Ok(());
+    }
+
+    let old = with_extension(install_dir, "old");
+    if old.exists() {
+        std::fs::remove_dir_all(&old)?;
+    }
+
+    let mut moved: Vec<&str> = Vec::new();
     for name in DEVICE_OWNED {
         let source = install_dir.join(name);
         if !source.exists() {
@@ -296,19 +311,39 @@ pub fn install(b: &Bundle, staged: &Path, install_dir: &Path) -> Result<()> {
         }
         let destination = staged.join(name);
         if destination.exists() {
+            put_back(&moved, staged, install_dir);
             return Err(Error::Io(format!(
                 "{} already exists in the staged build",
                 destination.display()
             )));
         }
-        std::fs::rename(&source, &destination)?;
+        if let Err(err) = std::fs::rename(&source, &destination) {
+            put_back(&moved, staged, install_dir);
+            return Err(err.into());
+        }
+        moved.push(name);
     }
 
-    let old = with_extension(install_dir, "old");
-    std::fs::rename(install_dir, &old)?;
-    std::fs::rename(staged, install_dir)?;
-    std::fs::remove_dir_all(&old)?;
+    if let Err(err) = std::fs::rename(install_dir, &old) {
+        put_back(&moved, staged, install_dir);
+        return Err(err.into());
+    }
+    if let Err(err) = std::fs::rename(staged, install_dir) {
+        put_back(&moved, staged, &old);
+        let _ = std::fs::rename(&old, install_dir);
+        return Err(err.into());
+    }
+
+    let _ = std::fs::remove_dir_all(&old);
     Ok(())
+}
+
+/// Moves the device-owned entries named in `moved` from `from` back into `to`, to undo a
+/// failed `install` step. Best effort: the step's own error is the one the caller reports.
+fn put_back(moved: &[&str], from: &Path, to: &Path) {
+    for entry in moved {
+        let _ = std::fs::rename(from.join(entry), to.join(entry));
+    }
 }
 
 fn with_extension(path: &Path, extension: &str) -> PathBuf {
@@ -783,5 +818,80 @@ mod tests {
         assert!(staged.exists());
         std::fs::remove_dir_all(staged).unwrap();
         std::fs::remove_dir_all(install_dir).unwrap();
+    }
+
+    #[test]
+    fn install_rolls_back_moved_entries_when_a_later_device_owned_entry_conflicts() {
+        let root = temp_dir("install-rollback");
+        let staged = root.join("staged");
+        let install_dir = root.join("install");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::create_dir_all(&install_dir).unwrap();
+        write_file(&staged, "lib/a.so", b"abc");
+        let bundle = manifest(&staged, Os::Linux, 0).unwrap();
+
+        write_file(&install_dir, "saves/keep.sav", b"save");
+        write_file(&install_dir, "logs/old.log", b"old-log");
+        write_file(&staged, "logs/conflict.log", b"conflict");
+
+        let err = install(&bundle, &staged, &install_dir).unwrap_err();
+        assert!(matches!(err, Error::Io(msg) if msg.contains("already exists")));
+
+        assert_eq!(
+            std::fs::read(install_dir.join("saves/keep.sav")).unwrap(),
+            b"save"
+        );
+        assert_eq!(
+            std::fs::read(install_dir.join("logs/old.log")).unwrap(),
+            b"old-log"
+        );
+        assert!(!staged.join("saves").exists());
+        assert!(staged.join("logs/conflict.log").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn install_succeeds_when_install_dir_does_not_exist_yet() {
+        let root = temp_dir("install-fresh");
+        let staged = root.join("staged");
+        let install_dir = root.join("install");
+        std::fs::create_dir_all(&staged).unwrap();
+        write_file(&staged, "lib/a.so", b"abc");
+
+        let bundle = manifest(&staged, Os::Linux, 0).unwrap();
+        install(&bundle, &staged, &install_dir).unwrap();
+
+        assert_eq!(std::fs::read(install_dir.join("lib/a.so")).unwrap(), b"abc");
+        assert!(!staged.exists());
+        assert!(!with_extension(&install_dir, "old").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn install_cleans_up_leftover_old_dir_before_swapping() {
+        let root = temp_dir("install-stale-old");
+        let staged = root.join("staged");
+        let install_dir = root.join("install");
+        let stale_old = with_extension(&install_dir, "old");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::create_dir_all(&stale_old).unwrap();
+        write_file(&staged, "lib/a.so", b"new");
+        write_file(&install_dir, "saves/keep.sav", b"save");
+        write_file(&stale_old, "stale.txt", b"stale");
+
+        let bundle = manifest(&staged, Os::Linux, 0).unwrap();
+        install(&bundle, &staged, &install_dir).unwrap();
+
+        assert_eq!(std::fs::read(install_dir.join("lib/a.so")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(install_dir.join("saves/keep.sav")).unwrap(),
+            b"save"
+        );
+        assert!(!stale_old.exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }
