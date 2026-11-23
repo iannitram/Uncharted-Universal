@@ -1177,8 +1177,10 @@ impl<H: Host> Space<H> {
 
 thread_local! {
     /// How deep this thread holds a [`Memory`] lock exclusively; nested calls skip relocking.
+    #[cfg_attr(target_os = "android", allow(clippy::missing_const_for_thread_local))]
     static EXCLUSIVE_DEPTH: Cell<u32> = const { Cell::new(0) };
     /// Recently found regions for the GPU's per-draw queries.
+    #[cfg_attr(target_os = "android", allow(clippy::missing_const_for_thread_local))]
     static REGION_CACHE: RefCell<RegionCache> = const { RefCell::new(RegionCache::EMPTY) };
 }
 

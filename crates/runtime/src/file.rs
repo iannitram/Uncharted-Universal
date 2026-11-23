@@ -775,6 +775,7 @@ unsafe fn read_full(
     use std::cell::RefCell;
     const BOUNCE: usize = 4 << 20;
     thread_local! {
+        #[cfg_attr(target_os = "android", allow(clippy::missing_const_for_thread_local))]
         static BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     }
     BUFFER.with(|buffer| {

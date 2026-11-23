@@ -1,0 +1,17 @@
+[package]
+name = "uncharted_android_apk"
+description = "Stage 7.03 Android APK scaffold: NativeActivity entry, Slint gamepad key adapter, and fail-closed Turnip driver config"
+version = "0.3.15"
+edition = "2021"
+license = "GPL-2.0-only"
+repository = "https://github.com/iannitram/Uncharted-Universal"
+publish = false
+
+# Standalone crate so host unit tests and Android library checks run without altering the root
+# workspace lockfile or desktop launcher dependencies.
+[workspace]
+
+[lib]
+name = "uncharted_android_apk"
+path = "src/lib.rs"
+crate-type = ["rlib", "staticlib"]
