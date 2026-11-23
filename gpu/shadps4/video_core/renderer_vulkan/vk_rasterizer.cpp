@@ -2086,6 +2086,7 @@ void Rasterizer::NoteSmallWrittenBuffers(const Shader::Info& stage) {
     if (!enabled) {
         return;
     }
+    boost::container::small_vector<std::pair<VAddr, u32>, 4> candidates;
     for (const auto& desc : stage.buffers) {
         if (desc.IsSpecial() || !desc.is_written) {
             continue;
@@ -2095,10 +2096,17 @@ void Rasterizer::NoteSmallWrittenBuffers(const Shader::Info& stage) {
         if (!sharp.base_address || size == 0 || size > 64) {
             continue;
         }
-        std::scoped_lock lk{small_written_mutex};
-        const std::pair<VAddr, u32> range{sharp.base_address, size};
-        if (small_written_buffers.size() < 16 &&
-            std::ranges::find(small_written_buffers, range) == small_written_buffers.end()) {
+        candidates.emplace_back(sharp.base_address, size);
+    }
+    if (candidates.empty()) {
+        return;
+    }
+    std::scoped_lock lk{small_written_mutex};
+    for (const auto& range : candidates) {
+        if (small_written_buffers.size() >= 16) {
+            break;
+        }
+        if (std::ranges::find(small_written_buffers, range) == small_written_buffers.end()) {
             small_written_buffers.push_back(range);
         }
     }
@@ -2218,31 +2226,36 @@ void Rasterizer::ReadBackSmallWrittenBuffers() {
         const char* env = std::getenv("BB_READBACK_SMALL_GATE");
         return env && env[0] == '1';
     }();
-    for (const auto& [address, size] : ranges) {
-        if (!sync && defer) {
-            if (!buffer_cache.IsRangeGpuWritten(address, size)) {
-                continue; // none of these bytes is GPU data, the guest copy is current
-            }
-            if (buffer_cache.DeferGuestCopy(address, address, size, false, gated)) {
-                continue;
-            }
-        }
-        if (sync) {
-            buffer_cache.ReadMemory(address, size, false, true);
-        } else {
+    if (!sync && defer) {
+        std::vector<std::pair<VAddr, u32>> unhandled;
+        buffer_cache.DeferGuestCopyBatch(ranges, gated, unhandled);
+        for (const auto& [address, size] : unhandled) {
             buffer_cache.ReadMemoryAsync(address, size);
+        }
+    } else {
+        for (const auto& [address, size] : ranges) {
+            if (sync) {
+                buffer_cache.ReadMemory(address, size, false, true);
+            } else {
+                buffer_cache.ReadMemoryAsync(address, size);
+            }
         }
     }
     // BB_COPY64_EOP_READBACK (NoteCopy64Readback): gated with BB_COPY64_EOP_GATE=1.
     static const bool copy64_gated = Copy64Gated();
-    for (const auto& [address, size] : copy64) {
-        if (!buffer_cache.IsRangeGpuWritten(address, size)) {
-            continue; // nothing GPU-written there: the guest copy is current
+    if (defer) {
+        std::vector<std::pair<VAddr, u32>> copy64_unhandled;
+        buffer_cache.DeferGuestCopyBatch(copy64, copy64_gated, copy64_unhandled);
+        for (const auto& [address, size] : copy64_unhandled) {
+            buffer_cache.ReadMemory(address, size, false, true);
         }
-        if (defer && buffer_cache.DeferGuestCopy(address, address, size, false, copy64_gated)) {
-            continue;
+    } else {
+        for (const auto& [address, size] : copy64) {
+            if (!buffer_cache.IsRangeGpuWritten(address, size)) {
+                continue; // nothing GPU-written there: the guest copy is current
+            }
+            buffer_cache.ReadMemory(address, size, false, true);
         }
-        buffer_cache.ReadMemory(address, size, false, true);
     }
 }
 

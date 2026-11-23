@@ -19,6 +19,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
+#include "video_core/buffer_cache/guest_copy_batch.h"
 #include "video_core/buffer_cache/memory_tracker.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -230,7 +231,7 @@ bool BufferCache::DownloadOnSideQueue(VAddr page, u64 length) {
         const char* side = std::getenv("BB_SIDE_WAIT");
         return env && env[0] == '0' && !(side && side[0] == '0');
     }();
-    if (wait_writes) {
+    if (wait_writes && gpu_modified_ranges.Intersects(page, length)) {
         u64 fault_tick = 0;
         {
             std::scoped_lock lk{shadow_mutex};
@@ -438,7 +439,6 @@ bool BufferCache::ReadBackOnFaultThread(VAddr device_addr, u64 size) {
     if (!locked || !faulting_found || fault_tick == 0 || fault_tick >= scheduler.CurrentTick()) {
         return false;
     }
-    semaphore.Wait(fault_tick);
     boost::container::small_vector<vk::BufferCopy, 16> copies;
     u64 total = 0;
     for (const auto& candidate : pages) {
@@ -462,6 +462,9 @@ bool BufferCache::ReadBackOnFaultThread(VAddr device_addr, u64 size) {
     }
     if (total > SideQueue::StagingSize) {
         return false;
+    }
+    if (total != 0) {
+        semaphore.Wait(fault_tick);
     }
     // The pages whose GPU data is in guest memory now stop being GPU data, unless a write was
     // marked on them meanwhile; the faulting range becomes the guest's (writable). The bytes go
@@ -646,6 +649,120 @@ bool BufferCache::DeferGuestCopy(VAddr src, VAddr dst, u64 size, bool guest_part
     }
     landing_cv.notify_one();
     return true;
+}
+
+void BufferCache::DeferGuestCopyBatch(std::span<const std::pair<VAddr, u32>> ranges, bool gated,
+                                      std::vector<std::pair<VAddr, u32>>& unhandled) {
+    if (ranges.empty()) {
+        return;
+    }
+    if (!side_queue || land_stopping.load(std::memory_order_acquire)) {
+        unhandled.insert(unhandled.end(), ranges.begin(), ranges.end());
+        return;
+    }
+    boost::container::small_vector<GuestCopyBatchItem, 16> items;
+    for (const auto& [address, size] : ranges) {
+        if (size == 0 || !IsRangeGpuWritten(address, size)) {
+            continue; // none of these bytes is GPU data, the guest copy is current
+        }
+        if (size > SideQueue::StagingSize / 2 || !memory->IsValidGpuMapping(address, size)) {
+            unhandled.emplace_back(address, size);
+            continue;
+        }
+        const u64 first_block = address >> block_shift;
+        const u64 last_block = (address + size - 1) >> block_shift;
+        const Buffer* arena = GetArena(first_block, last_block);
+        if (!arena || address < arena->cpu_addr ||
+            address + size > arena->cpu_addr + arena->size_bytes) {
+            unhandled.emplace_back(address, size);
+            continue;
+        }
+        std::vector<GuestCopySlice> slices;
+        u64 item_bytes = 0;
+        gpu_modified_ranges.ForEachInRange(address, size, [&](VAddr start, VAddr end) {
+            item_bytes = Common::AlignUp(item_bytes, 64) + (end - start);
+            slices.push_back(GuestCopySlice{
+                .src_offset = start - arena->cpu_addr,
+                .target = start,
+                .size = end - start,
+            });
+        });
+        if (slices.empty()) {
+            continue;
+        }
+        if (item_bytes > SideQueue::StagingSize) {
+            unhandled.emplace_back(address, size);
+            continue;
+        }
+        const u64 tick = memory_tracker->LatestGpuWriteTick(address, size);
+        if (tick == 0) {
+            unhandled.emplace_back(address, size);
+            continue;
+        }
+        items.push_back(GuestCopyBatchItem{
+            .arena_key = arena,
+            .tick = tick,
+            .gated = gated,
+            .slices = std::move(slices),
+        });
+    }
+    if (items.empty()) {
+        return;
+    }
+    auto batches = PlanGuestCopyBatches(items, SideQueue::StagingSize);
+    if (batches.empty()) {
+        return;
+    }
+    u64 max_tick = 0;
+    const u64 current_tick = scheduler.CurrentTick();
+    for (auto& batch : batches) {
+        batch.tick = std::min(batch.tick, current_tick);
+        max_tick = std::max(max_tick, batch.tick);
+    }
+    if (max_tick >= current_tick) {
+        scheduler.Flush();
+    }
+    std::vector<std::shared_ptr<Landing>> landings;
+    landings.reserve(batches.size());
+    for (const auto& batch : batches) {
+        const auto* arena = static_cast<const Buffer*>(batch.arena_key);
+        auto landing = std::make_shared<Landing>();
+        landing->tick = batch.tick;
+        landing->buffer = arena->Handle();
+        u64 total = 0;
+        for (const auto& slice : batch.slices) {
+            total = Common::AlignUp(total, 64);
+            landing->copies.push_back(vk::BufferCopy{
+                .srcOffset = slice.src_offset,
+                .dstOffset = total,
+                .size = slice.size,
+            });
+            landing->targets.push_back(slice.target);
+            total += slice.size;
+        }
+        landings.push_back(std::move(landing));
+    }
+    {
+        std::scoped_lock lk{landing_mutex};
+        if (landing_stop) {
+            unhandled.insert(unhandled.end(), ranges.begin(), ranges.end());
+            return;
+        }
+        for (size_t i = 0; i < landings.size(); ++i) {
+            auto& landing = landings[i];
+            if (gated && i + 1 == landings.size()) {
+                landing->seq = ++landing_registered_seq;
+                landing_registered.store(landing->seq, std::memory_order_release);
+            } else {
+                landing->seq = landing_registered_seq;
+            }
+            landing_queue.push_back(std::move(landing));
+        }
+        if (!landing_thread.joinable()) {
+            landing_thread = std::thread([this] { LandingWorker(); });
+        }
+    }
+    landing_cv.notify_one();
 }
 
 /// Waits for the GPU to reach `tick`, in slices, so that the shutdown can cancel it. False when

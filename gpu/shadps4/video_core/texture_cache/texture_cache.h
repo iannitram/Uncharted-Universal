@@ -387,8 +387,8 @@ private:
         }
     }
 
-    /// Copies image memory back to CPU.
-    void DownloadImageMemory(ImageId image_id, bool sync = false);
+    /// Copies image memory back to CPU. Returns true if a download was recorded.
+    bool DownloadImageMemory(ImageId image_id, bool sync = false);
 
     /// Thread function for copying downloaded images out to CPU memory.
     void DownloadedImagesThread(const std::stop_token& token);

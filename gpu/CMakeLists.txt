@@ -429,6 +429,10 @@ target_include_directories(tiny-readback-test PRIVATE shim shadps4)
 target_compile_options(tiny-readback-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(tiny-readback-test PRIVATE bbgpu)
 
+add_executable(small-readback-batch-test EXCLUDE_FROM_ALL ../tests/test_small_readback_batch.cpp)
+target_include_directories(small-readback-batch-test PRIVATE shadps4)
+target_compile_options(small-readback-batch-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(macro-mip-tiling-test EXCLUDE_FROM_ALL ../tests/test_macro_mip_tiling.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(macro-mip-tiling-test PRIVATE shim shadps4)
 target_compile_options(macro-mip-tiling-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)

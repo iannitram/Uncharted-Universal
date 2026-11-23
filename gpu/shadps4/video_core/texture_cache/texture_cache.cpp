@@ -107,9 +107,8 @@ void TextureCache::ProcessDownloadImages(bool flush_tiny) {
         download_images.clear();
         // bbport: copied with the work recorded so far and written to guest memory once the GPU
         // has done it, without waiting here: the game reads them on the CPU a frame or more later.
-        had_tiny = !tiny_download_images.empty();
         for (const ImageId image_id : tiny_download_images) {
-            DownloadImageMemory(image_id, false);
+            had_tiny |= DownloadImageMemory(image_id, false);
         }
         tiny_download_images.clear();
     }
@@ -144,10 +143,10 @@ void TextureCache::QueueDownloadIfNeeded(ImageId image_id, const Image& image) {
     }
 }
 
-void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
+bool TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     Image& image = slot_images[image_id];
     if (False(image.flags & ImageFlagBits::GpuModified)) {
-        return;
+        return false;
     }
     const u32 download_size = image.info.pitch * image.info.size.height * image.info.size.depth *
                               image.info.resources.layers * (image.info.num_bits / 8);
@@ -185,6 +184,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
                 runtime.GetStagingPool().FreeDeferred(download);
             });
     }
+    return true;
 }
 
 /// bbport: the guest memory a MaybeCpuDirty check compares, the same at marking and at
