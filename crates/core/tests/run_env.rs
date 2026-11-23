@@ -248,3 +248,56 @@ fn settings_extra_preserves_u1_copy64_eop_readback_override() {
         Some("1")
     );
 }
+
+#[test]
+fn benchmark_seconds_validates_and_normalizes_launch_env() {
+    assert!(!env(&[]).contains_key("BB_BENCHMARK"));
+
+    for (raw, normalized) in [("1", "1"), ("90", "90"), ("090", "90"), ("86400", "86400")] {
+        let built = env(&[("BB_BENCHMARK", raw)]);
+        assert_eq!(
+            built.get("BB_BENCHMARK").map(String::as_str),
+            Some(normalized)
+        );
+        assert_eq!(
+            uncharted_core::run_env::benchmark_seconds(raw).unwrap(),
+            normalized.parse::<u32>().unwrap()
+        );
+    }
+
+    for invalid in ["", "0", "-1", "1.5", "abc", "86401", "4294967296"] {
+        let err = build_env(
+            Game::U2,
+            &Settings::default(),
+            &PROFILE,
+            &map(&[("BB_BENCHMARK", invalid)]),
+        )
+        .unwrap_err();
+        assert_eq!(err.code(), "launch", "{invalid:?}");
+    }
+}
+
+#[test]
+fn launch_session_forwards_validated_benchmark_seconds_and_player_wins_over_settings() {
+    let mut settings = Settings::default();
+    settings.extra.insert("BB_BENCHMARK".into(), "30".into());
+    let player_env = map(&[("BB_BENCHMARK", "90")]);
+    let paths = uncharted_core::launch::Paths::in_data_dir(std::path::Path::new("data"));
+    let session = uncharted_core::launch::Session {
+        settings: &settings,
+        profile: &PROFILE,
+        player_env: &player_env,
+        paths: &paths,
+        os: Os::Linux,
+    };
+    let built: BTreeMap<_, _> = session.env(Game::U2).unwrap().into_iter().collect();
+    assert_eq!(built["BB_BENCHMARK"], "90");
+    assert_eq!(built["BB_EXE"], "big2-ps4_Shipping.elf");
+
+    let invalid_env = map(&[("BB_BENCHMARK", "0")]);
+    let invalid_session = uncharted_core::launch::Session {
+        player_env: &invalid_env,
+        ..session
+    };
+    assert_eq!(invalid_session.env(Game::U2).unwrap_err().code(), "launch");
+}

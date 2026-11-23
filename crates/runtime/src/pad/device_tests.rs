@@ -1438,3 +1438,115 @@ fn xinput_style_sdl3_pad_is_polled_opened_and_read_in_game() {
     );
     assert!(tool_host.state().open.is_empty());
 }
+
+#[test]
+fn pad_read_state_drives_entry_script_60hz_camera_path_and_benchmark_report() {
+    use crate::benchmark_run::{session_from, Progress};
+    use crate::pad::EntryScript;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+    let saves = std::env::temp_dir().join(format!(
+        "uu-pad-bench-test-{}-{}",
+        std::process::id(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = std::fs::remove_dir_all(&saves);
+    std::fs::create_dir_all(&saves).unwrap();
+
+    let mut rig = rig("benchmark-lifecycle", "", false);
+    // Attach a physical gamepad with non-neutral inputs to prove benchmark overrides it.
+    rig.host.attach(7, "ignored pad");
+    rig.host.press(7, BUTTON_TOUCHPAD, true);
+    rig.host.set_axis(7, axis::RIGHT_X, i16::MAX);
+
+    let mut session = session_from(
+        Some("18"),
+        Some("big2-ps4_Shipping.elf"),
+        &saves,
+        [
+            ("BB_RESOLUTION".into(), "1280x720".into()),
+            ("BB_SAVE_DIR".into(), "/private/saves".into()),
+        ],
+    )
+    .unwrap()
+    .unwrap();
+
+    let origin_us = 10_000_000u64;
+    let step =
+        |rig: &mut Rig, session: &mut crate::benchmark_run::Session, now_us: u64| -> PadData {
+            rig.host.state().benchmark = Some(BenchmarkPad::from(session.pad(now_us)));
+            rig.read()
+        };
+
+    // First read starts the entry script clock.
+    let first = step(&mut rig, &mut session, origin_us);
+    assert_eq!(first.connected, 1);
+    assert_eq!(first.buttons, 0);
+    assert_eq!(first.right_x, 128);
+
+    // Lead-in confirms twice (title screen + Continue/New Game) and ignores lead-in frames.
+    assert_eq!(
+        step(
+            &mut rig,
+            &mut session,
+            origin_us + EntryScript::TITLE_WAIT_MS * 1_000
+        )
+        .buttons,
+        button::CROSS
+    );
+    assert_eq!(
+        step(
+            &mut rig,
+            &mut session,
+            origin_us + EntryScript::SECOND_PRESS_MS * 1_000
+        )
+        .buttons,
+        button::CROSS
+    );
+    assert_eq!(
+        session
+            .frame(origin_us + (EntryScript::DONE_MS - 10) * 1_000, 9_999)
+            .unwrap(),
+        Progress::Running
+    );
+
+    // Measured interval: 18 seconds at 60 Hz (8s right_x=60, 8s right_x=195, 2s right_x=60).
+    let measure_start_us = origin_us + EntryScript::DONE_MS * 1_000;
+    let mut right_xs = Vec::new();
+    for frame_idx in 0..(18 * 60) {
+        let now_us = measure_start_us + frame_idx * 1_000_000 / 60;
+        let data = step(&mut rig, &mut session, now_us);
+        assert_eq!(data.buttons, 0);
+        right_xs.push(data.right_x);
+        if frame_idx > 0 {
+            let vram = 3_200 + (frame_idx % 200);
+            assert_eq!(session.frame(now_us, vram).unwrap(), Progress::Running);
+        }
+    }
+    assert!(right_xs[..480].iter().all(|&x| x == 60));
+    assert!(right_xs[480..960].iter().all(|&x| x == 195));
+    assert!(right_xs[960..].iter().all(|&x| x == 60));
+
+    // Expiry writes <saves>/benchmark.json and returns neutral pad thereafter.
+    let end_us = measure_start_us + 18 * 1_000_000;
+    assert_eq!(session.frame(end_us, 1).unwrap(), Progress::Finished);
+    let post = step(&mut rig, &mut session, end_us + 16_667);
+    assert_eq!(post.buttons, 0);
+    assert_eq!(post.right_x, 128);
+
+    let json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(saves.join("benchmark.json")).unwrap()).unwrap();
+    assert_eq!(json["game"], "u2");
+    assert_eq!(json["seconds"], 18);
+    assert_eq!(
+        json["settings"],
+        serde_json::json!({"BB_RESOLUTION": "1280x720"})
+    );
+    assert_eq!(json["vram_peak_mib"], 3_399);
+    assert_eq!(json["stalls_over_40ms"], 0);
+    assert_eq!(json["ended"], "ok");
+    assert!(json["avg_fps"].as_f64().unwrap() > 55.0);
+
+    let _ = std::fs::remove_dir_all(&saves);
+}

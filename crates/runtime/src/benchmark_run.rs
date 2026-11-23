@@ -14,7 +14,7 @@
 //! frames before it are not sampled, and the first frame at or after its end writes the report.
 
 use std::ffi::{c_char, CStr};
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError, TryLockError};
@@ -243,6 +243,8 @@ impl From<Sample> for BenchmarkPad {
 /// `saves_dir` is null or points to a NUL-terminated string valid for the call.
 #[no_mangle]
 pub unsafe extern "C" fn uncharted_benchmark_start(saves_dir: *const c_char) -> i32 {
+    ACTIVE.store(false, Ordering::Release);
+    *session() = None;
     let Some(benchmark) = std::env::var_os("BB_BENCHMARK") else {
         return 0;
     };
@@ -274,11 +276,13 @@ pub unsafe extern "C" fn uncharted_benchmark_start(saves_dir: *const c_char) -> 
             *session() = Some(started);
             ACTIVE.store(true, Ordering::Release);
             println!("Benchmark: on (BB_BENCHMARK)");
+            let _ = io::stdout().flush();
             1
         }
         Ok(None) => 0,
         Err(error) => {
             eprintln!("ERROR: benchmark: {error}");
+            let _ = io::stderr().flush();
             -1
         }
     }
@@ -327,11 +331,13 @@ pub extern "C" fn uncharted_benchmark_frame(vram_mib: u64) -> i32 {
         Ok(Progress::Finished) => {
             if !was_finished {
                 println!("Benchmark: report written to benchmark.json");
+                let _ = io::stdout().flush();
             }
             FINISHED
         }
         Err(error) => {
             eprintln!("ERROR: benchmark: no report written: {error}");
+            let _ = io::stderr().flush();
             FAILED
         }
     }
