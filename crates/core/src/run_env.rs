@@ -145,15 +145,20 @@ pub fn build_env(
             .or_insert_with(|| value.to_owned());
     }
 
-    // U3's raycaster copy readback is on unless the player chose; no other game gets it.
-    if !player_env.contains_key("BB_COPY64_EOP_READBACK") {
+    // U3's raycaster copy readback is on unless the player or launcher/chapter settings chose;
+    // other games keep it unset unless explicitly requested via settings.extra or player_env (#111).
+    if !player_env.contains_key("BB_COPY64_EOP_READBACK")
+        && !settings.extra.contains_key("BB_COPY64_EOP_READBACK")
+    {
         if game == Game::U3 {
             env.insert("BB_COPY64_EOP_READBACK".to_owned(), "1".to_owned());
         } else {
             env.remove("BB_COPY64_EOP_READBACK");
         }
     }
-    if !player_env.contains_key("BB_READBACK_SMALL_GATE") {
+    if !player_env.contains_key("BB_READBACK_SMALL_GATE")
+        && !settings.extra.contains_key("BB_READBACK_SMALL_GATE")
+    {
         env.remove("BB_READBACK_SMALL_GATE");
     }
 
