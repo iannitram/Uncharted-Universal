@@ -91,4 +91,25 @@ struct ImageInfo {
     u32 stencil_size{};
 };
 
+/// Returns true if `info` qualifies for tiny non-blocking GPU->CPU readback (e.g. U2's 1x1 R32F
+/// autofocus target or <= 4x4 linear targets).
+[[nodiscard]] inline bool IsTinyReadbackInfo(const ImageInfo& info, bool enabled) noexcept {
+    const auto& size = info.size;
+    return enabled && info.guest_address != 0 && size.depth == 1 &&
+           size.width * size.height <= 16 &&
+           (!info.props.is_tiled || (size.width == 1 && size.height == 1));
+}
+
+/// Returns the number of valid bytes `vkCmdCopyImageToBuffer` writes for `info`. For a 1x1x1
+/// single-layer image (whose tiled `pitch` may exceed 1 texel), only one texel is copied; writing
+/// the full pitched `download_size` would copy uninitialized staging bytes into guest memory.
+[[nodiscard]] inline u32 DownloadWriteSize(const ImageInfo& info) noexcept {
+    const u32 bpp = info.num_bits / 8;
+    if (info.size.width == 1 && info.size.height == 1 && info.size.depth == 1 &&
+        info.resources.layers == 1) {
+        return bpp;
+    }
+    return info.pitch * info.size.height * info.size.depth * info.resources.layers * bpp;
+}
+
 } // namespace VideoCore
