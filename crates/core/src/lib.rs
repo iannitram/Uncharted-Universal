@@ -32,6 +32,7 @@ pub mod content_profile;
 pub mod dump;
 pub mod error;
 pub mod fleet;
+pub mod game_download;
 pub mod games;
 pub mod host_env;
 #[cfg(feature = "hub")]
