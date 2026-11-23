@@ -40,6 +40,17 @@ impl MappedImage {
         page_size: usize,
         unresolved_handler: usize,
     ) -> Result<Self, String> {
+        Self::load_with_options(boot, payload, page_size, unresolved_handler, false)
+    }
+
+    /// Same as [`Self::load`], honoring `strict_imports` when resolving linked-module bindings.
+    pub fn load_with_options(
+        boot: &BootImage,
+        payload: &[u8],
+        page_size: usize,
+        unresolved_handler: usize,
+        strict_imports: bool,
+    ) -> Result<Self, String> {
         let image_size =
             usize::try_from(boot.size).map_err(|_| "image size overflow".to_string())?;
         if payload.len() != image_size {
@@ -97,7 +108,7 @@ impl MappedImage {
         };
 
         mapped.emit_traps(boot.import_names.len(), unresolved_handler);
-        mapped.apply_relocs(boot)?;
+        mapped.apply_relocs(boot, strict_imports)?;
         Ok(mapped)
     }
 
@@ -119,8 +130,12 @@ impl MappedImage {
         }
     }
 
-    fn apply_relocs(&self, boot: &BootImage) -> Result<(), String> {
-        let native_libc = boot.format == ProbeFormat::V5;
+    fn apply_relocs(&self, boot: &BootImage, strict_imports: bool) -> Result<(), String> {
+        let native_libc = matches!(
+            boot.format,
+            ProbeFormat::V3 | ProbeFormat::V4 | ProbeFormat::V5
+        ) && !strict_imports
+            && (boot.capabilities & 1) != 0;
         let image_base = self.base();
         let traps_base = self.traps as usize as u64;
         let data_traps_base = self.data_traps as usize as u64;
@@ -166,8 +181,14 @@ impl MappedImage {
         Ok(())
     }
 
-    /// Applies final `PF_R`/`PF_W`/`PF_X` segment permissions after all patches are installed.
+    /// Applies final `PF_R`/`PF_W`/`PF_X` segment permissions after all patches are installed,
+    /// marking the import trap table read-execute and unmapped image gaps inaccessible.
     pub fn protect_segments(&self, segments: &[Segment]) -> Result<(), String> {
+        // SAFETY: `traps` and `base` cover `traps_size` and `mapped_size` bytes.
+        unsafe {
+            protect_mem(self.traps, self.traps_size, 5)?;
+            protect_mem(self.base, self.mapped_size, 0)?;
+        }
         for seg in segments {
             let addr = (self.base() + seg.address) as usize as *mut u8;
             let len = round_page(seg.size as usize, self.page_size);
@@ -407,5 +428,73 @@ mod tests {
         assert_eq!(trap_ptr, mapped.traps as usize as u64);
 
         mapped.protect_segments(&boot.segments).unwrap();
+    }
+
+    #[test]
+    fn load_with_options_honors_strict_imports_on_bbprobe4_bindings() {
+        let mut raw = Vec::new();
+        raw.extend_from_slice(b"BBPROBE4");
+        raw.extend_from_slice(&0x2000u64.to_le_bytes()); // size
+        raw.extend_from_slice(&0x100u64.to_le_bytes()); // entry
+        raw.extend_from_slice(&1u64.to_le_bytes()); // ns
+        raw.extend_from_slice(&1u64.to_le_bytes()); // nr
+        raw.extend_from_slice(&1u64.to_le_bytes()); // import_count
+        raw.extend_from_slice(&1u64.to_le_bytes()); // capabilities (bit 0 = native_libc)
+                                                    // linked module 0: [0, 0x2000), init=0x100, no tls
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0x2000u64.to_le_bytes());
+        raw.extend_from_slice(&0x100u64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&1u64.to_le_bytes()); // nb = 1
+        raw.extend_from_slice(&0x200u64.to_le_bytes()); // procparam
+                                                        // main_tls: 4 u64 zeros
+        for _ in 0..4 {
+            raw.extend_from_slice(&0u64.to_le_bytes());
+        }
+        // binding 0 -> index 0, address 0x300, kind 1 (func)
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0x300u64.to_le_bytes());
+        raw.extend_from_slice(&1u64.to_le_bytes());
+        // segment 0: [0, 0x2000) RWX (7)
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0x2000u64.to_le_bytes());
+        raw.extend_from_slice(&7u64.to_le_bytes());
+        // import 0: unknown NID
+        let mut nid = [0u8; 128];
+        nid[..11].copy_from_slice(b"unknown#a#b");
+        raw.extend_from_slice(&nid);
+        // reloc 0: code import 0 at 0x80
+        raw.extend_from_slice(&0x80u64.to_le_bytes());
+        raw.extend_from_slice(&1u64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        raw.extend_from_slice(&0u64.to_le_bytes());
+        // payload
+        raw.resize(raw.len() + 0x2000, 0);
+
+        let boot = BootImage::parse(&raw, 4096).unwrap();
+        let non_strict = MappedImage::load_with_options(
+            &boot,
+            &raw[boot.image_offset..],
+            4096,
+            dummy_unresolved as *const () as usize,
+            false,
+        )
+        .unwrap();
+        let bound_ptr =
+            unsafe { std::ptr::read_unaligned((non_strict.base() + 0x80) as *const u64) };
+        assert_eq!(bound_ptr, non_strict.base() + 0x300);
+
+        let strict = MappedImage::load_with_options(
+            &boot,
+            &raw[boot.image_offset..],
+            4096,
+            dummy_unresolved as *const () as usize,
+            true,
+        )
+        .unwrap();
+        let trap_ptr = unsafe { std::ptr::read_unaligned((strict.base() + 0x80) as *const u64) };
+        assert_eq!(trap_ptr, strict.traps as usize as u64);
     }
 }

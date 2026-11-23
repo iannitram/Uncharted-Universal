@@ -1,8 +1,9 @@
 //! One-line runtime crash records consumed by `crates/core::logs::crash_line` (#168).
 //!
-//! This module owns the output format, but the legacy C probe/assertion handlers are not yet
-//! wired to the Rust runtime. That integration follows the loader port (roadmap 3.16).
+//! Emits at most one `Crash:` line per process, including async-signal-safe emission from the
+//! loader's fault/watchdog handlers (`crates/runtime/src/loader/fault.rs`).
 
+use std::fmt::{self, Write as FmtWrite};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -38,6 +39,97 @@ pub fn report(kind: CrashKind, location: &str, text: &str) -> io::Result<bool> {
     write_once(&REPORTED, &mut io::stderr().lock(), kind, location, text)
 }
 
+/// Async-signal-safe counterpart to [`report`] sharing the same process-wide once guard.
+///
+/// Formats into a fixed stack buffer without heap allocation or Rust stderr locking and writes
+/// directly to stderr (`fd 2` on Unix). Returns `true` if this call wrote the line.
+pub fn report_signal_safe(kind: CrashKind, location: &str, text: &str) -> bool {
+    if REPORTED.swap(true, Ordering::SeqCst) {
+        return false;
+    }
+    let mut raw = [0u8; 1536];
+    let len = {
+        let mut buf = StackBuf::new(&mut raw);
+        let _ = write_record(&mut buf, kind, location, text);
+        buf.pos
+    };
+    write_stderr_raw(&raw[..len]);
+    true
+}
+
+fn write_stderr_raw(bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        extern "C" {
+            fn write(fd: std::ffi::c_int, buf: *const std::ffi::c_void, count: usize) -> isize;
+        }
+        // SAFETY: fd 2 is stderr and `bytes` is a valid slice for the duration of the call.
+        unsafe {
+            let _ = write(2, bytes.as_ptr().cast(), bytes.len());
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = io::stderr().write_all(bytes);
+    }
+}
+
+struct StackBuf<'a> {
+    buf: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> StackBuf<'a> {
+    fn new(buf: &'a mut [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+
+    fn as_str(&self) -> &str {
+        // Only valid UTF-8 is ever written via `FmtWrite` / `Write` below.
+        std::str::from_utf8(&self.buf[..self.pos]).unwrap_or("")
+    }
+}
+
+impl Write for StackBuf<'_> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        let avail = self.buf.len().saturating_sub(self.pos);
+        let n = data.len().min(avail);
+        self.buf[self.pos..self.pos + n].copy_from_slice(&data[..n]);
+        self.pos += n;
+        Ok(data.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl FmtWrite for StackBuf<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let avail = self.buf.len().saturating_sub(self.pos);
+        if s.len() <= avail {
+            self.buf[self.pos..self.pos + s.len()].copy_from_slice(s.as_bytes());
+            self.pos += s.len();
+            return Ok(());
+        }
+        // Truncate cleanly at a UTF-8 char boundary.
+        let mut end = 0usize;
+        for ch in s.chars() {
+            let next = end + ch.len_utf8();
+            if next > avail {
+                break;
+            }
+            end = next;
+        }
+        self.buf[self.pos..self.pos + end].copy_from_slice(&s.as_bytes()[..end]);
+        self.pos += end;
+        Ok(())
+    }
+}
+
 fn write_once(
     guard: &AtomicBool,
     writer: &mut impl Write,
@@ -57,27 +149,28 @@ fn write_record(
     location: &str,
     text: &str,
 ) -> io::Result<()> {
-    let location = one_line(location, 128);
-    let text = one_line(text, 200);
-    writeln!(
-        writer,
-        "Crash: kind={} where={} text={}",
-        kind.as_str(),
-        if location.is_empty() {
-            "unknown"
-        } else {
-            &location
-        },
-        if text.is_empty() { "unknown" } else { &text },
-    )
+    writer.write_all(b"Crash: kind=")?;
+    writer.write_all(kind.as_str().as_bytes())?;
+    writer.write_all(b" where=")?;
+    write_one_line(writer, location, 128)?;
+    writer.write_all(b" text=")?;
+    write_one_line(writer, text, 200)?;
+    writer.write_all(b"\n")
 }
 
-fn one_line(value: &str, max_chars: usize) -> String {
-    value
-        .chars()
-        .take(max_chars)
-        .map(|ch| if ch.is_control() { ' ' } else { ch })
-        .collect()
+fn write_one_line(writer: &mut impl Write, value: &str, max_chars: usize) -> io::Result<()> {
+    let mut wrote = false;
+    let mut utf8 = [0u8; 4];
+    for ch in value.chars().take(max_chars) {
+        let mapped = if ch.is_control() { ' ' } else { ch };
+        let encoded = mapped.encode_utf8(&mut utf8);
+        writer.write_all(encoded.as_bytes())?;
+        wrote = true;
+    }
+    if !wrote {
+        writer.write_all(b"unknown")?;
+    }
+    Ok(())
 }
 
 /// Decoded `MOVBE` memory-operand instruction for AMD FX emulation.
@@ -188,7 +281,7 @@ pub fn format_linux_fault(
     fault_addr: u64,
     host_where: Option<(&str, u64, Option<&str>)>,
 ) -> String {
-    if rip.wrapping_sub(image_base) < 0x1000_0000 {
+    if image_base != 0 && rip.wrapping_sub(image_base) < 0x1000_0000 {
         format!(
             "Guest fault (signal {sig}) at guest offset {:#x}, address {:#x}\n",
             rip.wrapping_sub(image_base),
@@ -205,9 +298,157 @@ pub fn format_linux_fault(
     }
 }
 
+fn write_linux_fault_crash_fields(
+    where_out: &mut impl FmtWrite,
+    text_out: &mut impl FmtWrite,
+    sig: i32,
+    rip: u64,
+    image_base: u64,
+    fault_addr: u64,
+    host_where: Option<(&str, u64, Option<&str>)>,
+) {
+    if image_base != 0 && rip.wrapping_sub(image_base) < 0x1000_0000 {
+        let offset = rip.wrapping_sub(image_base);
+        let _ = write!(where_out, "{offset:#x}");
+        let _ = write!(
+            text_out,
+            "signal {sig} at guest offset {offset:#x}, address {fault_addr:#x}"
+        );
+    } else if let Some((fname, off, sname)) = host_where {
+        // Strip host directories so no local user/install paths appear in Crash: (#168).
+        let base = fname.rsplit(['/', '\\']).next().unwrap_or(fname);
+        let _ = write!(where_out, "{base}+{off:#x}");
+        let _ = write!(
+            text_out,
+            "signal {sig} ({}) at address {fault_addr:#x}",
+            sname.unwrap_or("?")
+        );
+    } else {
+        let _ = write!(where_out, "{rip:#x}");
+        let _ = write!(
+            text_out,
+            "signal {sig} at RIP {rip:#x}, address {fault_addr:#x}"
+        );
+    }
+}
+
+/// Computes `(where, text)` fields for a Linux fault `Crash:` record.
+pub fn linux_fault_crash_fields(
+    sig: i32,
+    rip: u64,
+    image_base: u64,
+    fault_addr: u64,
+    host_where: Option<(&str, u64, Option<&str>)>,
+) -> (String, String) {
+    let mut where_str = String::new();
+    let mut text_str = String::new();
+    write_linux_fault_crash_fields(
+        &mut where_str,
+        &mut text_str,
+        sig,
+        rip,
+        image_base,
+        fault_addr,
+        host_where,
+    );
+    (where_str, text_str)
+}
+
+/// Emits one async-signal-safe `Crash: kind=fault ...` line for a Linux signal fault (#168).
+pub fn report_linux_fault_signal_safe(
+    sig: i32,
+    rip: u64,
+    image_base: u64,
+    fault_addr: u64,
+    host_where: Option<(&str, u64, Option<&str>)>,
+) -> bool {
+    let mut where_raw = [0u8; 256];
+    let mut text_raw = [0u8; 256];
+    let mut where_buf = StackBuf::new(&mut where_raw);
+    let mut text_buf = StackBuf::new(&mut text_raw);
+    write_linux_fault_crash_fields(
+        &mut where_buf,
+        &mut text_buf,
+        sig,
+        rip,
+        image_base,
+        fault_addr,
+        host_where,
+    );
+    report_signal_safe(CrashKind::Fault, where_buf.as_str(), text_buf.as_str())
+}
+
+fn write_windows_fault_crash_fields(
+    where_out: &mut impl FmtWrite,
+    text_out: &mut impl FmtWrite,
+    code: u32,
+    rip: u64,
+    image_base: u64,
+    access: Option<(&str, u64)>,
+    host_where: Option<(&str, u64)>,
+) {
+    if image_base != 0 && rip.wrapping_sub(image_base) < 0x2000_0000 {
+        let offset = rip.wrapping_sub(image_base);
+        let _ = write!(where_out, "{offset:#x}");
+        if let Some((kind, addr)) = access {
+            let _ = write!(
+                text_out,
+                "{kind} access to {addr:#x} at guest offset {offset:#x}"
+            );
+        } else {
+            let _ = write!(
+                text_out,
+                "exception {code:#010x} at guest offset {offset:#x}"
+            );
+        }
+    } else if let Some((module, off)) = host_where {
+        let base = module.rsplit(['/', '\\']).next().unwrap_or(module);
+        let _ = write!(where_out, "{base}+{off:#x}");
+        if let Some((kind, addr)) = access {
+            let _ = write!(text_out, "{kind} access to {addr:#x}");
+        } else {
+            let _ = write!(text_out, "exception {code:#010x}");
+        }
+    } else {
+        let _ = write!(where_out, "{rip:#x}");
+        if let Some((kind, addr)) = access {
+            let _ = write!(text_out, "{kind} access to {addr:#x} at RIP {rip:#x}");
+        } else {
+            let _ = write!(text_out, "exception {code:#010x} at RIP {rip:#x}");
+        }
+    }
+}
+
+/// Emits one `Crash: kind=fault ...` line for a Windows exception fault (#168).
+pub fn report_windows_fault_signal_safe(
+    code: u32,
+    rip: u64,
+    image_base: u64,
+    access: Option<(&str, u64)>,
+    host_where: Option<(&str, u64)>,
+) -> bool {
+    let mut where_raw = [0u8; 256];
+    let mut text_raw = [0u8; 256];
+    let mut where_buf = StackBuf::new(&mut where_raw);
+    let mut text_buf = StackBuf::new(&mut text_raw);
+    write_windows_fault_crash_fields(
+        &mut where_buf,
+        &mut text_buf,
+        code,
+        rip,
+        image_base,
+        access,
+        host_where,
+    );
+    report_signal_safe(CrashKind::Fault, where_buf.as_str(), text_buf.as_str())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{format_linux_fault, movbe_decode, write_once, write_record, CrashKind};
+    use super::{
+        format_linux_fault, linux_fault_crash_fields, movbe_decode, write_once, write_record,
+        CrashKind,
+    };
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -289,5 +530,31 @@ mod tests {
             format_linux_fault(4, 0x7fff_0100, 0x1000_0000, 0, None),
             "Fault (signal 4) at RIP 0x7fff0100, address 0x0\n"
         );
+        // Zero image_base must not treat low host addresses as guest offsets.
+        assert_eq!(
+            format_linux_fault(11, 0x1000, 0, 0, None),
+            "Fault (signal 11) at RIP 0x1000, address 0x0\n"
+        );
+    }
+
+    #[test]
+    fn linux_fault_crash_fields_match_known_issues_and_strip_host_paths() {
+        let (loc, text) = linux_fault_crash_fields(11, 0x1074_d488, 0x1000_0000, 0x0, None);
+        assert_eq!(loc, "0x74d488");
+        assert_eq!(text, "signal 11 at guest offset 0x74d488, address 0x0");
+
+        let (loc, text) = linux_fault_crash_fields(
+            11,
+            0x7fff_0100,
+            0x1000_0000,
+            0x10,
+            Some(("/home/deck/dev/out/gpu/libbbgpu.so", 0x100, Some("draw"))),
+        );
+        assert_eq!(loc, "libbbgpu.so+0x100");
+        assert_eq!(text, "signal 11 (draw) at address 0x10");
+
+        let (loc, text) = linux_fault_crash_fields(4, 0x7fff_0100, 0, 0x20, None);
+        assert_eq!(loc, "0x7fff0100");
+        assert_eq!(text, "signal 4 at RIP 0x7fff0100, address 0x20");
     }
 }
