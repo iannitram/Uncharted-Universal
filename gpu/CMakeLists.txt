@@ -449,6 +449,14 @@ set_source_files_properties(../tests/test_shared_memory_bounds.cpp PROPERTIES
 target_link_libraries(shared-memory-bounds-test PRIVATE bbgpu)
 add_dependencies(shared-memory-bounds-test host_shaders)
 
+add_executable(nan-guard-test EXCLUDE_FROM_ALL ../tests/test_nan_guard.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(nan-guard-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
+target_compile_options(nan-guard-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../tests/test_nan_guard.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(nan-guard-test PRIVATE bbgpu)
+add_dependencies(nan-guard-test host_shaders)
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
