@@ -268,6 +268,14 @@ public:
         return vk13_features.subgroupSizeControl && vk13_props.maxSubgroupSize >= 64;
     }
 
+    /// Ported from Mevlock/uncharted_pc-dev@1c0eedd: returns true if shaders of this stage can be
+    /// required to run with 64-lane subgroups (device supports 64-lane subgroups and lists the
+    /// stage in requiredSubgroupSizeStages, satisfying VUID-VkPipelineShaderStageCreateInfo-pNext-02755).
+    bool CanRequireSubgroupSize64(vk::ShaderStageFlagBits stage) const {
+        return IsSubgroupSize64Supported() &&
+               static_cast<bool>(vk13_props.requiredSubgroupSizeStages & stage);
+    }
+
     /// bbport (from BilalReloaded's port 0.8.1, #328): the subgroup size compute shaders are given where the driver
     /// may pick another one per shader (Intel: 8, 16 or 32), 0 where it cannot (NVIDIA: always 32) or 64 is used.
     /// The recompiler splits the guest's 64-lane waves by the device's subgroup size, so a shader the driver built

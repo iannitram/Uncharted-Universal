@@ -217,7 +217,13 @@ struct StageSpecialization {
         // bindings still may change as they depend on previously processed FS. The check below
         // handles this case and prevents generation of redundant permutations. This is also safe
         // for other types of shaders with no bindings.
-        if (bitset.none() && other.bitset.none()) {
+        // Ported from Mevlock/uncharted_pc-dev@13a3d58: only a stage without resource slots may
+        // ignore binding start. A stage with buffers, images, or samplers whose sharps were all null
+        // at the draw (empty bitset) still numbers bindings from its start; reusing it for another
+        // start overlaps the preceding stage's bindings (e.g. U3 VS with 1 null buffer at start 2).
+        if (bitset.none() && other.bitset.none() && buffers.empty() && images.empty() &&
+            samplers.empty() && other.buffers.empty() && other.images.empty() &&
+            other.samplers.empty()) {
             return true;
         }
 
