@@ -736,6 +736,12 @@ mod tests {
 
         let mut next_arg = 0u64;
         assert_eq!(fiber_return_to_thread(arg_init + arg_run, &mut next_arg), 0);
+        let mut resumed_mxcsr: u32 = 0;
+        core::arch::asm!("stmxcsr [{}]", in(reg) &mut resumed_mxcsr, options(nostack));
+        assert_eq!(
+            resumed_mxcsr, 0x9fc0,
+            "resumed fiber must preserve MXCSR 0x9fc0 across host threads"
+        );
         arg_run = next_arg;
         assert_eq!(
             fiber_return_to_thread(arg_init * 10 + arg_run, &mut next_arg),

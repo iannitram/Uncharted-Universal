@@ -757,3 +757,84 @@ fn a_runtime_slot_mapping_wins_over_a_changed_selection() {
         ]
     );
 }
+
+#[test]
+fn u1_chapter_3_where_json_enables_copy64_eop_readback_and_gate() {
+    let fx = Fixture::new(&[]);
+    let save_dir = saves::slot_dir(&fx.paths.user_dir, Game::U1, 1);
+    fs::create_dir_all(&save_dir).unwrap();
+    fs::write(
+        save_dir.join(crate::logs::WHERE_FILE),
+        r#"{"game":"u1","title":"Uncharted: Drake's Fortune","subtitle":"A Surprising Find"}"#,
+    )
+    .unwrap();
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U1)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_COPY64_EOP_READBACK"], "1");
+    assert_eq!(env["BB_COPY64_EOP_GATE"], "1");
+
+    // Another U1 chapter turns both off.
+    fs::write(
+        save_dir.join(crate::logs::WHERE_FILE),
+        r#"{"game":"u1","title":"Uncharted: Drake's Fortune","subtitle":"Ambushed"}"#,
+    )
+    .unwrap();
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U1)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_COPY64_EOP_READBACK"], "0");
+    assert_eq!(env["BB_COPY64_EOP_GATE"], "0");
+}
+
+#[test]
+fn chapter_fix_respects_player_and_settings_overrides_and_selected_slot() {
+    let mut fx = Fixture::new(&[]);
+    saves::select(&fx.paths.user_dir, Game::U1, 2).unwrap();
+    let slot2 = saves::slot_dir(&fx.paths.user_dir, Game::U1, 2);
+    fs::create_dir_all(&slot2).unwrap();
+    fs::write(
+        slot2.join(crate::logs::WHERE_FILE),
+        r#"{"game":"u1","title":"Uncharted: Drake's Fortune","subtitle":"Chapter 3"}"#,
+    )
+    .unwrap();
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U1)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_COPY64_EOP_READBACK"], "1");
+    assert_eq!(env["BB_COPY64_EOP_GATE"], "1");
+
+    // Launcher settings override wins over chapter fix.
+    fx.settings
+        .extra
+        .insert("BB_COPY64_EOP_READBACK".into(), "0".into());
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U1)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_COPY64_EOP_READBACK"], "0");
+    assert!(!env.contains_key("BB_COPY64_EOP_GATE"));
+
+    // Player env override also wins over chapter fix.
+    fx.settings.extra.clear();
+    fx.player.insert("BB_COPY64_EOP_GATE".into(), "0".into());
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U1)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_COPY64_EOP_GATE"], "0");
+    assert!(!env.contains_key("BB_COPY64_EOP_READBACK"));
+}
