@@ -51,6 +51,18 @@ impl AndroidLaunchConfig {
         }
     }
 
+    pub fn for_game_with_system_mali(game: AndroidGame) -> Self {
+        Self {
+            game,
+            package_name: game.application_id().to_owned(),
+            min_sdk_version: MIN_SUPPORTED_ANDROID_API,
+            target_sdk_version: TARGET_ANDROID_API,
+            bundled_game_assets: false,
+            game_files_present: false,
+            driver: TurnipDriverConfig::system_mali(),
+        }
+    }
+
     pub fn with_bundled_turnip(
         native_library_dir: impl Into<String>,
         app_storage_dir: impl Into<String>,
