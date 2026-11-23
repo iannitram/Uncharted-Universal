@@ -235,22 +235,25 @@ fn choices_offer_only_what_the_gpu_and_profile_allow() {
 #[test]
 fn left_and_right_change_a_choice_and_a_cycles_it() {
     let mut vm = SettingsVm::new(Stored::default(), desktop(), None);
-    // Down past the cards and Tune to the frame rate.
+    // Down past the cards and Tune to the frame rate (desktop offers [30, 60], default 60).
     vm.handle(Input::Move(Nav::Down));
     vm.handle(Input::Move(Nav::Down));
     vm.handle(Input::Move(Nav::Down));
     assert_eq!(vm.focus(), Grid::at(3, 0));
     assert_eq!(vm.view().choices[1].value, "60 FPS");
-    let SettingsCommand::Save(stored) = vm.handle(Input::Move(Nav::Right)) else {
-        panic!("no save");
-    };
-    assert_eq!(stored.frame_rate, "120");
-    // At the end Right does nothing; A goes round.
+    // At the end Right does nothing; Left steps back to 30.
     assert_eq!(vm.handle(Input::Move(Nav::Right)), SettingsCommand::None);
     assert!(!vm.view().choices[1].can_next);
-    vm.handle(Input::Activate);
+    let SettingsCommand::Save(stored) = vm.handle(Input::Move(Nav::Left)) else {
+        panic!("no save");
+    };
+    assert_eq!(stored.frame_rate, "30");
+    assert_eq!(vm.handle(Input::Move(Nav::Left)), SettingsCommand::None);
     assert_eq!(vm.stored().frame_rate, "30");
-    vm.handle(Input::Move(Nav::Left));
+    // A cycles forward (30 -> 60 -> 30).
+    vm.handle(Input::Activate);
+    assert_eq!(vm.stored().frame_rate, "60");
+    vm.handle(Input::Activate);
     assert_eq!(vm.stored().frame_rate, "30");
     // A click on a choice row's arrows.
     assert!(matches!(vm.click(3, 1), SettingsCommand::Save(_)));
@@ -259,18 +262,19 @@ fn left_and_right_change_a_choice_and_a_cycles_it() {
 
 #[test]
 fn a_profile_change_fits_the_values_to_it() {
+    // 120 FPS is outside 1.0's <=60 Hz profiles (SPEC Won't / #152), so it clamps to 60.
     let stored = Stored {
         frame_rate: "120".into(),
         ..Stored::default()
     };
     let mut vm = SettingsVm::new(stored, desktop(), None);
-    assert_eq!(vm.stored().frame_rate, "120");
+    assert_eq!(vm.stored().frame_rate, "60");
     vm.focus = Grid::at(2, 0);
     // auto, amd-handheld, ...
     vm.handle(Input::Move(Nav::Right));
     assert_eq!(vm.stored().device_profile, "amd-handheld");
     assert_eq!(vm.profile().id, "amd-handheld");
-    assert_eq!(vm.stored().frame_rate, "30");
+    assert_eq!(vm.stored().frame_rate, "60");
     assert_eq!(vm.view().choices[0].value, "AMD handheld");
     // An unknown profile id is auto.
     let vm = SettingsVm::new(
