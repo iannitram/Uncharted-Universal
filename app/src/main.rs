@@ -1803,12 +1803,12 @@ mod tests {
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
         );
-        // A click on the frame rate's ">" saves 120.
-        window.invoke_page_clicked(3, 1);
-        assert_eq!(window.get_choices().row_data(1).unwrap().value, "120 FPS");
+        // A click on the frame rate's "<" saves 30 (desktop offers [30, 60] per #152).
+        window.invoke_page_clicked(3, 0);
+        assert_eq!(window.get_choices().row_data(1).unwrap().value, "30 FPS");
         assert!(matches!(
             commands.borrow().last(),
-            Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "120"
+            Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "30"
         ));
         // The raw mouse checkbox and sensitivity share mouse, keyboard and controller handling.
         assert!(choices[6].checkbox && !choices[6].checked);
