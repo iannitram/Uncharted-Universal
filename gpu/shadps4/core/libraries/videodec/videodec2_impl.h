@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "videodec2.h"
+#include "videodec2_recovery.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -64,6 +65,7 @@ private:
     SwsCache m_fit_cache;
     u32 m_max_width = 0;
     u32 m_max_height = 0;
+    DecodeRecoveryStats m_recovery_stats{};
 };
 
 } // namespace Libraries::Videodec2

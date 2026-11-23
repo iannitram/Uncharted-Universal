@@ -127,18 +127,6 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
     packet->dts = input_data.dts_data;
     packet->opaque = reinterpret_cast<void*>(input_data.attached_data);
 
-    int ret = avcodec_send_packet(m_codec_context, packet);
-    if (ret == AVERROR_EOF) {
-        // Attempt to flush buffers and try again.
-        avcodec_flush_buffers(m_codec_context);
-        ret = avcodec_send_packet(m_codec_context, packet);
-    }
-    if (ret < 0) {
-        LOG_ERROR(Lib_Vdec2, "Error sending packet to decoder: {}", ret);
-        av_packet_free(&packet);
-        return ORBIS_VIDEODEC2_ERROR_API_FAIL;
-    }
-
     AVFrame* frame = av_frame_alloc();
     if (frame == nullptr) {
         LOG_ERROR(Lib_Vdec2, "Failed to allocate frame");
@@ -146,22 +134,37 @@ s32 VdecDecoder::Decode(const OrbisVideodec2InputData& input_data,
         return ORBIS_VIDEODEC2_ERROR_API_FAIL;
     }
 
-    ret = avcodec_receive_frame(m_codec_context, frame);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+    const DecodeStepResult step = RunDecodeStep(
+        [&] { return avcodec_send_packet(m_codec_context, packet); },
+        [&] { return avcodec_receive_frame(m_codec_context, frame); },
+        [&] { avcodec_flush_buffers(m_codec_context); }, AVERROR(EAGAIN), AVERROR_EOF,
+        AVERROR_INVALIDDATA, m_recovery_stats);
+
+    if (step.drained_before_send &&
+        DecodeRecoveryStats::ShouldLog(m_recovery_stats.send_eagain_drains)) {
+        LOG_WARNING(Lib_Vdec2, "Drained pending frame after send_packet EAGAIN (count={})",
+                    m_recovery_stats.send_eagain_drains);
+    }
+    if (step.skipped_corrupt &&
+        DecodeRecoveryStats::ShouldLog(m_recovery_stats.corrupt_packets_skipped)) {
+        LOG_WARNING(Lib_Vdec2, "Skipped corrupt/invalid AU after flush (err={}, count={})",
+                    step.av_error, m_recovery_stats.corrupt_packets_skipped);
+    }
+
+    av_packet_free(&packet);
+
+    if (step.status == DecodeStepStatus::NeedMoreInput) {
         LOG_TRACE(Lib_Vdec2, "AVERROR_EOF or AVERROR(EAGAIN)");
-        av_packet_free(&packet);
         av_frame_free(&frame);
         return ORBIS_OK;
-    } else if (ret < 0) {
-        LOG_ERROR(Lib_Vdec2, "Error receiving frame from decoder: {}", ret);
-        av_packet_free(&packet);
+    }
+    if (step.status == DecodeStepStatus::FatalError) {
+        LOG_ERROR(Lib_Vdec2, "Videodec2 decode step failed: {}", step.av_error);
         av_frame_free(&frame);
         return ORBIS_VIDEODEC2_ERROR_API_FAIL;
     }
 
     EmitFrame(frame, frame_buffer, output_info);
-
-    av_packet_free(&packet);
     return ORBIS_OK;
 }
 
