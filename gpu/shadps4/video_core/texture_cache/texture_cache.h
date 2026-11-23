@@ -130,7 +130,8 @@ public:
     void UnmapMemory(VAddr cpu_addr, size_t size);
 
     /// Schedules a copy of pending images for download back to CPU memory.
-    void ProcessDownloadImages();
+    /// `flush_tiny`: submit recorded tiny-readback copies immediately (e.g. on EOP events).
+    void ProcessDownloadImages(bool flush_tiny = false);
 
     /// Retrieves the image handle of the image with the provided attributes.
     [[nodiscard]] ImageId FindImage(ImageDesc& desc, bool exact_fmt = false);
@@ -470,6 +471,8 @@ private:
     std::unordered_set<ImageId> tiny_download_images;
     /// bbport: whether the image is such a result: at most 4x4 pixels, linear or 1x1.
     [[nodiscard]] static bool TinyReadback(const Image& image);
+    /// Enqueues `image_id` for linear or tiny readback when eligible.
+    void QueueDownloadIfNeeded(ImageId image_id, const Image& image);
     PageTable page_table;
     std::recursive_mutex mutex;
     const ImageIds* protected_image_ids = nullptr;

@@ -157,7 +157,7 @@ public:
     /// A guest write hit a protected page.
     bool OnWriteFault(VAddr addr, bool assume_locks);
     bool ReadMemory(VAddr addr, u64 size, bool assume_locks = false);
-    void ProcessDownloadImages();
+    void ProcessDownloadImages(bool flush_tiny = false);
     /// bbport diagnosis (BB_OUTPUT_CHECK=N with BB_STALE_CHECK): at every Nth end-of-pipe
     /// fence, reads back this frame's compute-written vertices and reports impossible ones.
     void CheckComputeOutputs();

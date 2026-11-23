@@ -2201,7 +2201,7 @@ void Rasterizer::ReadBackSmallWrittenBuffers() {
         return env && env[0] == '1';
     }();
     for (const auto& [address, size] : ranges) {
-        if (defer) {
+        if (!sync && defer) {
             if (!buffer_cache.IsRangeGpuWritten(address, size)) {
                 continue; // none of these bytes is GPU data, the guest copy is current
             }
@@ -2681,6 +2681,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     if (!BindResources(pipeline)) {
         return;
     }
+    NoteSmallWrittenBuffers(pipeline->GetStage(Shader::SwStage::Compute));
 
     const auto [buffer, base] = buffer_cache.ObtainBuffer(address + offset, size, false);
     needs_barrier |= runtime.IsBufferAccessed(buffer, base, size);
@@ -4893,9 +4894,9 @@ void Rasterizer::CheckComputeOutputs() {
     }
 }
 
-void Rasterizer::ProcessDownloadImages() {
+void Rasterizer::ProcessDownloadImages(bool flush_tiny) {
     DrainDrawPipe();
-    texture_cache.ProcessDownloadImages();
+    texture_cache.ProcessDownloadImages(flush_tiny);
 }
 
 bool Rasterizer::IsMapped(VAddr addr, u64 size) {

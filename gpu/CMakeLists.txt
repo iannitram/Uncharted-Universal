@@ -424,6 +424,11 @@ target_include_directories(expand-image-test PRIVATE shim shadps4)
 target_compile_options(expand-image-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(expand-image-test PRIVATE bbgpu)
 
+add_executable(tiny-readback-test EXCLUDE_FROM_ALL ../tests/test_tiny_readback.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(tiny-readback-test PRIVATE shim shadps4)
+target_compile_options(tiny-readback-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+target_link_libraries(tiny-readback-test PRIVATE bbgpu)
+
 add_executable(vram-fallback-test EXCLUDE_FROM_ALL ../tests/test_vram_fallback.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(vram-fallback-test PRIVATE shim shadps4)
 target_compile_options(vram-fallback-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)

@@ -97,18 +97,25 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
 
 TextureCache::~TextureCache() = default;
 
-void TextureCache::ProcessDownloadImages() {
-    std::unique_lock lk{download_images_mutex};
-    for (const ImageId image_id : download_images) {
-        DownloadImageMemory(image_id, true);
+void TextureCache::ProcessDownloadImages(bool flush_tiny) {
+    bool had_tiny = false;
+    {
+        std::unique_lock lk{download_images_mutex};
+        for (const ImageId image_id : download_images) {
+            DownloadImageMemory(image_id, true);
+        }
+        download_images.clear();
+        // bbport: copied with the work recorded so far and written to guest memory once the GPU
+        // has done it, without waiting here: the game reads them on the CPU a frame or more later.
+        had_tiny = !tiny_download_images.empty();
+        for (const ImageId image_id : tiny_download_images) {
+            DownloadImageMemory(image_id, false);
+        }
+        tiny_download_images.clear();
     }
-    download_images.clear();
-    // bbport: copied with the work recorded so far and written to guest memory once the GPU
-    // has done it, without waiting here: the game reads them on the CPU a frame or more later.
-    for (const ImageId image_id : tiny_download_images) {
-        DownloadImageMemory(image_id, false);
+    if (flush_tiny && had_tiny) {
+        scheduler.Flush();
     }
-    tiny_download_images.clear();
 }
 
 // bbport: U2's aiming autofocus renders the depth under the crosshair down to a 1x1 R32F image
@@ -123,10 +130,18 @@ bool TextureCache::TinyReadback(const Image& image) {
         const char* env = std::getenv("BB_TINY_READBACK");
         return env && env[0] == '1';
     }();
-    const auto& size = image.info.size;
-    return enabled && image.info.guest_address != 0 && size.depth == 1 &&
-           size.width * size.height <= 16 &&
-           (!image.info.props.is_tiled || (size.width == 1 && size.height == 1));
+    return IsTinyReadbackInfo(image.info, enabled);
+}
+
+void TextureCache::QueueDownloadIfNeeded(ImageId image_id, const Image& image) {
+    if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8) &&
+        image.info.guest_address != 0) {
+        std::unique_lock lk{download_images_mutex};
+        download_images.emplace(image_id);
+    } else if (TinyReadback(image)) {
+        std::unique_lock lk{download_images_mutex};
+        tiny_download_images.emplace(image_id);
+    }
 }
 
 void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
@@ -136,6 +151,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     }
     const u32 download_size = image.info.pitch * image.info.size.height * image.info.size.depth *
                               image.info.resources.layers * (image.info.num_bits / 8);
+    const u32 write_size = DownloadWriteSize(image.info);
     ASSERT(download_size <= image.info.guest_size);
     const auto download =
         runtime.GetStagingPool().Request(download_size, MemoryType::HostCached, 16, !sync);
@@ -159,13 +175,13 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
         scheduler.Finish();
         download.Invalidate();
         Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(image.info.guest_address),
-                                                  download.mapped, download_size);
+                                                  download.mapped, write_size);
     } else {
         scheduler.DeferPriorityOperation(
-            [this, device_addr = image.info.guest_address, download, download_size] {
+            [this, device_addr = image.info.guest_address, download, write_size] {
                 download.Invalidate();
                 Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(device_addr),
-                                                          download.mapped, download_size);
+                                                          download.mapped, write_size);
                 runtime.GetStagingPool().FreeDeferred(download);
             });
     }
@@ -843,14 +859,7 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
     Image& image = slot_images[image_id];
     if (desc.type == BindingType::Storage) {
         image.flags |= ImageFlagBits::GpuModified;
-        if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8) &&
-            image.info.guest_address != 0) {
-            std::unique_lock lk{download_images_mutex};
-            download_images.emplace(image_id);
-        } else if (TinyReadback(image)) {
-            std::unique_lock lk{download_images_mutex};
-            tiny_download_images.emplace(image_id);
-        }
+        QueueDownloadIfNeeded(image_id, image);
     }
     if (refresh) {
         UpdateImage(image_id);
@@ -874,13 +883,7 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
 ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& desc) {
     Image& image = slot_images[image_id];
     image.flags |= ImageFlagBits::GpuModified;
-    if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8)) {
-        std::unique_lock lk{download_images_mutex};
-        download_images.emplace(image_id);
-    } else if (TinyReadback(image)) {
-        std::unique_lock lk{download_images_mutex};
-        tiny_download_images.emplace(image_id);
-    }
+    QueueDownloadIfNeeded(image_id, image);
     image.usage.render_target = 1u;
     UpdateImage(image_id);
 
@@ -903,6 +906,7 @@ ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& des
 ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc) {
     Image& image = slot_images[image_id];
     image.flags |= ImageFlagBits::GpuModified;
+    QueueDownloadIfNeeded(image_id, image);
     image.usage.depth_target = 1u;
     UpdateImage(image_id);
 

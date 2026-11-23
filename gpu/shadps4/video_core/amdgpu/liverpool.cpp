@@ -331,7 +331,7 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto eop = *reinterpret_cast<const PM4CmdEventWriteEop*>(data);
     // Raycaster copies deferred before this packet land before its label shows (landing_gate.h).
     u64 landing_seq = VideoCore::LandingGate::Pending();
-    rasterizer.ProcessDownloadImages();
+    rasterizer.ProcessDownloadImages(true);
     rasterizer.GetBufferCache().CheckStableBindings();
     rasterizer.CheckConstants();
     // bbport diagnosis: BB_READBACK_RANGE=<hex address>:<hex size>: GPU data there is copied back
