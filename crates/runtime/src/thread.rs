@@ -1182,6 +1182,17 @@ mod tests {
     }
 
     unsafe extern "C" fn worker_return_c(arg: *mut c_void) -> *mut c_void {
+        let mut mxcsr: u32 = 0;
+        let mut fpucw: u16 = 0;
+        core::arch::asm!(
+            "stmxcsr [{mxcsr}]",
+            "fnstcw [{fpucw}]",
+            mxcsr = in(reg) &mut mxcsr,
+            fpucw = in(reg) &mut fpucw,
+            options(nostack),
+        );
+        assert_eq!(mxcsr, 0x9fc0);
+        assert_eq!(fpucw, 0x037f);
         (arg as usize + 7) as *mut c_void
     }
 

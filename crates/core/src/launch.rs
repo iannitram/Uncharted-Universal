@@ -138,7 +138,9 @@ impl Session<'_> {
     /// defaults, the device profile, the settings, `render_size` heaps, the player's own
     /// variables), then the path variables of `run.py` `main` the player did not set
     /// (`BB_CONFIG`, `BB_INPUT_CONFIG`, `BB_GPU_USER_DIR`, `BB_USER_DIR`, and `BB_SAVEDATA_DIRS`
-    /// on desktop), then `BB_LOADEXEC_FILE` and `BB_EXE`, which `run.py` always sets.
+    /// on desktop), then `BB_LOADEXEC_FILE` and `BB_EXE`, which `run.py` always sets, then
+    /// per-chapter fixes (`recipe::chapter_env`) from `<save_dir>/where.json` when neither
+    /// `settings.extra` nor `player_env` overrides them.
     pub fn env(&self, game: Game) -> Result<Vec<(String, String)>> {
         let built = run_env::build_env(game, self.settings, self.profile, self.player_env)?;
         let mut env: BTreeMap<String, String> = built.into_iter().collect();
@@ -156,6 +158,20 @@ impl Session<'_> {
         }
         env.insert("BB_LOADEXEC_FILE".to_owned(), text(paths.loadexec_file()));
         env.insert("BB_EXE".to_owned(), game.executable().to_owned());
+
+        let env_vec: Vec<(String, String)> =
+            env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let save_dir = saves::mapped_save_dir(game, &env_vec)
+            .unwrap_or_else(|_| saves::relay_saves_dir(&paths.user_dir, game));
+        if let Ok(where_json) = fs::read_to_string(save_dir.join(crate::logs::WHERE_FILE)) {
+            let mut explicit = self.settings.extra.clone();
+            explicit.extend(self.player_env.iter().map(|(k, v)| (k.clone(), v.clone())));
+            env.extend(crate::recipe::chapter_env(
+                &explicit,
+                game,
+                Some(&where_json),
+            ));
+        }
         Ok(env.into_iter().collect())
     }
 }
