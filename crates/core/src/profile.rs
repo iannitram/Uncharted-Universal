@@ -48,7 +48,10 @@ const STRIX_HALO_TABLET_ENV: &[(&str, &str)] = &[
     ("BB_FULLSCREEN", "1"),
 ];
 
-const DESKTOP_ENV: &[(&str, &str)] = &[("BB_VBLANK_HZ", "60")];
+const DESKTOP_ENV: &[(&str, &str)] = &[
+    ("BB_VBLANK_HZ", "60"),
+    ("BB_PRESENT_MODE", "Fifo"),
+];
 
 const MAC_ENV: &[(&str, &str)] = &[("BB_VBLANK_HZ", "60"), ("BB_PRESENT_MODE", "Fifo")];
 
@@ -74,7 +77,7 @@ static BUILTIN: [DeviceProfile; 6] = [
         hardware: "AMD Ryzen AI Max+ 395 tablet",
         os: Os::Linux,
         env: STRIX_HALO_TABLET_ENV,
-        frame_rates: &[30, 60, 120],
+        frame_rates: &[30, 60],
         power: "",
     },
     DeviceProfile {
@@ -83,7 +86,7 @@ static BUILTIN: [DeviceProfile; 6] = [
         hardware: "Linux or Windows PC with a discrete GPU",
         os: Os::Windows,
         env: DESKTOP_ENV,
-        frame_rates: &[30, 60, 120],
+        frame_rates: &[30, 60],
         power: "",
     },
     DeviceProfile {
