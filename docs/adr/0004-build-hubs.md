@@ -2,6 +2,8 @@
 
 **Decided:** 2026-11-01, in the spec approval ("Approve (Recommended)"), mirroring totk-native ADR 0003.
 
+**Amended 2026-11-23** by owner ruling (`SPEC.md`, M15, M17, M18): Android and iOS/iPadOS ship as three separate per-game thin apps (Uncharted 1, Uncharted 2, Uncharted 3) without bundled game assets. On boot, each mobile app prompts *"Would you like to download the rest of the game files?"* and pulls its per-game prepared files from the owner's Dropbox through `save-relay`'s Dropbox app (`iannitram/save-relay#305`) using resumable transfers (surviving battery death or force-close). This extends the 2026-11-18 Dropbox delivery exception for mobile devices; desktop/handheld hubs still serve SteamOS and Windows over the home network only.
+
 ## Decision
 
 Only the hubs hold my dump: the Strix Halo tablet (prepares for both SteamOS handhelds and Android), the RTX 3090 Ti desktop (Windows), the Mac (Mac, iPhone, iPad). Other devices find a hub by mDNS on the home network, pair once with a six-digit code (SPAKE2), and pull a sealed bundle: the prepared install, the patch level and the GPU-independent shader translations. A driver pipeline cache travels only between devices with the same GPU and driver. Nothing goes through a server or save-relay's storage.
