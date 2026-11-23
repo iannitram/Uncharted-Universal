@@ -13,8 +13,10 @@
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
+#include <span>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include <boost/container/small_vector.hpp>
 
@@ -127,6 +129,11 @@ public:
     /// work is done, in order with the others). guest_part false: only the GPU-written bytes of [src, src + size) land (dst == src, no
     /// guest copy): a GPU result the guest reads in place (Rasterizer::ReadBackSmallWrittenBuffers).
     bool DeferGuestCopy(VAddr src, VAddr dst, u64 size, bool guest_part = true, bool gated = true);
+    /// Batched version of `DeferGuestCopy` for `guest_part == false`: groups ranges per arena into
+    /// a single `Landing` and flushes the scheduler at most once; appends ranges that could not be
+    /// deferred to `unhandled`.
+    void DeferGuestCopyBatch(std::span<const std::pair<VAddr, u32>> ranges, bool gated,
+                             std::vector<std::pair<VAddr, u32>>& unhandled);
     u64 PendingLanding() const;
     bool LandingGateActive() const;
     void WaitLanding(u64 seq);
