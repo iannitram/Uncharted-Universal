@@ -1011,6 +1011,9 @@ void BufferCache::RunAfterLanding(u64 seq, std::function<void()> fn, bool off_ca
         }
         gated_labels.push_back({seq, std::move(fn)});
         gate_outstanding.fetch_add(1, std::memory_order_release);
+        if (!landing_thread.joinable()) {
+            landing_thread = std::thread([this] { LandingWorker(); });
+        }
     }
     landing_cv.notify_one();
 }
