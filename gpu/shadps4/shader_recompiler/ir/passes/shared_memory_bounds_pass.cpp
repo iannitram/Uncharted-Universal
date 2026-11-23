@@ -89,7 +89,7 @@ void SharedMemoryBoundsPass(IR::Program& program, const RuntimeInfo& runtime_inf
         for (auto inst_it = block->begin(); inst_it != block->end(); ++inst_it) {
             IR::Inst& inst = *inst_it;
             const SharedAccess access = ClassifySharedAccess(inst.GetOpcode());
-            if (!access.is_shared) {
+            if (!access.is_shared || inst.Flags<bool>()) {
                 continue;
             }
 
@@ -101,7 +101,7 @@ void SharedMemoryBoundsPass(IR::Program& program, const RuntimeInfo& runtime_inf
             }
 
             used_sink = true;
-            IR::IREmitter ir{*block, IR::Block::InstructionList::s_iterator_to(inst)};
+            IR::IREmitter ir{*block, inst_it};
 
             const IR::U1 in_bounds =
                 can_fit ? ir.ILessThanEqual(IR::U32{addr}, ir.Imm32(max_valid_addr), false)
@@ -109,27 +109,29 @@ void SharedMemoryBoundsPass(IR::Program& program, const RuntimeInfo& runtime_inf
             const IR::U32 safe_addr =
                 IR::U32{ir.Select(in_bounds, IR::U32{addr}, ir.Imm32(sink_offset))};
 
-            inst.SetArg(0, safe_addr);
-
-            if (access.has_result) {
-                IR::IREmitter ir_after{*block,
-                                       std::next(IR::Block::InstructionList::s_iterator_to(inst))};
-                const IR::Value zero = [&]() -> IR::Value {
-                    switch (access.result_type) {
-                    case IR::Type::U16:
-                        return ir_after.Imm16(u16{0});
-                    case IR::Type::U64:
-                        return ir_after.Imm64(u64{0});
-                    default:
-                        return ir_after.Imm32(u32{0});
-                    }
-                }();
-                // Emit Select with a placeholder true_value before ReplaceUsesWith so we do not
-                // rewrite Select's own operand into a self-referential SSA cycle.
-                const IR::Value selected = ir_after.Select(in_bounds, zero, zero);
-                inst.ReplaceUsesWith(selected);
-                selected.InstRecursive()->SetArg(1, IR::Value{&inst});
+            if (!access.has_result) {
+                inst.SetArg(0, safe_addr);
+                continue;
             }
+
+            // Clone the load/atomic with safe_addr before inst, select 0 when out of bounds,
+            // and turn inst into Identity(selected) via ReplaceUsesWith.
+            const auto cloned_it = block->PrependNewInst(inst_it, inst);
+            cloned_it->SetArg(0, safe_addr);
+            const IR::Value loaded{&*cloned_it};
+
+            IR::Value masked;
+            if (access.result_type == IR::Type::U16) {
+                const IR::U32 wide = ir.UConvert(32, IR::U16{loaded});
+                const IR::Value selected_u32 = ir.Select(in_bounds, wide, ir.Imm32(u32{0}));
+                masked = ir.UConvert(16, IR::U32{selected_u32});
+            } else {
+                const IR::Value zero = access.result_type == IR::Type::U64
+                                           ? IR::Value{ir.Imm64(u64{0})}
+                                           : IR::Value{ir.Imm32(u32{0})};
+                masked = ir.Select(in_bounds, loaded, zero);
+            }
+            inst.ReplaceUsesWith(masked);
         }
     }
 

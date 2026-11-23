@@ -42,22 +42,22 @@ int main() {
 
         IR::IREmitter ir{block};
         // In-bounds immediate U32 (offset 2044 + 4 == 2048): must stay untouched.
-        const IR::U32 in_bounds_load = ir.LoadSharedU32(ir.Imm32(2044));
+        const IR::Value in_bounds_load = ir.LoadShared(32, false, ir.Imm32(2044));
         // Boundary-straddling immediate U64 (offset 2044 + 8 > 2048): must be rewritten.
-        const IR::U64 straddling_load = ir.LoadSharedU64(ir.Imm32(2044));
+        const IR::U64 straddling_load = IR::U64{ir.LoadShared(64, false, ir.Imm32(2044))};
+        const IR::U64 straddle_consumer = IR::U64{ir.IAdd(straddling_load, ir.Imm64(u64{1}))};
         // Dynamic U32 load + downstream use: must produce Select(in_bounds, load, 0) with no cycle.
-        const IR::U32 dyn_addr = ir.GetLocalInvocationId();
-        const IR::U32 dyn_load = ir.LoadSharedU32(dyn_addr);
-        const IR::U32 consumer = ir.IAdd(dyn_load, ir.Imm32(1));
-        // Dynamic U16 load: must use U16 zero.
-        const IR::U16 dyn_u16 = ir.LoadSharedU16(dyn_addr);
-        // Dynamic 32-bit atomic: must use U32 zero (not U64).
-        const IR::U32 dyn_atomic32 = ir.SharedAtomicISub(dyn_addr, ir.Imm32(1));
+        const IR::U32 dyn_addr = ir.LaneId();
+        const IR::U32 dyn_load = IR::U32{ir.LoadShared(32, false, dyn_addr)};
+        const IR::U32 consumer = IR::U32{ir.IAdd(dyn_load, ir.Imm32(1))};
+        // Dynamic U16 load: must widen to U32, Select, and narrow back to U16.
+        const IR::U16 dyn_u16 = IR::U16{ir.LoadShared(16, false, dyn_addr)};
+        const IR::U32 u16_consumer = ir.UConvert(32, dyn_u16);
+        // Dynamic 32-bit atomic: must use SelectU32 (not SelectU64).
+        const IR::U32 dyn_atomic32 = IR::U32{ir.SharedAtomicISub(dyn_addr, ir.Imm32(1), false)};
+        const IR::U32 atomic_consumer = IR::U32{ir.IAdd(dyn_atomic32, ir.Imm32(1))};
         // Dynamic write: redirected to sink, no Select on result.
-        ir.WriteSharedU32(dyn_addr, consumer);
-        (void)straddling_load;
-        (void)dyn_u16;
-        (void)dyn_atomic32;
+        ir.WriteShared(32, consumer, dyn_addr);
 
         Optimization::SharedMemoryBoundsPass(program, runtime_info);
 
@@ -65,26 +65,38 @@ int main() {
         assert(program.info.shared_memory_scratch_size >= 8u);
 
         // In-bounds load still has immediate 2044.
-        assert(in_bounds_load.InstRecursive()->Arg(0).IsImmediate());
-        assert(in_bounds_load.InstRecursive()->Arg(0).U32() == 2044u);
+        assert(in_bounds_load.Inst()->Arg(0).IsImmediate());
+        assert(in_bounds_load.Inst()->Arg(0).U32() == 2044u);
 
-        // Boundary-straddling U64 load was rewritten to a Select address.
-        assert(!straddling_load.InstRecursive()->Arg(0).IsImmediate());
+        // Boundary-straddling U64 load (2044 + 8 > 2048) was replaced by SelectU64
+        // over a cloned LoadSharedU64 whose address is a SelectU32 to sink_offset (2048).
+        const IR::Inst* straddle_sel = straddle_consumer.Inst()->Arg(0).Inst();
+        assert(straddle_sel->GetOpcode() == IR::Opcode::SelectU64);
+        assert(straddle_sel->Arg(2).IsImmediate() && straddle_sel->Arg(2).U64() == 0u);
+        const IR::Inst* cloned_u64 = straddle_sel->Arg(1).Inst();
+        assert(cloned_u64->GetOpcode() == IR::Opcode::LoadSharedU64);
+        const IR::Inst* straddle_addr = cloned_u64->Arg(0).Inst();
+        assert(straddle_addr->GetOpcode() == IR::Opcode::SelectU32);
+        assert(straddle_addr->Arg(2).IsImmediate() && straddle_addr->Arg(2).U32() == 2048u);
 
-        // Consumer now reads a Select whose true branch is dyn_load (no self-referential cycle)
-        // and false branch is Imm32(0).
-        const IR::Value consumer_arg0 = consumer.InstRecursive()->Arg(0);
-        assert(!consumer_arg0.IsImmediate());
-        const IR::Inst* sel = consumer_arg0.InstRecursive();
+        // Consumer's arg0 is SelectU32(in_bounds, cloned_load, 0) with no SSA cycle.
+        const IR::Inst* sel = consumer.Inst()->Arg(0).Inst();
         assert(sel->GetOpcode() == IR::Opcode::SelectU32);
-        assert(sel->Arg(1).InstRecursive() == dyn_load.InstRecursive());
-        assert(sel->Arg(1).InstRecursive() != sel);
+        const IR::Inst* cloned_u32 = sel->Arg(1).Inst();
+        assert(cloned_u32->GetOpcode() == IR::Opcode::LoadSharedU32);
+        assert(cloned_u32 != sel);
         assert(sel->Arg(2).IsImmediate() && sel->Arg(2).U32() == 0u);
 
-        // Every rewritten shared op's Select uses sink_offset == 2048 as false branch.
-        const IR::Inst* addr_sel = dyn_load.InstRecursive()->Arg(0).InstRecursive();
+        // Cloned load's address Select uses sink_offset == 2048 as false branch.
+        const IR::Inst* addr_sel = cloned_u32->Arg(0).Inst();
         assert(addr_sel->GetOpcode() == IR::Opcode::SelectU32);
         assert(addr_sel->Arg(2).IsImmediate() && addr_sel->Arg(2).U32() == 2048u);
+
+        // U16 load widens to U32, selects against 0, and narrows back to U16.
+        assert(u16_consumer.Inst()->Arg(0).Inst()->GetOpcode() == IR::Opcode::ConvertU16U32);
+
+        // 32-bit atomic uses SelectU32 (not SelectU64).
+        assert(atomic_consumer.Inst()->Arg(0).Inst()->GetOpcode() == IR::Opcode::SelectU32);
     }
 
     // 3. BB_LDS_BOUNDS=0 disables the pass completely.
@@ -104,13 +116,13 @@ int main() {
         program.blocks.push_back(&block);
 
         IR::IREmitter ir{block};
-        const IR::U32 oob_load = ir.LoadSharedU32(ir.Imm32(1024));
+        const IR::Value oob_load = ir.LoadShared(32, false, ir.Imm32(1024));
 
         Optimization::SharedMemoryBoundsPass(program, runtime_info);
 
         assert(program.info.shared_memory_scratch_size == 0u);
-        assert(oob_load.InstRecursive()->Arg(0).IsImmediate());
-        assert(oob_load.InstRecursive()->Arg(0).U32() == 1024u);
+        assert(oob_load.Inst()->Arg(0).IsImmediate());
+        assert(oob_load.Inst()->Arg(0).U32() == 1024u);
         unsetenv("BB_LDS_BOUNDS");
     }
 
