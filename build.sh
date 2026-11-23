@@ -103,7 +103,7 @@ MINGW*|MSYS*)
     fi
     echo "Built $PWD/out/bb-probe.exe"
     if [[ ${1:-} == --test ]]; then
-        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test shared-memory-bounds-test ui-composition-test upscaler-support-test expand-image-test vram-fallback-test video-pacing-test videodec-recovery-test movie-scaling-test)
+        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test shared-memory-bounds-test ui-composition-test upscaler-support-test expand-image-test vram-fallback-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test)
         ninja_jobs=()
         if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
         if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
@@ -207,7 +207,7 @@ echo "Built $PWD/out/bb-probe"
 # GPU check (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test shared-memory-bounds-test ui-composition-test upscaler-support-test expand-image-test vram-fallback-test video-pacing-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)
+    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test shared-memory-bounds-test ui-composition-test upscaler-support-test expand-image-test vram-fallback-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)
     ninja_jobs=()
     if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
     if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then

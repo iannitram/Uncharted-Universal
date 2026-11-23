@@ -407,6 +407,10 @@ add_executable(video-pacing-test EXCLUDE_FROM_ALL ../tests/test_video_pacing.cpp
 target_include_directories(video-pacing-test PRIVATE shim)
 target_compile_options(video-pacing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 
+add_executable(runtime-resize-test EXCLUDE_FROM_ALL ../tests/test_runtime_resize.cpp)
+target_include_directories(runtime-resize-test PRIVATE shim)
+target_compile_options(runtime-resize-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(videodec-recovery-test EXCLUDE_FROM_ALL ../tests/test_videodec_recovery.cpp)
 target_include_directories(videodec-recovery-test PRIVATE shadps4)
 target_compile_options(videodec-recovery-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)

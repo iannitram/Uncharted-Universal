@@ -846,6 +846,11 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last, u64 laten
         }
     }
 
+    const vk::Extent2D extent = swapchain.GetExtent();
+    if (extent.width == 0 || extent.height == 0) {
+        return false;
+    }
+
     // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
     // skip frame because of slow swapchain recreation. If a frame skip occurs, we skip signal
     // the frame's present fence and future GetRenderFrame() call will hang waiting for this frame.
@@ -868,7 +873,6 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last, u64 laten
     }
 
     {
-        const vk::Extent2D extent = swapchain.GetExtent();
         SetExpectedGameSize(s32(extent.width), s32(extent.height));
         bbgpu_notify_resize(extent.width, extent.height);
         const vk::ImageSubresourceRange color_range{
