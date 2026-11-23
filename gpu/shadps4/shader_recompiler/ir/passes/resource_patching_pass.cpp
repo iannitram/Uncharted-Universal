@@ -120,6 +120,7 @@ public:
                    desc.post_op == existing.post_op;
         })};
         auto& image = image_resources[index];
+        image.is_depth |= desc.is_depth;
         image.is_atomic |= desc.is_atomic;
         image.is_written |= desc.is_written;
         image.needs_native |= desc.needs_native;
@@ -234,7 +235,7 @@ void PatchImageSharp(const ResourceDiscovery& resource, Info& info, Descriptors&
          opcode == IR::Opcode::ImageSampleDrefImplicitLod ||
          opcode == IR::Opcode::ImageSampleDrefExplicitLod || opcode == IR::Opcode::ImageGather ||
          opcode == IR::Opcode::ImageGatherDref || opcode == IR::Opcode::ImageGradient ||
-         opcode == IR::Opcode::ImageQueryLod) &&
+         opcode == IR::Opcode::ImageGradientDref || opcode == IR::Opcode::ImageQueryLod) &&
         !inst_info.has_offset && !inst_info.is_unnormalized;
     ImageResource image_res = {
         .sharp_fetch = ConstructSharpFetch<AmdGpu::Image>(resource.sharps[0]),
@@ -839,6 +840,10 @@ void PatchImageSampleArgs(IR::Inst& inst, Info& info, const ImageResource& image
             return ir.ImageGather(handle, coords, offset, inst_info);
         }
         if (inst_info.has_derivatives) {
+            if (inst_info.is_depth) {
+                return ir.ImageGradientDref(handle, coords, dref, derivatives_dx, derivatives_dy,
+                                            offset, inst_info);
+            }
             return ir.ImageGradient(handle, coords, derivatives_dx, derivatives_dy, offset,
                                     lod_clamp, inst_info);
         }

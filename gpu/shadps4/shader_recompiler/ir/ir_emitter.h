@@ -405,6 +405,10 @@ public:
                                       const Value& derivatives_dx, const Value& derivatives_dy,
                                       const Value& offset, const F32& lod_clamp,
                                       TextureInstInfo info);
+    [[nodiscard]] Value ImageGradientDref(const Value& handle, const Value& coords,
+                                          const F32& dref, const Value& derivatives_dx,
+                                          const Value& derivatives_dy, const Value& offset,
+                                          TextureInstInfo info);
     [[nodiscard]] Value ImageRead(const Value& handle, const Value& coords, const U32& lod,
                                   const U32& multisampling, TextureInstInfo info);
     void ImageWrite(const Value& handle, const Value& coords, const U32& lod,

@@ -158,8 +158,9 @@ Id EmitImageSampleExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id c
     return texture.is_integer ? ctx.OpBitcast(ctx.F32[4], sample) : sample;
 }
 
-Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id dref,
-                                  Id bias, const IR::Value& offset) {
+namespace {
+Id EmitSampleDref(EmitContext& ctx, u32 handle, Id coords, Id dref, const ImageOperands& operands,
+                  bool explicit_lod) {
     if (const Id forced = ForcedSample(ctx, handle, true); Sirit::ValidId(forced)) {
         return forced;
     }
@@ -168,34 +169,32 @@ Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, 
     const Id result_type = texture.data_types->Get(1);
     const Id sampler = ctx.OpLoad(ctx.sampler_type, ctx.samplers[handle >> 16]);
     const Id sampled_image = ctx.OpSampledImage(texture.sampled_type, image, sampler);
-    ImageOperands operands;
-    operands.Add(spv::ImageOperandsMask::Bias, bias);
-    operands.AddOffset(ctx, offset);
-    const Id sample = ctx.OpImageSampleDrefImplicitLod(result_type, sampled_image, coords, dref,
-                                                       operands.mask, operands.operands);
+    const Id sample =
+        explicit_lod
+            ? ctx.OpImageSampleDrefExplicitLod(result_type, sampled_image, coords, dref,
+                                               operands.mask, operands.operands)
+            : ctx.OpImageSampleDrefImplicitLod(result_type, sampled_image, coords, dref,
+                                               operands.mask, operands.operands);
     const Id sample_typed = texture.is_integer ? ctx.OpBitcast(ctx.F32[1], sample) : sample;
     return ctx.OpCompositeConstruct(ctx.F32[4], sample_typed, ctx.f32_zero_value,
                                     ctx.f32_zero_value, ctx.f32_zero_value);
 }
+} // namespace
+
+Id EmitImageSampleDrefImplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id dref,
+                                  Id bias, const IR::Value& offset) {
+    ImageOperands operands;
+    operands.Add(spv::ImageOperandsMask::Bias, bias);
+    operands.AddOffset(ctx, offset);
+    return EmitSampleDref(ctx, handle, coords, dref, operands, false);
+}
 
 Id EmitImageSampleDrefExplicitLod(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id dref,
                                   Id lod, const IR::Value& offset) {
-    if (const Id forced = ForcedSample(ctx, handle, true); Sirit::ValidId(forced)) {
-        return forced;
-    }
-    const auto& texture = ctx.images[handle & 0xFFFF];
-    const Id image = ctx.OpLoad(texture.image_type, texture.id);
-    const Id result_type = texture.data_types->Get(1);
-    const Id sampler = ctx.OpLoad(ctx.sampler_type, ctx.samplers[handle >> 16]);
-    const Id sampled_image = ctx.OpSampledImage(texture.sampled_type, image, sampler);
     ImageOperands operands;
     operands.Add(spv::ImageOperandsMask::Lod, lod);
     operands.AddOffset(ctx, offset);
-    const Id sample = ctx.OpImageSampleDrefExplicitLod(result_type, sampled_image, coords, dref,
-                                                       operands.mask, operands.operands);
-    const Id sample_typed = texture.is_integer ? ctx.OpBitcast(ctx.F32[1], sample) : sample;
-    return ctx.OpCompositeConstruct(ctx.F32[4], sample_typed, ctx.f32_zero_value,
-                                    ctx.f32_zero_value, ctx.f32_zero_value);
+    return EmitSampleDref(ctx, handle, coords, dref, operands, true);
 }
 
 Id EmitImageGather(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords,
@@ -275,6 +274,14 @@ Id EmitImageGradient(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id
     const Id sample = ctx.OpImageSampleExplicitLod(result_type, sampled_image, coords,
                                                    operands.mask, operands.operands);
     return texture.is_integer ? ctx.OpBitcast(ctx.F32[4], sample) : sample;
+}
+
+Id EmitImageGradientDref(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id dref,
+                         Id derivatives_dx, Id derivatives_dy, const IR::Value& offset) {
+    ImageOperands operands;
+    operands.AddDerivatives(ctx, derivatives_dx, derivatives_dy);
+    operands.AddOffset(ctx, offset);
+    return EmitSampleDref(ctx, handle, coords, dref, operands, true);
 }
 
 Id EmitImageRead(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id lod, Id ms) {
