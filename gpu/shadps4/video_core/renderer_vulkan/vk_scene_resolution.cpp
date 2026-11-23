@@ -298,6 +298,7 @@ void SceneTargets::Resample(vk::Image src, vk::Image dst, const VideoCore::Image
     });
     // The guest pipelines' dynamic state must be emitted again after this pipeline.
     scheduler.GetDynamicState().Invalidate();
+    scheduler.GetBindState().Invalidate();
 }
 void SceneTargets::CreateResampleResources() {
     const auto device = instance.GetDevice();
