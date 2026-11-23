@@ -452,6 +452,12 @@ target_include_directories(clear-state-and-submit-waits-test PRIVATE shim shadps
 target_compile_options(clear-state-and-submit-waits-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
 target_link_libraries(clear-state-and-submit-waits-test PRIVATE Vulkan::Headers Boost::headers)
 
+add_executable(bind-state-cache-test EXCLUDE_FROM_ALL
+    ../tests/test_bind_state_cache.cpp)
+target_include_directories(bind-state-cache-test PRIVATE shim shadps4)
+target_compile_options(bind-state-cache-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
+target_link_libraries(bind-state-cache-test PRIVATE Vulkan::Headers Boost::headers)
+
 add_executable(movie-scaling-test EXCLUDE_FROM_ALL ../tests/test_movie_scaling.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(movie-scaling-test PRIVATE shim shadps4)
 target_compile_options(movie-scaling-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)

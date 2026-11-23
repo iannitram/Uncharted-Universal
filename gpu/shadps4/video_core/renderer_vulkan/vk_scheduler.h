@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -584,6 +586,130 @@ struct DynamicState {
     }
 };
 
+/// bbport: command-buffer bind-state cache to skip redundant pipeline, vertex-input,
+/// vertex-buffer, and index-buffer commands within a single command buffer.
+struct BindState {
+    static constexpr u32 MaxVertexBuffers = 32;
+
+    vk::Pipeline graphics_pipeline{};
+    vk::Pipeline compute_pipeline{};
+
+    bool vertex_input_valid{false};
+    boost::container::static_vector<vk::VertexInputBindingDescription2EXT, MaxVertexBuffers>
+        vertex_bindings;
+    boost::container::static_vector<vk::VertexInputAttributeDescription2EXT, MaxVertexBuffers>
+        vertex_attributes;
+
+    u32 num_vertex_buffers{0};
+    std::array<vk::Buffer, MaxVertexBuffers> vertex_buffers{};
+    std::array<vk::DeviceSize, MaxVertexBuffers> vertex_offsets{};
+    std::array<vk::DeviceSize, MaxVertexBuffers> vertex_sizes{};
+    std::array<vk::DeviceSize, MaxVertexBuffers> vertex_strides{};
+    bool vertex_buffers_have_sizes{false};
+
+    bool index_buffer_valid{false};
+    vk::Buffer index_buffer{};
+    vk::DeviceSize index_offset{};
+    vk::IndexType index_type{};
+
+    void Invalidate() {
+        graphics_pipeline = vk::Pipeline{};
+        compute_pipeline = vk::Pipeline{};
+        vertex_input_valid = false;
+        vertex_bindings.clear();
+        vertex_attributes.clear();
+        num_vertex_buffers = 0;
+        vertex_buffers_have_sizes = false;
+        index_buffer_valid = false;
+        index_buffer = vk::Buffer{};
+        index_offset = 0;
+        index_type = {};
+    }
+
+    bool ShouldBindPipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline) {
+        vk::Pipeline& cached =
+            bind_point == vk::PipelineBindPoint::eGraphics ? graphics_pipeline : compute_pipeline;
+        if (cached == pipeline) {
+            return false;
+        }
+        cached = pipeline;
+        return true;
+    }
+
+    bool ShouldSetVertexInput(
+        std::span<const vk::VertexInputBindingDescription2EXT> bindings,
+        std::span<const vk::VertexInputAttributeDescription2EXT> attributes) {
+        if (bindings.size() > MaxVertexBuffers || attributes.size() > MaxVertexBuffers) {
+            vertex_input_valid = false;
+            return true;
+        }
+        if (vertex_input_valid && std::ranges::equal(vertex_bindings, bindings) &&
+            std::ranges::equal(vertex_attributes, attributes)) {
+            return false;
+        }
+        vertex_input_valid = true;
+        vertex_bindings.assign(bindings.begin(), bindings.end());
+        vertex_attributes.assign(attributes.begin(), attributes.end());
+        return true;
+    }
+
+    bool ShouldBindVertexBuffers(bool dynamic_input, std::span<const vk::Buffer> buffers,
+                                 std::span<const vk::DeviceSize> offsets,
+                                 std::span<const vk::DeviceSize> sizes,
+                                 std::span<const vk::DeviceSize> strides) {
+        const u32 count = static_cast<u32>(buffers.size());
+        if (count == 0) {
+            return false;
+        }
+        if (count > MaxVertexBuffers) {
+            num_vertex_buffers = 0;
+            vertex_buffers_have_sizes = false;
+            return true;
+        }
+        const bool need_sizes = !dynamic_input;
+        if (num_vertex_buffers > 0 && need_sizes != vertex_buffers_have_sizes) {
+            num_vertex_buffers = 0;
+        }
+        if (count <= num_vertex_buffers && (!need_sizes || vertex_buffers_have_sizes)) {
+            bool match = true;
+            for (u32 i = 0; i < count; ++i) {
+                if (vertex_buffers[i] != buffers[i] || vertex_offsets[i] != offsets[i] ||
+                    (need_sizes &&
+                     (vertex_sizes[i] != sizes[i] || vertex_strides[i] != strides[i]))) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                return false;
+            }
+        }
+        for (u32 i = 0; i < count; ++i) {
+            vertex_buffers[i] = buffers[i];
+            vertex_offsets[i] = offsets[i];
+            if (need_sizes) {
+                vertex_sizes[i] = sizes[i];
+                vertex_strides[i] = strides[i];
+            }
+        }
+        vertex_buffers_have_sizes = need_sizes;
+        num_vertex_buffers = std::max(num_vertex_buffers, count);
+        return true;
+    }
+
+    bool ShouldBindIndexBuffer(vk::Buffer buffer, vk::DeviceSize offset, vk::IndexType type) {
+        if (index_buffer_valid && index_buffer == buffer && index_offset == offset &&
+            index_type == type) {
+            return false;
+        }
+        index_buffer_valid = true;
+        index_buffer = buffer;
+        index_offset = offset;
+        index_type = type;
+        return true;
+    }
+};
+
 using SubmitFunc = Common::UniqueFunction<void, SubmitInfo&>;
 
 /// bbport: a block of deferred Vulkan commands. Commands are closures placed in
@@ -734,6 +860,11 @@ public:
         return dynamic_state;
     }
 
+    /// Returns the current command-buffer bind-state cache.
+    BindState& GetBindState() {
+        return bind_state;
+    }
+
     /// Returns the current command buffer for recording on the calling thread. With threaded
     /// recording this first waits until all commands passed to Record() are recorded, then
     /// records directly (Record() included, so callers may mix both) until the next
@@ -745,6 +876,7 @@ public:
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
             TraceDirectRecording(__builtin_return_address(0));
         }
+        bind_state.Invalidate();
         return current_cmdbuf;
     }
 
@@ -945,6 +1077,7 @@ private:
     Semaphore work_semaphore;
     CommandPool command_pool;
     DynamicState dynamic_state;
+    BindState bind_state;
     SubmitFunc on_submit{};
     vk::CommandBuffer current_cmdbuf;
     std::condition_variable_any event_cv;
