@@ -328,7 +328,8 @@ constexpr std::tuple<u32, u32, size_t> ImageSizeMicroTiled(u32 pitch, u32 height
 constexpr std::tuple<u32, u32, size_t> ImageSizeMacroTiled(u32 pitch, u32 height, u32 thickness,
                                                            u32 bpp, u32 num_samples,
                                                            AmdGpu::TileMode tile_mode, u32 mip_n,
-                                                           bool alt) {
+                                                           bool alt,
+                                                           bool* out_downgraded = nullptr) {
     const auto [pitch_align, height_align] = GetMacroTileExtents(tile_mode, bpp, num_samples, alt);
     ASSERT(pitch_align != 0 && height_align != 0);
     bool downgrade_to_micro = false;
@@ -336,6 +337,9 @@ constexpr std::tuple<u32, u32, size_t> ImageSizeMacroTiled(u32 pitch, u32 height
         const bool is_less_than_tile = pitch < pitch_align || height < height_align;
         // TODO: threshold check
         downgrade_to_micro = is_less_than_tile;
+    }
+    if (out_downgraded) {
+        *out_downgraded = downgrade_to_micro;
     }
 
     if (downgrade_to_micro) {
