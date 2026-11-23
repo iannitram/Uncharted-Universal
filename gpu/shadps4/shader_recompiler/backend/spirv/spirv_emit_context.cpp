@@ -3,6 +3,7 @@
 
 #include "common/assert.h"
 #include "common/div_ceil.h"
+#include "bbport_nan_guard.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/ir/attribute.h"
@@ -1319,6 +1320,25 @@ void EmitContext::DefineFunctions() {
         LOG_DEBUG(Render_Recompiler, "Shader {:#x} uses dynamic ReadConst", info.pgm_hash);
         read_const_dynamic = DefineReadConst(true);
     }
+}
+
+Id EmitContext::SanitizeFloatOutput(Id value, u32 num_components) {
+    ASSERT(num_components == 1 || num_components == 4);
+    if (!BbNanGuard::ExportNanGuard()) {
+        return value;
+    }
+    // NaN -> 0; mode 2 also +-Inf -> +-65504 (bbport_nan_guard.h).
+    // NaN first: FClamp may return either bound for a NaN.
+    const Id zero_vec{num_components == 1 ? f32_zero_value : ConstF32(0.0f, 0.0f, 0.0f, 0.0f)};
+    const Id f32_type{F32[num_components]};
+    const Id u1_type{U1[num_components]};
+    value = OpSelect(f32_type, OpIsNan(u1_type, value), zero_vec, value);
+    if (BbNanGuard::NanGuardMode() == 2) {
+        const Id limit{num_components == 1 ? ConstF32(65504.0f)
+                                           : ConstF32(65504.0f, 65504.0f, 65504.0f, 65504.0f)};
+        value = OpFClamp(f32_type, value, OpFNegate(f32_type, limit), limit);
+    }
+    return value;
 }
 
 } // namespace Shader::Backend::SPIRV

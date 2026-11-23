@@ -144,6 +144,9 @@ public:
         return last_label;
     }
 
+    /// Replaces NaN components in a float output with 0 (and clamps +-Inf in mode 2).
+    [[nodiscard]] Id SanitizeFloatOutput(Id value, u32 num_components = 1);
+
     Id EmitDwordMemoryRead(Id address, auto&& fallback) {
         const Id available_label = OpLabel();
         const Id fallback_label = OpLabel();

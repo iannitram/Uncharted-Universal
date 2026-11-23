@@ -347,7 +347,8 @@ void EmitImageWrite(EmitContext& ctx, IR::Inst* inst, u32 handle, Id coords, Id 
         image_ptr = ctx.OpAccessChain(single_image_ptr_type, image_ptr, std::array{lod});
     }
     const Id image = ctx.OpLoad(texture.image_type, image_ptr);
-    const Id texel = texture.is_integer ? ctx.OpBitcast(color_type, color) : color;
+    const Id texel =
+        texture.is_integer ? ctx.OpBitcast(color_type, color) : ctx.SanitizeFloatOutput(color, 4);
     ctx.OpImageWrite(image, coords, texel, operands.mask, operands.operands);
 }
 
