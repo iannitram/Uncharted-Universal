@@ -41,7 +41,9 @@ fn u3_fix_defaults_explicitly_sets_both_readback_flags_off() {
         "BB_TINY_READBACK must explicitly default to 0 for U3"
     );
     assert_eq!(
-        defaults.get("BB_READBACK_SMALL_BUFFERS").map(String::as_str),
+        defaults
+            .get("BB_READBACK_SMALL_BUFFERS")
+            .map(String::as_str),
         Some("0"),
         "BB_READBACK_SMALL_BUFFERS must explicitly default to 0 for U3"
     );
@@ -50,9 +52,8 @@ fn u3_fix_defaults_explicitly_sets_both_readback_flags_off() {
 #[test]
 fn u3_build_env_keeps_both_readback_flags_off_across_all_profiles() {
     for dev in profile::builtin() {
-        let built = env_map(
-            build_env(Game::U3, &Settings::default(), dev, &BTreeMap::new()).unwrap(),
-        );
+        let built =
+            env_map(build_env(Game::U3, &Settings::default(), dev, &BTreeMap::new()).unwrap());
         assert_eq!(
             built.get("BB_TINY_READBACK").map(String::as_str),
             Some("0"),
