@@ -935,3 +935,89 @@ fn read_only_mount_rejects_writes() {
 
     unmount(b"/savedata0");
 }
+
+#[test]
+fn concurrent_pread_and_sequential_read_isolate_offsets() {
+    let scratch = Scratch::new("concurrent-pread");
+    let contents: Vec<u8> = (0..(256 * 1024))
+        .map(|n| ((n * 17 + 3) % 251) as u8)
+        .collect();
+    fs::write(scratch.user("data/stream.bin"), &contents).unwrap();
+    let fd = open(b"/data/stream.bin", 0, 0).unwrap();
+
+    std::thread::scope(|scope| {
+        for worker in 0..4 {
+            let expected = &contents;
+            scope.spawn(move || {
+                for turn in 0..256 {
+                    let offset = ((worker * 8191 + turn * 997) % (expected.len() - 64)) as i64;
+                    assert_eq!(
+                        pread(fd, 64, offset).unwrap(),
+                        expected[offset as usize..][..64]
+                    );
+                }
+            });
+        }
+
+        let mut sequential = Vec::with_capacity(contents.len());
+        while sequential.len() < contents.len() {
+            let chunk = read(fd, 257).unwrap();
+            assert!(!chunk.is_empty());
+            sequential.extend(chunk);
+        }
+        assert_eq!(sequential, contents);
+        assert_eq!(lseek(fd, 0, 1), Ok(contents.len() as i64));
+    });
+    close(fd).unwrap();
+}
+
+#[test]
+fn chunked_read_and_pread_across_bounce_boundary_and_eof() {
+    let scratch = Scratch::new("chunked-bounce");
+    let total = 4 * 1024 * 1024 + 137_001;
+    let contents: Vec<u8> = (0..total).map(|n| ((n * 31 + 7) & 0xff) as u8).collect();
+    fs::write(scratch.user("data/large.bin"), &contents).unwrap();
+    let fd = open(b"/data/large.bin", 0, 0).unwrap();
+
+    let got = read(fd, 5 * 1024 * 1024).unwrap();
+    assert_eq!(got.len(), total);
+    assert_eq!(got, contents);
+    assert_eq!(read(fd, 64), Ok(Vec::new()));
+    assert_eq!(lseek(fd, 0, 1), Ok(total as i64));
+
+    let offset = 12_345;
+    let tail = pread(fd, 5 * 1024 * 1024, offset as i64).unwrap();
+    assert_eq!(tail, contents[offset..]);
+    assert_eq!(lseek(fd, 0, 1), Ok(total as i64));
+
+    close(fd).unwrap();
+}
+
+#[test]
+fn pread_bounds_and_eof_edge_cases() {
+    let scratch = Scratch::new("pread-bounds");
+    fs::write(scratch.user("data/small.bin"), b"abcdef").unwrap();
+    let fd = open(b"/data/small.bin", 0, 0).unwrap();
+
+    assert_eq!(pread(fd, 64, 6), Ok(Vec::new()));
+    assert_eq!(pread(fd, 64, i64::MAX - 64), Ok(Vec::new()));
+    #[cfg(unix)]
+    assert_eq!(pread(fd, 64, i64::MAX), Err(Errno::EINVAL));
+    assert_eq!(pread(fd, 0, 0), Ok(Vec::new()));
+    assert_eq!(lseek(fd, 0, 1), Ok(0));
+
+    // SAFETY: `size` is 0, so a null buffer is not dereferenced.
+    assert_eq!(unsafe { read_into(fd, std::ptr::null_mut(), 0, 0) }, Ok(0));
+    // SAFETY: a null buffer with non-zero size fails with EFAULT.
+    assert_eq!(
+        unsafe { read_into(fd, std::ptr::null_mut(), 1, 0) },
+        Err(Errno::EFAULT)
+    );
+    // SAFETY: invalid descriptor fails with EBADF even when `size` is 0.
+    assert_eq!(
+        unsafe { read_into(99_999, std::ptr::null_mut(), 0, 0) },
+        Err(Errno::EBADF)
+    );
+
+    close(fd).unwrap();
+}
