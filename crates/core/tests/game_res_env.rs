@@ -36,8 +36,10 @@ fn uhd_ultrawide_and_the_largest_size() {
     assert_eq!(uhd["BB_GAME_MOVIE_MB"], "14");
     assert_eq!(uhd["BB_DMEM_MB"], "6528");
     let wide = res("5120x2160");
+    assert_eq!(wide["BB_GAME_RES"], "5120x2160");
     assert_eq!(wide["BB_GAME_RT_MB"], "1344");
     assert_eq!(wide["BB_GAME_RT2_MB"], "704");
+    assert_eq!(wide["BB_GAME_MOVIE_MB"], "16");
     assert_eq!(wide["BB_DMEM_MB"], "7104");
     let max = res("7680x4320");
     assert_eq!(max["BB_GAME_RT_MB"], "4544");

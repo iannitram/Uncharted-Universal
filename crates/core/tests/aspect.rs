@@ -11,6 +11,7 @@ const IPAD_MINI: (u32, u32) = (2266, 1488);
 const FHD: (u32, u32) = (1920, 1080);
 const Z13: (u32, u32) = (2560, 1600);
 const ULTRAWIDE: (u32, u32) = (3440, 1440);
+const ULTRAWIDE_5K2K: (u32, u32) = (5120, 2160);
 const PORTRAIT: (u32, u32) = (1080, 1920);
 
 fn rect(x: u32, y: u32, width: u32, height: u32) -> Rect {
@@ -34,6 +35,8 @@ fn render_size_fills_the_screen_at_1080() {
     assert_eq!(render_size(FHD, 1080).unwrap(), (1920, 1080));
     assert_eq!(render_size(Z13, 1080).unwrap(), (1728, 1080));
     assert_eq!(render_size(ULTRAWIDE, 1080).unwrap(), (2580, 1080));
+    assert_eq!(render_size(ULTRAWIDE_5K2K, 1080).unwrap(), (2560, 1080));
+    assert_eq!(render_size(ULTRAWIDE_5K2K, 2160).unwrap(), (5120, 2160));
 }
 
 #[test]
@@ -68,6 +71,7 @@ fn safe_area_is_the_centred_16_9() {
     assert_eq!(safe_area(FHD).unwrap(), rect(0, 0, 1920, 1080));
     assert_eq!(safe_area(Z13).unwrap(), rect(0, 80, 2560, 1440));
     assert_eq!(safe_area(ULTRAWIDE).unwrap(), rect(440, 0, 2560, 1440));
+    assert_eq!(safe_area(ULTRAWIDE_5K2K).unwrap(), rect(640, 0, 3840, 2160));
     assert_eq!(safe_area(PORTRAIT).unwrap(), rect(0, 656, 1080, 607));
 }
 
@@ -76,6 +80,7 @@ fn fov_mode_follows_the_screen_shape() {
     assert_eq!(fov(FHD).unwrap().mode, FovMode::Native);
     assert_eq!(fov(FOLD_COVER).unwrap().mode, FovMode::HorPlus);
     assert_eq!(fov(ULTRAWIDE).unwrap().mode, FovMode::HorPlus);
+    assert_eq!(fov(ULTRAWIDE_5K2K).unwrap().mode, FovMode::HorPlus);
     assert_eq!(fov(FOLD_UNFOLDED).unwrap().mode, FovMode::VertPlus);
     assert_eq!(fov(IPAD_MINI).unwrap().mode, FovMode::VertPlus);
     assert_eq!(fov(Z13).unwrap().mode, FovMode::VertPlus);
@@ -90,6 +95,10 @@ fn fov_factors() {
     let wide = fov(ULTRAWIDE).unwrap();
     assert!(near(wide.horizontal, 43.0 / 32.0));
     assert_eq!(wide.vertical, 1.0);
+
+    let wide_5k2k = fov(ULTRAWIDE_5K2K).unwrap();
+    assert!(near(wide_5k2k.horizontal, 4.0 / 3.0));
+    assert_eq!(wide_5k2k.vertical, 1.0);
 
     let tall = fov(Z13).unwrap();
     assert_eq!(tall.horizontal, 1.0);

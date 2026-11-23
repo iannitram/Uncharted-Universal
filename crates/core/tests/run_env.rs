@@ -301,3 +301,26 @@ fn launch_session_forwards_validated_benchmark_seconds_and_player_wins_over_sett
     };
     assert_eq!(invalid_session.env(Game::U2).unwrap_err().code(), "launch");
 }
+
+#[test]
+fn ultrawide_5k2k_settings_and_game_res_env() {
+    let settings = Settings {
+        resolution: Some("5120x2160".to_owned()),
+        ..Settings::default()
+    };
+    let built: BTreeMap<_, _> = build_env(Game::U2, &settings, &PROFILE, &BTreeMap::new())
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(built["BB_RESOLUTION"], "5120x2160");
+
+    let with_game_res = env_for(Game::U2, &[("BB_GAME_RES", "5120x2160")]);
+    assert_eq!(with_game_res["BB_GAME_RES"], "5120x2160");
+    assert_eq!(with_game_res["BB_SCENE_SIZE"], "5120x2160");
+    assert_eq!(with_game_res["BB_MOVIE_SIZE"], "5120x2160");
+    assert_eq!(with_game_res["BB_GAME_RT_MB"], "1344");
+    assert_eq!(with_game_res["BB_GAME_RT2_MB"], "704");
+    assert_eq!(with_game_res["BB_GAME_MOVIE_MB"], "16");
+    assert_eq!(with_game_res["BB_DMEM_MB"], "7104");
+    assert_eq!(with_game_res["BB_DMEM_MB_USER"], "7104");
+}
