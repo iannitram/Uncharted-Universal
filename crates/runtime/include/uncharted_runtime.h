@@ -21,6 +21,10 @@
 // [`crate::thread`] and [`crate::fiber`] on Linux (3.13).
 #define UNCHARTED_RUNTIME_ABI_VERSION 9
 
+// Default debounce window (milliseconds) before a live resize or fold/unfold settles into a
+// restart-needed state (M21e, #436).
+#define RESIZE_DEBOUNCE_MS 250
+
 // One entry of a C module's export table: a symbol name and the host function behind it.
 // `RUNTIME_LOOKUP` in `src/runtime.h` searches such a table through [`ffi::runtime_lookup`].
 typedef struct RuntimeExport {

@@ -50,4 +50,7 @@ bool CapturesInput();
 /// `active` is false; typing goes to the window (sdl_window), the box only displays it.
 void SetTextEntry(bool active, const std::string& prompt, const std::string& text);
 
+/// Present thread: updates the debounced live-resize / fold-unfold restart prompt state (M21e, #436).
+void NotifyResizeRestart(bool needs_restart, u32 width, u32 height);
+
 } // namespace BbOverlay

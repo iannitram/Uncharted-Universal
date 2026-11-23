@@ -1,6 +1,7 @@
 #include "bbport_write_log.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
+#include "bbport_resize.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
 #include "equeue_request_gate.h"
@@ -236,24 +237,29 @@ extern "C" BbMovieRect bbgpu_safe_area(uint32_t screen_w, uint32_t screen_h) {
 }
 
 extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
-    static u32 last_w = 0, last_h = 0;
+    static std::mutex resize_mutex;
+    static BbResizeTracker tracker{kBbResizeDebounceMs};
     const u32 sw = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;
     const u32 sh = g_auto_render_size.height ? g_auto_render_size.height : g_startup_window_size.height;
-    if (!sw || !sh || !width || !height) {
-        return 0;
+    const u64 now_ms = u64(std::chrono::duration_cast<std::chrono::milliseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count());
+    BbResizeState state{};
+    bool notify_overlay = false;
+    {
+        std::scoped_lock lock{resize_mutex};
+        const bool prev_restart = tracker.State().needs_restart;
+        state = tracker.Observe(sw, sh, width, height, now_ms);
+        notify_overlay = state.just_settled || (prev_restart && !state.needs_restart);
     }
-    const u32 dw = sw > width ? sw - width : width - sw;
-    const u32 dh = sh > height ? sh - height : height - sh;
-    if (dw <= 16 && dh <= 16) {
-        return 0;
-    }
-    if (last_w != width || last_h != height) {
-        last_w = width;
-        last_h = height;
+    if (state.just_settled) {
         std::printf("Display: window resized to %ux%u (presenter rescaled); restart for a full re-render\n",
-                    width, height);
+                    state.settled_width, state.settled_height);
     }
-    return 1;
+    if (notify_overlay) {
+        BbOverlay::NotifyResizeRestart(state.needs_restart, state.settled_width, state.settled_height);
+    }
+    return state.needs_restart ? 1 : 0;
 }
 
 u32 BbDisplayRefreshHz() {

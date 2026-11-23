@@ -525,6 +525,10 @@ pub extern "C" fn uncharted_runtime_movie_fit_rect(
     }
 }
 
+/// Default debounce window (milliseconds) before a live resize or fold/unfold settles into a
+/// restart-needed state (M21e, #436).
+pub const RESIZE_DEBOUNCE_MS: u64 = 250;
+
 /// Returns true when a live window resize or fold/unfold diverges enough from `startup` (>16 px
 /// in either dimension) that a restart prompt should be offered for a full re-render (M21e, #436).
 pub fn resize_needs_restart(startup: (u32, u32), current: (u32, u32)) -> bool {
@@ -533,6 +537,84 @@ pub fn resize_needs_restart(startup: (u32, u32), current: (u32, u32)) -> bool {
         && current.0 > 0
         && current.1 > 0
         && (startup.0.abs_diff(current.0) > 16 || startup.1.abs_diff(current.1) > 16)
+}
+
+/// Snapshot of the debounced live-resize / fold-unfold state (M21e, #436).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ResizeState {
+    pub needs_restart: bool,
+    pub settled_width: u32,
+    pub settled_height: u32,
+    pub just_settled: bool,
+}
+
+/// Coalesces rapid live window resizes (desktop drag, fold/unfold animation) before surfacing
+/// `needs_restart`, while ignoring minimized `0x0` frames (M21e, #436).
+#[derive(Debug, Clone)]
+pub struct ResizeMonitor {
+    startup: (u32, u32),
+    debounce_ms: u64,
+    pending: Option<((u32, u32), u64)>,
+    settled: Option<(u32, u32)>,
+    needs_restart: bool,
+}
+
+impl ResizeMonitor {
+    pub fn new(startup: (u32, u32), debounce_ms: u64) -> Self {
+        Self {
+            startup,
+            debounce_ms,
+            pending: None,
+            settled: None,
+            needs_restart: false,
+        }
+    }
+
+    pub fn with_default_debounce(startup: (u32, u32)) -> Self {
+        Self::new(startup, RESIZE_DEBOUNCE_MS)
+    }
+
+    pub fn state(&self) -> ResizeState {
+        let (settled_width, settled_height) = self.settled.unwrap_or((0, 0));
+        ResizeState {
+            needs_restart: self.needs_restart,
+            settled_width,
+            settled_height,
+            just_settled: false,
+        }
+    }
+
+    pub fn observe(&mut self, current: (u32, u32), now_ms: u64) -> ResizeState {
+        if self.startup.0 == 0 || self.startup.1 == 0 || current.0 == 0 || current.1 == 0 {
+            return self.state();
+        }
+        match self.pending {
+            Some((size, _)) if size == current => {}
+            _ => {
+                self.pending = Some((current, now_ms));
+                if self.debounce_ms > 0 {
+                    return self.state();
+                }
+            }
+        }
+        let Some((pending_size, since_ms)) = self.pending else {
+            return self.state();
+        };
+        if now_ms.saturating_sub(since_ms) < self.debounce_ms {
+            return self.state();
+        }
+
+        let next_restart = resize_needs_restart(self.startup, pending_size);
+        let changed = self.settled != Some(pending_size) || self.needs_restart != next_restart;
+        self.settled = Some(pending_size);
+        self.needs_restart = next_restart;
+        ResizeState {
+            needs_restart: self.needs_restart,
+            settled_width: pending_size.0,
+            settled_height: pending_size.1,
+            just_settled: changed && next_restart,
+        }
+    }
 }
 
 #[no_mangle]
@@ -958,10 +1040,64 @@ mod tests {
         assert!(uncharted_runtime_resize_needs_restart(
             2092, 1080, 2208, 1840
         ));
+        // Fold unfolded -> cover
+        assert!(uncharted_runtime_resize_needs_restart(
+            2208, 1840, 2092, 1080
+        ));
         // Live desktop window resize
         assert!(uncharted_runtime_resize_needs_restart(
             1280, 720, 1920, 1080
         ));
+    }
+
+    #[test]
+    fn resize_monitor_debounces_drag_and_fold_transitions() {
+        // Pixel Fold cover (2092x1080) -> unfolded (2208x1840)
+        let mut monitor = ResizeMonitor::with_default_debounce((2092, 1080));
+        assert!(!monitor.observe((2092, 1080), 0).needs_restart);
+        assert!(!monitor.observe((2092, 1080), 300).needs_restart);
+
+        // Rapid intermediate sizes during fold/drag do not trigger restart early.
+        assert!(!monitor.observe((2140, 1300), 1000).needs_restart);
+        assert!(!monitor.observe((2180, 1600), 1100).needs_restart);
+        let first_unfold = monitor.observe((2208, 1840), 1200);
+        assert!(!first_unfold.needs_restart);
+        assert!(!first_unfold.just_settled);
+
+        // Still within debounce window at +200 ms.
+        assert!(!monitor.observe((2208, 1840), 1400).needs_restart);
+
+        // Settles once stable for >= 250 ms.
+        let settled = monitor.observe((2208, 1840), 1450);
+        assert!(settled.needs_restart);
+        assert!(settled.just_settled);
+        assert_eq!(
+            (settled.settled_width, settled.settled_height),
+            (2208, 1840)
+        );
+
+        // Subsequent frames at the same size keep needs_restart=true without re-triggering just_settled.
+        let steady = monitor.observe((2208, 1840), 1600);
+        assert!(steady.needs_restart);
+        assert!(!steady.just_settled);
+
+        // Minimizing (0x0) is ignored and preserves the settled restart state.
+        let minimized = monitor.observe((0, 0), 1700);
+        assert!(minimized.needs_restart);
+        assert_eq!(
+            (minimized.settled_width, minimized.settled_height),
+            (2208, 1840)
+        );
+
+        // Folding back to cover (within 16 px of startup) clears needs_restart once debounced.
+        assert!(monitor.observe((2092, 1080), 2000).needs_restart);
+        let refolded = monitor.observe((2092, 1080), 2250);
+        assert!(!refolded.needs_restart);
+        assert!(!refolded.just_settled);
+        assert_eq!(
+            (refolded.settled_width, refolded.settled_height),
+            (2092, 1080)
+        );
     }
 
     #[test]

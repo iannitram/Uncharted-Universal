@@ -80,6 +80,16 @@ bool text_entry_active = false;
 std::string text_entry_prompt, text_entry_text;
 float base_scale = 1.0f;
 
+// Debounced live-resize / fold-unfold restart prompt state (M21e, #436).
+std::atomic<bool> resize_restart_needed{false};
+std::atomic<u32> resize_restart_w{0};
+std::atomic<u32> resize_restart_h{0};
+std::atomic<bool> resize_banner_active{false};
+std::atomic<u64> resize_banner_seq{0};
+u64 resize_banner_shown_seq = 0;
+std::chrono::steady_clock::time_point resize_banner_start{};
+constexpr float ResizeBannerSeconds = 8.0f;
+
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
 float frame_ms_avg = 0.0f, last_present_ms = 0.0f;
@@ -571,13 +581,24 @@ void Menu() {
            "Применяется после перезапуска игры."));
     // No game-effect, cheat or model-detail toggles here: those were Bloodborne patches
     // (scripts/patches.py, patches/Bloodborne.xml), which the Uncharted launch never applies.
+    const bool resize_restart = resize_restart_needed.load(std::memory_order_relaxed);
     bool restart = s.object_motion != s.startup_object_motion ||
                    s.live_resolution != s.startup_live_resolution ||
-                   BbSettings::ResolutionNeedsRestart();
+                   BbSettings::ResolutionNeedsRestart() ||
+                   resize_restart;
     if (restart) {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
-                           T("Changes apply after restarting the game",
-                             "Изменения применятся после перезапуска игры"));
+        if (resize_restart) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                T("Window resized (%ux%u); restart for a full re-render",
+                  "Размер окна изменён (%ux%u); перезапустите для полного рендера"),
+                resize_restart_w.load(std::memory_order_relaxed),
+                resize_restart_h.load(std::memory_order_relaxed));
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s",
+                               T("Changes apply after restarting the game",
+                                 "Изменения применятся после перезапуска игры"));
+        }
         if (ImGui::Button(T("Apply and restart the game", "Применить и перезапустить игру"))) {
             BbSettings::Save();
             runtime_restart();
@@ -891,6 +912,48 @@ void TrophyToast() {
     ImGui::PopStyleVar(4);
 }
 
+void ResizeBanner() {
+    if (!resize_banner_active.load(std::memory_order_relaxed) ||
+        !resize_restart_needed.load(std::memory_order_relaxed)) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const u64 seq = resize_banner_seq.load(std::memory_order_relaxed);
+    if (resize_banner_shown_seq != seq) {
+        resize_banner_shown_seq = seq;
+        resize_banner_start = now;
+    }
+    const float elapsed = std::chrono::duration<float>(now - resize_banner_start).count();
+    if (elapsed >= ResizeBannerSeconds) {
+        resize_banner_active.store(false, std::memory_order_relaxed);
+        return;
+    }
+    const float s = base_scale;
+    const float alpha = std::min(1.0f, (ResizeBannerSeconds - elapsed) / 0.6f);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(
+        ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+               viewport->WorkPos.y + viewport->WorkSize.y - 24.0f * s),
+        ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14.0f * s, 8.0f * s));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * s);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.07f, 0.09f, 0.90f));
+    ImGui::Begin("##resize_restart_banner", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings);
+    ImGui::TextColored(
+        ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+        T("Resized to %ux%u — open menu (Insert / L3+R3) to restart for full re-render",
+          "Размер изменён (%ux%u) — откройте меню (Insert / L3+R3) для перезапуска"),
+        resize_restart_w.load(std::memory_order_relaxed),
+        resize_restart_h.load(std::memory_order_relaxed));
+    ImGui::End();
+    ImGui::PopStyleColor(1);
+    ImGui::PopStyleVar(3);
+}
+
 } // namespace
 
 void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) {
@@ -1064,7 +1127,20 @@ bool HandleEvent(const SDL_Event& event) {
 
 bool Visible() {
     return initialized &&
-           (menu_open || text_entry_active || BbSettings::Get().show_fps || toast_busy);
+           (menu_open || text_entry_active || BbSettings::Get().show_fps || toast_busy ||
+            resize_banner_active.load(std::memory_order_relaxed));
+}
+
+void NotifyResizeRestart(bool needs_restart, u32 width, u32 height) {
+    resize_restart_w.store(width, std::memory_order_relaxed);
+    resize_restart_h.store(height, std::memory_order_relaxed);
+    resize_restart_needed.store(needs_restart, std::memory_order_relaxed);
+    if (needs_restart) {
+        resize_banner_seq.fetch_add(1, std::memory_order_relaxed);
+        resize_banner_active.store(true, std::memory_order_relaxed);
+    } else {
+        resize_banner_active.store(false, std::memory_order_relaxed);
+    }
 }
 
 void NotifyTrophy(int grade, std::string game, std::string name, std::vector<unsigned char> png) {
@@ -1205,6 +1281,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (text_entry_active) {
         TextEntryBox();
+    }
+    if (!menu_open) {
+        ResizeBanner();
     }
     TrophyToast();
     ImGui::Render();
