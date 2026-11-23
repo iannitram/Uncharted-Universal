@@ -55,6 +55,9 @@ impl PatchFile {
             rebase_slots(base, 0, offset, &mut data, segments, relocs, false)?;
             entries.push(PatchEntry { offset, data });
         }
+        if pos != bytes.len() {
+            return Err("trailing data in patch file".into());
+        }
 
         Ok(Self { base, entries })
     }
@@ -257,5 +260,9 @@ mod tests {
         }];
         let bad_ptr = make_bbpatch2(0x1000, &[(0x1000, &[0u8; 8])]);
         assert!(PatchFile::parse(&bad_ptr, &segments, &bad_ptr_reloc).is_err());
+
+        let mut trailing = make_bbpatch2(0x1000, &[(0x1000, &[0x90, 0x90])]);
+        trailing.push(0xff);
+        assert!(PatchFile::parse(&trailing, &segments, &[]).is_err());
     }
 }
