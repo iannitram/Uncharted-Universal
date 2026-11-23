@@ -8,9 +8,8 @@
 #include <algorithm>
 #include <vector>
 
-#include <vulkan/vulkan.hpp>
-
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_common.h"
 
 namespace VideoCore {
 

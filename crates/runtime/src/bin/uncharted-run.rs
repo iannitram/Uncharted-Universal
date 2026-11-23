@@ -55,6 +55,12 @@ fn run_command(cmd: Command) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!(
+            "usage: uncharted-run [--probe | --force-fault | --controller-info | --controller-test [strength] | --controller-watch [secs] | <boot.bin> [options]]"
+        );
+        return ExitCode::SUCCESS;
+    }
     let cmd = match loader::parse_args(&args) {
         Ok(cmd) => cmd,
         Err(msg) => {

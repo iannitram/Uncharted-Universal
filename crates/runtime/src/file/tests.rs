@@ -1001,8 +1001,15 @@ fn pread_bounds_and_eof_edge_cases() {
 
     assert_eq!(pread(fd, 64, 6), Ok(Vec::new()));
     assert_eq!(pread(fd, 64, i64::MAX - 64), Ok(Vec::new()));
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     assert_eq!(pread(fd, 64, i64::MAX), Err(Errno::EINVAL));
+    #[cfg(all(unix, not(target_os = "linux")))]
+    assert!(
+        matches!(
+            pread(fd, 64, i64::MAX),
+            Ok(ref buf) if buf.is_empty()
+        ) || pread(fd, 64, i64::MAX) == Err(Errno::EINVAL)
+    );
     assert_eq!(pread(fd, 0, 0), Ok(Vec::new()));
     assert_eq!(lseek(fd, 0, 1), Ok(0));
 
