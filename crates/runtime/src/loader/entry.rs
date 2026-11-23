@@ -1324,25 +1324,27 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn runtime_quit_invokes_prepare_exit_once_and_exits_with_code() {
+        static MARKER_FD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
         extern "C" fn ok_init(_cfg: *const BbGpuConfig) -> c_int {
             0
         }
         extern "C" fn on_prepare_exit() {
-            // Write marker to fd 1 so parent observes the hook ran before `_exit`.
-            unsafe {
-                libc::write(1, b"GPU_PREPARED_EXIT\n".as_ptr().cast(), 18);
+            let fd = MARKER_FD.load(Ordering::SeqCst);
+            if fd >= 0 {
+                unsafe {
+                    libc::write(fd, b"GPU_PREPARED_EXIT\n".as_ptr().cast(), 18);
+                }
             }
         }
 
         let mut pipefd = [0 as libc::c_int; 2];
         assert_eq!(unsafe { libc::pipe(pipefd.as_mut_ptr()) }, 0);
+        MARKER_FD.store(pipefd[1], Ordering::SeqCst);
         let pid = unsafe { libc::fork() };
         assert!(pid >= 0);
         if pid == 0 {
             unsafe {
                 libc::close(pipefd[0]);
-                libc::dup2(pipefd[1], 1);
-                libc::close(pipefd[1]);
             }
             configure_gpu_hooks(GpuHooks {
                 bbgpu_init: Some(ok_init),
@@ -1363,6 +1365,7 @@ mod tests {
             bbgpu_init(&cfg).unwrap();
             runtime_quit(20);
         }
+        MARKER_FD.store(-1, Ordering::SeqCst);
         unsafe { libc::close(pipefd[1]) };
         let mut out = Vec::new();
         let mut buf = [0u8; 64];
