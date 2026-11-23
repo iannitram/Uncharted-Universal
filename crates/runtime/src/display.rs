@@ -986,10 +986,25 @@ mod tests {
                 height: 1440
             }
         );
-        // 3:2 (iPad mini) -> letterboxed 16:9 safe area
-        let ipad = uncharted_runtime_safe_area(2266, 1488);
-        assert_eq!(ipad.x, 0);
-        assert!(ipad.y > 0 && ipad.width == 2266 && ipad.height < 1488);
+        // 3:2 (iPad mini and exact 3:2) -> letterboxed 16:9 safe area
+        assert_eq!(
+            uncharted_runtime_safe_area(2266, 1488),
+            RuntimeRect {
+                x: 0,
+                y: 107,
+                width: 2266,
+                height: 1274
+            }
+        );
+        assert_eq!(
+            uncharted_runtime_safe_area(2160, 1440),
+            RuntimeRect {
+                x: 0,
+                y: 112,
+                width: 2160,
+                height: 1215
+            }
+        );
         // 6:5 (Pixel Fold unfolded) -> letterboxed 16:9 safe area
         assert_eq!(
             uncharted_runtime_safe_area(2208, 1840),
@@ -1000,7 +1015,7 @@ mod tests {
                 height: 1242
             }
         );
-        // Fold cover (2092x1080) -> pillarboxed 16:9 safe area
+        // 17.4:9 (Fold cover 2092x1080) -> pillarboxed 16:9 safe area
         assert_eq!(
             uncharted_runtime_safe_area(2092, 1080),
             RuntimeRect {
@@ -1010,6 +1025,25 @@ mod tests {
                 height: 1080
             }
         );
+        // Zero dimensions -> zero rect without panicking
+        assert_eq!(uncharted_runtime_safe_area(0, 1080), RuntimeRect::default());
+        assert_eq!(uncharted_runtime_safe_area(1920, 0), RuntimeRect::default());
+        // Invariant: every safe area stays within screen bounds and keeps 16:9 within 1 px.
+        for (w, h) in [
+            (2208, 1840),
+            (2266, 1488),
+            (2160, 1440),
+            (1920, 1080),
+            (2560, 1440),
+            (2560, 1600),
+            (2092, 1080),
+        ] {
+            let r = uncharted_runtime_safe_area(w, h);
+            assert!(r.x + r.width <= w);
+            assert!(r.y + r.height <= h);
+            let aspect_diff = (u64::from(r.width) * 9).abs_diff(u64::from(r.height) * 16);
+            assert!(aspect_diff <= 16, "{w}x{h} -> {r:?}");
+        }
     }
 
     #[test]

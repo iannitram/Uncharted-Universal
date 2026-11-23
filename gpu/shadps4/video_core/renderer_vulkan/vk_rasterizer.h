@@ -226,6 +226,7 @@ private:
         RenderState state;
         u32 scene_size = 0;
         std::array<float, 2> target_scale{};
+        std::array<float, 2> target_offset{};
         u64 meta_clears = 0; ///< TextureCache::MetaClears when stored
     } begin_memo;
     u64 begin_memo_hits = 0, begin_memo_misses = 0;
@@ -380,6 +381,7 @@ private:
     std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
+    std::array<float, 2> target_offset{0.0f, 0.0f}; ///< safe-area offset inside output-size UI images
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 
