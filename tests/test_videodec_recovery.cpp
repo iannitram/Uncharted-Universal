@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
+#include <limits>
 
 #include "core/libraries/videodec/videodec2_recovery.h"
 
@@ -119,6 +121,94 @@ int main() {
     assert(!DecodeRecoveryStats::ShouldLog(6));
     assert(DecodeRecoveryStats::ShouldLog(8));
     assert(!DecodeRecoveryStats::ShouldLog(9));
+
+    // 8. Deferred AVERROR_INVALIDDATA on receive_frame (FF_THREAD_FRAME path): flushes and skips
+    // instead of returning FatalError.
+    {
+        DecodeRecoveryStats stats{};
+        int sends = 0, recvs = 0, flushes = 0;
+        const auto res = RunDecodeStep(
+            [&] {
+                ++sends;
+                return 0;
+            },
+            [&] {
+                ++recvs;
+                return kInvalid;
+            },
+            [&] { ++flushes; }, kEagain, kEof, kInvalid, stats);
+        assert(res.status == DecodeStepStatus::NeedMoreInput);
+        assert(res.flushed && res.skipped_corrupt);
+        assert(sends == 1 && recvs == 1 && flushes == 1);
+        assert(stats.send_invalid_flushes == 1 && stats.corrupt_packets_skipped == 1);
+    }
+
+    // 9. EAGAIN on send followed by EOF on drain: flushes and retries send cleanly.
+    {
+        DecodeRecoveryStats stats{};
+        int sends = 0, recvs = 0, flushes = 0;
+        const auto res = RunDecodeStep(
+            [&] {
+                ++sends;
+                return sends == 1 ? kEagain : 0;
+            },
+            [&] {
+                ++recvs;
+                return recvs == 1 ? kEof : 0;
+            },
+            [&] { ++flushes; }, kEagain, kEof, kInvalid, stats);
+        assert(res.status == DecodeStepStatus::FrameReady);
+        assert(res.flushed && flushes == 1 && sends == 2 && recvs == 2);
+        assert(stats.send_eof_flushes == 1);
+    }
+
+    // 10. EAGAIN on send followed by INVALIDDATA on drain: flushes and retries send cleanly.
+    {
+        DecodeRecoveryStats stats{};
+        int sends = 0, recvs = 0, flushes = 0;
+        const auto res = RunDecodeStep(
+            [&] {
+                ++sends;
+                return sends == 1 ? kEagain : 0;
+            },
+            [&] {
+                ++recvs;
+                return recvs == 1 ? kInvalid : 0;
+            },
+            [&] { ++flushes; }, kEagain, kEof, kInvalid, stats);
+        assert(res.status == DecodeStepStatus::FrameReady);
+        assert(res.flushed && flushes == 1 && sends == 2 && recvs == 2);
+        assert(stats.send_invalid_flushes == 1);
+    }
+
+    // 11. EOF on send followed by INVALIDDATA on retry: skips corrupt packet without FatalError.
+    {
+        DecodeRecoveryStats stats{};
+        int sends = 0, flushes = 0;
+        const auto res = RunDecodeStep(
+            [&] {
+                ++sends;
+                return sends == 1 ? kEof : kInvalid;
+            },
+            [] { return kEagain; },
+            [&] { ++flushes; }, kEagain, kEof, kInvalid, stats);
+        assert(res.status == DecodeStepStatus::NeedMoreInput);
+        assert(res.flushed && res.skipped_corrupt);
+        assert(flushes == 1 && sends == 2);
+        assert(stats.send_eof_flushes == 1 && stats.corrupt_packets_skipped == 1);
+    }
+
+    // 12. ResolveOutputPts: never leaks AV_NOPTS_VALUE (INT64_MIN) as a huge future u64 PTS.
+    {
+        constexpr std::int64_t kNoPts = std::numeric_limits<std::int64_t>::min();
+        std::uint64_t last_pts = 0;
+        assert(ResolveOutputPts(90000, kNoPts, kNoPts, last_pts) == 90000ULL);
+        assert(last_pts == 90000ULL);
+        assert(ResolveOutputPts(kNoPts, 93003, kNoPts, last_pts) == 93003ULL);
+        assert(last_pts == 93003ULL);
+        assert(ResolveOutputPts(kNoPts, kNoPts, kNoPts, last_pts) == 93003ULL);
+        assert(last_pts == 93003ULL);
+    }
 
     std::puts("videodec recovery tests passed");
     return 0;
