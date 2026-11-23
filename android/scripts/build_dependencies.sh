@@ -585,14 +585,15 @@ cpu_family = 'aarch64'
 cpu = 'armv8'
 endian = 'little'
 EOF
-"$WORK/mesa-venv/bin/meson" setup "$WORK/build/mesa" "$WORK/src/mesa-turnip" \
+rm -rf "$WORK/build/mesa"
+PKG_CONFIG_LIBDIR=/dev/null PKG_CONFIG_PATH="" PATH="$WORK/mesa-venv/bin:$PATH" "$WORK/mesa-venv/bin/meson" setup "$WORK/build/mesa" "$WORK/src/mesa-turnip" \
     --cross-file "$WORK/build/mesa-android.ini" --prefix "$PREFIX" \
     -Dbuildtype=release -Dplatforms=android -Dplatform-sdk-version="$API" \
     -Dandroid-stub=true -Dgallium-drivers= -Degl=disabled -Dopengl=false \
     -Dgles1=disabled -Dgles2=disabled -Dglx=disabled -Dvulkan-drivers=freedreno \
     -Dfreedreno-kmds=kgsl -Dvulkan-beta=true -Db_lto=false -Dstrip=true \
-    -Dllvm=disabled -Dvalgrind=disabled -Dandroid-libbacktrace=disabled
-ninja -C "$WORK/build/mesa" -j"$JOBS" src/freedreno/vulkan/libvulkan_freedreno.so
+    -Dllvm=disabled -Dzstd=disabled -Dvalgrind=disabled -Dandroid-libbacktrace=disabled
+PATH="$WORK/mesa-venv/bin:$PATH" ninja -C "$WORK/build/mesa" -j"$JOBS" src/freedreno/vulkan/libvulkan_freedreno.so
 install -D "$WORK/build/mesa/src/freedreno/vulkan/libvulkan_freedreno.so" \
     "$WORK/dist/libvulkan_freedreno.so"
 

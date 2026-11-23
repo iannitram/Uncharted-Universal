@@ -77,18 +77,18 @@ if [ -n "$NDK" ] && [ -f "$NDK/build/cmake/android.toolchain.cmake" ]; then
         BIN_PATH="$NDK_BUILD/$bin"
         [ -f "$BIN_PATH" ] || { echo "missing Android binary: $BIN_PATH" >&2; exit 1; }
         if command -v readelf >/dev/null 2>&1; then
-            readelf -h "$BIN_PATH" | grep -q "Machine:[[:space:]]*AArch64" || {
+            readelf -h "$BIN_PATH" | grep -E "Machine:[[:space:]]*AArch64" >/dev/null || {
                 echo "$bin is not AArch64" >&2; exit 1;
             }
-            readelf -l "$BIN_PATH" | grep -q "/system/bin/linker64" || {
+            readelf -l "$BIN_PATH" | grep -F "/system/bin/linker64" >/dev/null || {
                 echo "$bin missing bionic /system/bin/linker64 interpreter" >&2; exit 1;
             }
-            if readelf -d "$BIN_PATH" | grep -q "libc\.so\.6"; then
+            if readelf -d "$BIN_PATH" | grep -F "libc.so.6" >/dev/null; then
                 echo "$bin unexpectedly links glibc libc.so.6" >&2; exit 1;
             fi
         fi
         if command -v strings >/dev/null 2>&1; then
-            strings "$BIN_PATH" | grep -q "FEXCORE_ANDROID_SMOKE_OK" || {
+            strings "$BIN_PATH" | grep -F "FEXCORE_ANDROID_SMOKE_OK" >/dev/null || {
                 echo "$bin missing FEXCORE_ANDROID_SMOKE_OK marker" >&2; exit 1;
             }
         fi
