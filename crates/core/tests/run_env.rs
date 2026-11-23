@@ -223,3 +223,28 @@ fn u3_defaults_match_run_py() {
     assert_eq!(defaults["BB_TOGGLE2"], "12");
     assert!(!fix_defaults(&BTreeMap::new(), Game::U2).contains_key("BB_TOGGLE2"));
 }
+
+#[test]
+fn settings_extra_preserves_u1_copy64_eop_readback_override() {
+    let profile = uncharted_core::profile::by_id("desktop").unwrap();
+    let mut settings = uncharted_core::run_env::Settings::default();
+    settings
+        .extra
+        .insert("BB_COPY64_EOP_READBACK".into(), "1".into());
+    settings
+        .extra
+        .insert("BB_COPY64_EOP_GATE".into(), "1".into());
+    let built: BTreeMap<_, _> =
+        uncharted_core::run_env::build_env(Game::U1, &settings, profile, &BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .collect();
+    assert_eq!(
+        built.get("BB_COPY64_EOP_READBACK").map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        built.get("BB_COPY64_EOP_GATE").map(String::as_str),
+        Some("1")
+    );
+}

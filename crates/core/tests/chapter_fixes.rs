@@ -126,11 +126,31 @@ fn an_unknown_place_leaves_every_fix_at_its_default() {
 }
 
 #[test]
-fn other_games_have_no_chapter_fixes_yet() {
-    for game in [Game::U1, Game::U3] {
-        let json = place(game.key(), "", "Nepal");
-        assert!(fixes_at(game, Some(&json)).is_empty());
-    }
+fn u1_chapter_3_enables_copy64_eop_readback_and_gate() {
+    let ch3 = place("u1", "Uncharted: Drake's Fortune", "A Surprising Find");
+    assert_eq!(state(Game::U1, Some(&ch3), "fix_u1_ch3_copy64"), Some(true));
+    let got = chapter_env(&BTreeMap::new(), Game::U1, Some(&ch3));
+    assert_eq!(got["BB_COPY64_EOP_READBACK"], "1");
+    assert_eq!(got["BB_COPY64_EOP_GATE"], "1");
+
+    let ch1 = place("u1", "Uncharted: Drake's Fortune", "Ambushed");
+    assert_eq!(
+        state(Game::U1, Some(&ch1), "fix_u1_ch3_copy64"),
+        Some(false)
+    );
+    let got = chapter_env(&BTreeMap::new(), Game::U1, Some(&ch1));
+    assert_eq!(got["BB_COPY64_EOP_READBACK"], "0");
+    assert_eq!(got["BB_COPY64_EOP_GATE"], "0");
+
+    // Player override wins over chapter fix.
+    let player = env(&[("BB_COPY64_EOP_READBACK", "0")]);
+    assert!(chapter_env(&player, Game::U1, Some(&ch3)).is_empty());
+}
+
+#[test]
+fn u3_has_no_chapter_fixes_yet() {
+    let json = place(Game::U3.key(), "", "Nepal");
+    assert!(fixes_at(Game::U3, Some(&json)).is_empty());
 }
 
 #[test]
@@ -143,18 +163,19 @@ fn a_variable_the_player_set_keeps_its_fix_out() {
 }
 
 #[test]
-fn each_fix_switches_variables_the_game_defaults_set() {
-    let defaults = fix_defaults(&BTreeMap::new(), Game::U2);
+fn each_fix_switches_matching_on_off_variables() {
+    let u2_defaults = fix_defaults(&BTreeMap::new(), Game::U2);
     for fix in CHAPTER_FIXES {
-        assert_eq!(fix.game, Game::U2);
         assert!(!fix.chapters.is_empty(), "{}", fix.key);
-        for (name, value) in fix.on {
-            assert_eq!(
-                defaults.get(*name).map(String::as_str),
-                Some(*value),
-                "{}: today's default is the fix on",
-                fix.key
-            );
+        if fix.game == Game::U2 {
+            for (name, value) in fix.on {
+                assert_eq!(
+                    u2_defaults.get(*name).map(String::as_str),
+                    Some(*value),
+                    "{}: today's default is the fix on",
+                    fix.key
+                );
+            }
         }
         let names =
             |pairs: &[(&str, &str)]| pairs.iter().map(|(n, _)| n.to_string()).collect::<Vec<_>>();
