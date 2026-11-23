@@ -721,3 +721,134 @@ fn save_sync_setup_walks_all_services_by_controller_and_never_leaks_credentials(
     assert!(!saved.contains(secret));
     let _ = std::fs::remove_dir_all(&temp);
 }
+
+#[test]
+fn nextcloud_controller_editor_masks_password_closes_on_submit_and_preserves_draft_on_error() {
+    use uncharted_core::relay::{CloudService, RelayAccountStatus};
+
+    let mut page = FirstRun::new(None, false);
+    press(&mut page, HUB);
+    page.event(Event::Candidates(vec![PathBuf::from("/dump")]));
+    page.handle(A);
+    page.event(Event::Checked(
+        PathBuf::from("/dump"),
+        Ok(report(&[Game::U1], true, &[])),
+    ));
+    page.handle(A);
+    page.event(Event::Prepared(vec![ok(Game::U1)]));
+    press(&mut page, NEXT);
+    assert_eq!(page.view().title, "Save sync");
+    press(&mut page, SYNC_NEXTCLOUD);
+
+    let view = page.view();
+    assert_eq!(view.title, "Nextcloud sign-in");
+    assert!(!view.field.is_empty());
+    assert!(!view.field_secret);
+
+    // Edit URL using the controller on-screen editor and confirm Done closes it.
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+    assert!(page.view().editor.is_some());
+    editor_press(&mut page, 1, 0); // 'q'
+    let footer = page.view().editor.unwrap().rows.len();
+    assert_eq!(editor_press(&mut page, footer, 1), Job::None);
+    assert!(page.view().editor.is_none());
+    page.field("https://cloud.example.invalid");
+
+    // Edit Account and confirm Done closes editor.
+    page.handle(DOWN);
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+    assert!(!page.view().field_secret);
+    editor_press(&mut page, 1, 0);
+    assert_eq!(editor_press(&mut page, footer, 1), Job::None);
+    assert!(page.view().editor.is_none());
+    page.field("elena");
+
+    // Edit App password: field_secret is true and EditorView masks characters.
+    page.handle(DOWN);
+    assert_eq!(page.handle_pad(Input::Activate, ""), Job::None);
+    assert!(page.view().field_secret);
+    editor_press(&mut page, 1, 0); // 'q'
+    editor_press(&mut page, 1, 1); // 'w'
+    let editor = page.view().editor.unwrap();
+    assert_eq!(editor.text, "••");
+    assert!(!editor.text.contains('q'));
+    assert!(!editor.text.contains('w'));
+    assert_eq!(editor_press(&mut page, footer, 1), Job::None);
+    assert!(page.view().editor.is_none());
+
+    // Submit Sign in -> fails with credential-store error -> returns to Nextcloud preserving URL & account.
+    page.handle(DOWN);
+    let job = page.handle(A);
+    assert_eq!(
+        job,
+        Job::RelaySignInNextcloud {
+            url: "https://cloud.example.invalid".into(),
+            account: "elena".into(),
+            password: "qw".into(),
+        }
+    );
+    page.event(Event::RelaySignedIn(Err(
+        "Save Relay could not access the system credential store.".into(),
+    )));
+    let view = page.view();
+    assert_eq!(view.title, "Nextcloud sign-in");
+    assert!(view.error.contains("credential store"));
+    assert!(view
+        .lines
+        .iter()
+        .any(|l| l.contains("https://cloud.example.invalid")));
+    assert!(view.lines.iter().any(|l| l.contains("elena")));
+    assert!(view
+        .lines
+        .iter()
+        .any(|l| l.contains("App password: not set")));
+    assert!(view.field_secret);
+
+    // Re-enter password and succeed.
+    page.field("new-app-pw");
+    assert_eq!(
+        press(&mut page, SIGN_IN),
+        Job::RelaySignInNextcloud {
+            url: "https://cloud.example.invalid".into(),
+            account: "elena".into(),
+            password: "new-app-pw".into(),
+        }
+    );
+    page.event(Event::RelaySignedIn(Ok(RelayAccountStatus {
+        service: Some(CloudService::Nextcloud),
+        account: Some("elena".into()),
+        configured: true,
+    })));
+    assert_eq!(page.view().title, "All set");
+}
+
+#[test]
+fn nextcloud_rejects_empty_or_control_characters_and_oauth_error_returns_to_save_sync() {
+    let mut page = at_steam();
+    press(&mut page, NOT_NOW);
+    assert_eq!(page.view().title, "Save sync");
+
+    // OAuth failure returns to Save sync with error and lets user skip for offline/local play.
+    press(&mut page, SYNC_GDRIVE);
+    page.event(Event::RelayChallenge(Err(
+        "Save Relay could not start Google Drive sign-in.".into(),
+    )));
+    assert_eq!(page.view().title, "Save sync");
+    assert!(page.view().error.contains("Google Drive"));
+
+    press(&mut page, SYNC_NEXTCLOUD);
+    assert_eq!(press(&mut page, SIGN_IN), Job::None);
+    assert!(page.view().error.contains("Nextcloud address"));
+    assert_eq!(press(&mut page, NC_URL), Job::EditField);
+    page.field("https://nc.invalid");
+    assert_eq!(press(&mut page, NC_ACCOUNT), Job::EditField);
+    page.field("nathan");
+    assert_eq!(press(&mut page, NC_PASSWORD), Job::EditField);
+    page.field("bad\npass");
+    assert_eq!(press(&mut page, SIGN_IN), Job::None);
+    assert!(page.view().error.contains("line breaks"));
+
+    press(&mut page, BACK);
+    press(&mut page, SKIP_SYNC);
+    assert_eq!(page.view().title, "All set");
+}

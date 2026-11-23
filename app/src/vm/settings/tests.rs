@@ -431,3 +431,39 @@ fn ultrawide_5k2k_preset_is_offered_and_selectable() {
     let vm_small = SettingsVm::new(stored, handheld(), Some((small, Bench::default())));
     assert_eq!(vm_small.stored().render_resolution, "1920x1080");
 }
+
+#[test]
+fn button_prompts_choice_cycles_and_preserves_display_settings() {
+    let mut vm = SettingsVm::new(Stored::default(), desktop(), None);
+    let before = vm.stored().clone();
+    let row = FIRST_CHOICE
+        + Choice::ALL
+            .iter()
+            .position(|c| *c == Choice::ButtonPrompts)
+            .unwrap();
+    vm.focus = Grid::at(row, 0);
+    assert_eq!(
+        vm.handle(Input::Move(Nav::Right)),
+        SettingsCommand::SaveButtonPrompts(prompts::Choice::Fixed(prompts::Style::Xbox))
+    );
+    assert_eq!(
+        vm.handle(Input::Move(Nav::Right)),
+        SettingsCommand::SaveButtonPrompts(prompts::Choice::Fixed(prompts::Style::PlayStation))
+    );
+    assert_eq!(
+        vm.handle(Input::Move(Nav::Right)),
+        SettingsCommand::SaveButtonPrompts(prompts::Choice::Fixed(prompts::Style::Nintendo))
+    );
+    assert_eq!(
+        vm.handle(Input::Move(Nav::Right)),
+        SettingsCommand::SaveButtonPrompts(prompts::Choice::Fixed(prompts::Style::Keyboard))
+    );
+    // Display settings did not change while changing button prompts.
+    assert_eq!(vm.stored().frame_rate, before.frame_rate);
+    assert_eq!(vm.stored().render_resolution, before.render_resolution);
+    // Activate wraps Keyboard back to Automatic.
+    assert_eq!(
+        vm.handle(Input::Activate),
+        SettingsCommand::SaveButtonPrompts(prompts::Choice::Automatic)
+    );
+}

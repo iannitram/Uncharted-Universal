@@ -20,8 +20,8 @@ pub struct PadInput {
 
 struct Pad {
     style: Style,
-    stick_x_held: bool,
-    stick_y_held: bool,
+    stick_x: Option<Nav>,
+    stick_y: Option<Nav>,
 }
 
 /// Track the normalized events separately from the backend so tests can hot-plug a fake pad.
@@ -34,8 +34,8 @@ impl Pads {
             id,
             Pad {
                 style,
-                stick_x_held: false,
-                stick_y_held: false,
+                stick_x: None,
+                stick_y: None,
             },
         );
     }
@@ -55,8 +55,8 @@ impl Pads {
     pub fn axis(&mut self, id: usize, axis: Axis, value: f32) -> Option<PadInput> {
         let pad = self.0.get_mut(&id)?;
         let held = match axis {
-            Axis::LeftStickX => &mut pad.stick_x_held,
-            Axis::LeftStickY => &mut pad.stick_y_held,
+            Axis::LeftStickX => &mut pad.stick_x,
+            Axis::LeftStickY => &mut pad.stick_y,
             _ => return None,
         };
         Some(PadInput {
@@ -130,21 +130,33 @@ fn pad_style(vendor: Option<u16>, mapped_name: &str, os_name: &str) -> Style {
     // Some backends omit hardware IDs. The mapping and operating system names may differ.
     for name in [mapped_name, os_name] {
         let name = name.to_ascii_lowercase();
+        let trimmed = name.trim();
+        if ["xbox", "x-box", "xinput"]
+            .iter()
+            .any(|part| trimmed.contains(part))
+        {
+            return Style::Xbox;
+        }
         if [
             "playstation",
             "dualshock",
             "dualsense",
+            "sixaxis",
+            "ps3 controller",
             "ps4 controller",
             "ps5 controller",
+            "sony",
         ]
         .iter()
-        .any(|part| name.contains(part))
+        .any(|part| trimmed.contains(part))
         {
             return Style::PlayStation;
         }
         if ["nintendo", "joy-con", "joycon", "switch pro"]
             .iter()
-            .any(|part| name.contains(part))
+            .any(|part| trimmed.contains(part))
+            || trimmed == "pro controller"
+            || trimmed.ends_with(" pro controller")
         {
             return Style::Nintendo;
         }
@@ -153,19 +165,22 @@ fn pad_style(vendor: Option<u16>, mapped_name: &str, os_name: &str) -> Style {
 }
 
 /// A stick movement: a direction when the stick crosses the threshold, then nothing until it
-/// comes back under it. gilrs reports stick Y positive when pushed up.
-fn stick_push(held: &mut bool, axis: Axis, value: f32) -> Option<Nav> {
-    let (was, now) = (*held, value.abs() >= STICK_THRESHOLD);
-    *held = now;
-    if !now || was {
-        return None;
-    }
-    Some(match (axis, value > 0.0) {
-        (Axis::LeftStickX, true) => Nav::Right,
-        (Axis::LeftStickX, false) => Nav::Left,
-        (_, true) => Nav::Up,
-        (_, false) => Nav::Down,
-    })
+/// comes back under it or crosses into the opposite direction. gilrs reports stick Y positive
+/// when pushed up.
+fn stick_push(held: &mut Option<Nav>, axis: Axis, value: f32) -> Option<Nav> {
+    let dir = if value.abs() >= STICK_THRESHOLD {
+        Some(match (axis, value > 0.0) {
+            (Axis::LeftStickX, true) => Nav::Right,
+            (Axis::LeftStickX, false) => Nav::Left,
+            (_, true) => Nav::Up,
+            (_, false) => Nav::Down,
+        })
+    } else {
+        None
+    };
+    let fire = dir.filter(|d| Some(*d) != *held);
+    *held = dir;
+    fire
 }
 
 fn button_input(button: Button) -> Option<Input> {
@@ -220,8 +235,36 @@ mod tests {
             ),
             (Some(0x057e), "Joy-Con (L)", "Joy-Con (L)", Style::Nintendo),
             (None, "Wireless Controller", "DualSense", Style::PlayStation),
+            (None, "Unknown", "PS3 Controller", Style::PlayStation),
+            (
+                None,
+                "PLAYSTATION(R)3 Controller",
+                "Sixaxis",
+                Style::PlayStation,
+            ),
             (None, "Unknown", "Joy-Con (R)", Style::Nintendo),
+            (None, "Unknown", "Joy-Con (L/R)", Style::Nintendo),
+            (None, "Pro Controller", "Pro Controller", Style::Nintendo),
+            (
+                Some(0x0f0d),
+                "HORIPAD S",
+                "Nintendo Switch Pad",
+                Style::Nintendo,
+            ),
+            (
+                Some(0x28de),
+                "Steam Deck",
+                "Steam Virtual Gamepad",
+                Style::Xbox,
+            ),
+            (
+                None,
+                "Xbox 360 Controller",
+                "Nintendo Switch Pro Controller",
+                Style::Xbox,
+            ),
             (None, "Generic USB Gamepad", "Unknown", Style::Xbox),
+            (None, "", "", Style::Xbox),
             (
                 Some(0x045e),
                 "Nintendo emulating Xbox",
@@ -229,7 +272,7 @@ mod tests {
                 Style::Xbox,
             ),
         ] {
-            assert_eq!(pad_style(vendor, mapped, os), style);
+            assert_eq!(pad_style(vendor, mapped, os), style, "{mapped} / {os}");
         }
     }
 
@@ -278,7 +321,7 @@ mod tests {
 
     #[test]
     fn a_stick_push_fires_once_until_it_returns() {
-        let mut held = false;
+        let mut held = None;
         assert_eq!(stick_push(&mut held, Axis::LeftStickX, 0.3), None);
         assert_eq!(
             stick_push(&mut held, Axis::LeftStickX, 0.9),
@@ -290,9 +333,15 @@ mod tests {
             stick_push(&mut held, Axis::LeftStickX, -0.7),
             Some(Nav::Left)
         );
-        let mut held = false;
+        // Fast flick across center without stopping in deadzone fires the opposite direction.
+        assert_eq!(
+            stick_push(&mut held, Axis::LeftStickX, 0.85),
+            Some(Nav::Right)
+        );
+        assert_eq!(stick_push(&mut held, Axis::LeftStickX, f32::NAN), None);
+        let mut held = None;
         assert_eq!(stick_push(&mut held, Axis::LeftStickY, 0.8), Some(Nav::Up));
-        held = false;
+        held = None;
         assert_eq!(
             stick_push(&mut held, Axis::LeftStickY, -0.8),
             Some(Nav::Down)

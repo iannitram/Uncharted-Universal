@@ -368,13 +368,21 @@ fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures, style: prompt
 
 /// Draw the first-run page into the window.
 fn apply_first(window: &AppWindow, view: &FirstRunView) {
+    let prev_field = window.get_fr_field().to_string();
+    let prev_secret = window.get_fr_field_secret();
     window.set_fr_step(view.step.as_str().into());
     window.set_fr_title(view.title.as_str().into());
     window.set_fr_lines(strings(&view.lines));
     window.set_fr_options(strings(&view.options));
     window.set_fr_focus(view.focus as i32);
     window.set_fr_field(view.field.as_str().into());
-    window.set_fr_field_text(view.field_text.as_str().into());
+    window.set_fr_field_secret(view.field_secret);
+    if prev_field != view.field
+        || prev_secret != view.field_secret
+        || (!view.field_secret && window.get_fr_field_text().as_str() != view.field_text)
+    {
+        window.set_fr_field_text(view.field_text.as_str().into());
+    }
     window.set_fr_code(strings(&view.code));
     window.set_fr_code_cursor(view.code_cursor as i32);
     window.set_fr_has_progress(view.progress.is_some());
@@ -1168,12 +1176,12 @@ fn play_args(start: &Start) -> Vec<String> {
 fn extract_conflict_event(
     stdout: &[u8],
     stderr: &[u8],
-) -> Option<uncharted_core::savecard::SideBySide> {
+) -> Option<(Game, String, uncharted_core::savecard::SideBySide)> {
     for stream in [stdout, stderr] {
         let text = String::from_utf8_lossy(stream);
         for line in text.lines() {
-            if let Some((_, pair)) = uncharted_core::relay::parse_conflict_event(line) {
-                return Some(pair);
+            if let Some(found) = uncharted_core::relay::parse_conflict_event_with_phase(line) {
+                return Some(found);
             }
         }
     }
@@ -1189,7 +1197,9 @@ fn run_status(game: Game, result: &std::io::Result<std::process::Output>) -> Str
             .lines()
             .rev()
             .map(str::trim)
-            .find(|l| !l.is_empty())
+            .find(|l| {
+                !l.is_empty() && uncharted_core::relay::parse_conflict_event_with_phase(l).is_none()
+            })
             .map(str::to_owned)
             .unwrap_or_else(|| {
                 format!(
@@ -1198,6 +1208,73 @@ fn run_status(game: Game, result: &std::io::Result<std::process::Output>) -> Str
                     out.status.code().unwrap_or(-1)
                 )
             }),
+    }
+}
+
+fn relay_status_line(
+    program_present: bool,
+    status: Result<uncharted_core::relay::RelayAccountStatus, String>,
+) -> String {
+    if !program_present {
+        return NO_RELAY.to_owned();
+    }
+    match status {
+        Ok(status) if status.configured => {
+            let svc = status.service.map(|s| s.name()).unwrap_or("Save Relay");
+            match status.account.as_deref().filter(|a| !a.is_empty()) {
+                Some(account) => format!("Save sync ready ({svc}: {account})."),
+                None => format!("Save sync ready ({svc})."),
+            }
+        }
+        Ok(_) => "Save sync is not set up yet: saves stay on this device.".into(),
+        Err(err) => {
+            let err = err.trim().trim_end_matches('.');
+            format!("Save sync unavailable ({err}): saves stay on this device.")
+        }
+    }
+}
+
+fn resolve_conflict(
+    relay: &dyn uncharted_core::launch::Relay,
+    game: Game,
+    phase: &str,
+    slot: u8,
+    folder: &Path,
+    keep: Keep,
+) -> Result<uncharted_core::launch::Sync, String> {
+    let res = if phase == "push" {
+        relay.push(game, slot, folder, Some(keep))
+    } else {
+        relay.pull(game, slot, folder, Some(keep))
+    };
+    res.map_err(|e| e.to_string())
+}
+
+fn keep_result_status(
+    game: Game,
+    keep: Keep,
+    result: Result<uncharted_core::launch::Sync, String>,
+) -> (String, Option<uncharted_core::savecard::SideBySide>) {
+    use uncharted_core::launch::Sync;
+    match result {
+        Ok(Sync::Done(_)) => (keep_status(game, keep), None),
+        Ok(Sync::Offline) => (
+            format!(
+                "Save server is offline; keeping {} locally for {}.",
+                match keep {
+                    Keep::Server => "the synced save",
+                    Keep::Local => "this device's save",
+                },
+                game.name()
+            ),
+            None,
+        ),
+        Ok(Sync::LocalOnly(msg)) => (msg.to_owned(), None),
+        Ok(Sync::Conflict(pair)) => (
+            format!("Save Relay still reports a conflict for {}.", game.name()),
+            Some(*pair),
+        ),
+        Err(err) => (err, None),
     }
 }
 
@@ -1259,7 +1336,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let (places, status, dirs) = match &vars {
         Ok(vars) => (
             places(os, vars),
-            NO_RELAY.to_owned(),
+            if work::desktop_relay().program.is_file() {
+                "Checking save sync...".to_owned()
+            } else {
+                NO_RELAY.to_owned()
+            },
             Some(AppDirs::new(vars)),
         ),
         Err(err) => {
@@ -1267,6 +1348,8 @@ fn main() -> Result<(), slint::PlatformError> {
             (Vec::new(), format!("Cannot find the saves: {err}"), None)
         }
     };
+    let relay_status = Rc::new(RefCell::new(status.clone()));
+    let conflict_phases = Rc::new(RefCell::new(HashMap::<Game, String>::new()));
     let folders = vars.as_ref().ok().map(|vars| Folders {
         dirs: AppDirs::new(vars),
         vars: vars.clone(),
@@ -1308,15 +1391,46 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     // A finished game run comes back from its thread through this channel, the hardware probe
-    // through the second and what the first run's jobs come to through the third.
-    let (done_tx, done_rx) =
-        mpsc::channel::<(Game, String, Option<uncharted_core::savecard::SideBySide>)>();
+    // through the second, the first run's jobs through the third, and Save Relay status /
+    // conflict resolution through the fourth and fifth.
+    let (done_tx, done_rx) = mpsc::channel::<(
+        Game,
+        String,
+        Option<(Game, String, uncharted_core::savecard::SideBySide)>,
+    )>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
+    let (relay_tx, relay_rx) = mpsc::channel::<String>();
+    let (keep_tx, keep_rx) =
+        mpsc::channel::<(Game, Keep, Result<uncharted_core::launch::Sync, String>)>();
+    let refresh_relay = {
+        let relay_tx = relay_tx.clone();
+        move || {
+            let relay = work::desktop_relay();
+            if relay.program.is_file() {
+                let tx = relay_tx.clone();
+                std::thread::spawn(move || {
+                    use uncharted_core::relay::RelaySetup;
+                    let line =
+                        relay_status_line(true, relay.status().map_err(|e| firstrun::message(&e)));
+                    let _ = tx.send(line);
+                });
+            }
+        }
+    };
+    refresh_relay();
     let run_args = args.run_args;
 
     let run: Rc<dyn Fn(Cmd)> = Rc::new({
-        let (ui, places, config, cx) = (ui.clone(), places.clone(), config.clone(), cx.clone());
+        let (ui, places, config, cx, relay_status, conflict_phases, keep_tx) = (
+            ui.clone(),
+            places.clone(),
+            config.clone(),
+            cx.clone(),
+            relay_status.clone(),
+            conflict_phases.clone(),
+            keep_tx.clone(),
+        );
         move |command| match command {
             Cmd::Screen(Command::None)
             | Cmd::Saves(SavesCommand::None | SavesCommand::Back)
@@ -1329,7 +1443,11 @@ fn main() -> Result<(), slint::PlatformError> {
             Cmd::Screen(Command::Open(Page::Saves)) => match &backups {
                 Some(backups) if !places.borrow().is_empty() => {
                     let game = ui.screen.borrow().current_game();
-                    let vm = SavesVm::new(saves_data(&places.borrow(), backups), game, NO_RELAY);
+                    let vm = SavesVm::new(
+                        saves_data(&places.borrow(), backups),
+                        game,
+                        &relay_status.borrow(),
+                    );
                     ui.show(Shown::Saves(vm));
                 }
                 _ => {
@@ -1389,6 +1507,32 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
             Cmd::Screen(Command::Keep { game, keep }) => {
+                let relay = work::desktop_relay();
+                let place = places.borrow().iter().find(|p| p.game == game).map(|p| {
+                    let slot = saves::selected(&p.user_dir, game);
+                    let folder = saves::relay_saves_dir(&p.user_dir, game);
+                    (slot, folder)
+                });
+                if relay.program.is_file() {
+                    if let Some((slot, folder)) = place {
+                        let phase = conflict_phases
+                            .borrow()
+                            .get(&game)
+                            .cloned()
+                            .unwrap_or_else(|| "pull".into());
+                        ui.screen.borrow_mut().set_status(&format!(
+                            "Applying your save choice for {}...",
+                            game.name()
+                        ));
+                        ui.redraw();
+                        let tx = keep_tx.clone();
+                        std::thread::spawn(move || {
+                            let res = resolve_conflict(&relay, game, &phase, slot, &folder, keep);
+                            let _ = tx.send((game, keep, res));
+                        });
+                        return;
+                    }
+                }
                 ui.screen.borrow_mut().set_status(&keep_status(game, keep));
                 ui.redraw();
             }
@@ -1429,7 +1573,13 @@ fn main() -> Result<(), slint::PlatformError> {
                         .as_ref()
                         .ok()
                         .and_then(|out| extract_conflict_event(&out.stdout, &out.stderr));
-                    let _ = done.send((start.game, run_status(start.game, &result), conflict));
+                    let status = match &conflict {
+                        Some((conflict_game, _, _)) => {
+                            format!("Two saves of {} need your choice.", conflict_game.name())
+                        }
+                        None => run_status(start.game, &result),
+                    };
+                    let _ = done.send((start.game, status, conflict));
                 });
             }
             Cmd::Saves(command) => {
@@ -1516,6 +1666,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 let games = load_all(&places.borrow());
                 ui.screen.borrow_mut().reload(games);
+                refresh_relay();
                 ui.redraw();
             }
             job => {
@@ -1557,12 +1708,35 @@ fn main() -> Result<(), slint::PlatformError> {
                 let mut screen = ui.screen.borrow_mut();
                 screen.reload(games);
                 screen.finished(&status);
-                if let Some(pair) = conflict {
-                    screen.set_conflict(game, pair);
+                if let Some((conflict_game, phase, pair)) = conflict {
+                    conflict_phases.borrow_mut().insert(conflict_game, phase);
+                    screen.set_conflict(conflict_game, pair);
                 }
                 drop(screen);
                 ui.redraw();
                 ui.run_ended(game);
+            }
+            if let Ok((game, keep, res)) = keep_rx.try_recv() {
+                let (status, still_conflict) = keep_result_status(game, keep, res);
+                let games = load_all(&places.borrow());
+                let mut screen = ui.screen.borrow_mut();
+                screen.reload(games);
+                screen.set_status(&status);
+                if let Some(pair) = still_conflict {
+                    screen.set_conflict(game, pair);
+                } else {
+                    conflict_phases.borrow_mut().remove(&game);
+                }
+                drop(screen);
+                ui.redraw();
+            }
+            if let Ok(line) = relay_rx.try_recv() {
+                *relay_status.borrow_mut() = line.clone();
+                ui.screen.borrow_mut().set_status(&line);
+                if let Shown::Saves(vm) = &mut *ui.shown.borrow_mut() {
+                    vm.set_relay(&line);
+                }
+                ui.redraw();
             }
             if let Ok(probe) = probe_rx.try_recv() {
                 let result = probe.and_then(|text| {
@@ -2548,5 +2722,240 @@ mod tests {
         assert_eq!(malformed_env, baseline);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relay_status_line_and_conflict_resolution_handle_offline_and_errors() {
+        use uncharted_core::launch::{Keep, Relay, Sync};
+        use uncharted_core::relay::{conflict_event, CloudService, RelayAccountStatus};
+        use uncharted_core::savecard::{side_by_side, SaveCard};
+
+        assert_eq!(relay_status_line(false, Ok(Default::default())), NO_RELAY);
+        assert_eq!(
+            relay_status_line(
+                true,
+                Ok(RelayAccountStatus {
+                    service: Some(CloudService::Nextcloud),
+                    account: Some("nathan".into()),
+                    configured: true,
+                })
+            ),
+            "Save sync ready (Nextcloud: nathan)."
+        );
+        assert_eq!(
+            relay_status_line(
+                true,
+                Ok(RelayAccountStatus {
+                    service: Some(CloudService::GoogleDrive),
+                    account: None,
+                    configured: true,
+                })
+            ),
+            "Save sync ready (Google Drive)."
+        );
+        assert!(
+            relay_status_line(true, Ok(RelayAccountStatus::default())).contains("not set up yet")
+        );
+        assert_eq!(
+            relay_status_line(
+                true,
+                Err("Save Relay could not access the system credential store.".into())
+            ),
+            "Save sync unavailable (Save Relay could not access the system credential store): saves stay on this device."
+        );
+
+        let card = |device: &str, saved_unix| SaveCard {
+            game: Game::U2,
+            slot: "Revision 1".into(),
+            picture: None,
+            title: None,
+            detail: Some("Chapter 4".into()),
+            saved_unix,
+            play_time_secs: None,
+            device: Some(device.into()),
+            build_id: None,
+        };
+        let pair = side_by_side(card("tablet", 200), card("desktop", 100));
+        let event_line = conflict_event("push", &pair).to_string();
+        let log_bytes = format!("Error: Launch: Save conflict\n{event_line}\n");
+        let extracted = extract_conflict_event(&[], log_bytes.as_bytes()).unwrap();
+        assert_eq!(extracted.0, Game::U2);
+        assert_eq!(extracted.1, "push");
+        assert_eq!(extracted.2.server.device.as_deref(), Some("tablet"));
+
+        // run_status ignores JSON conflict lines even if printed last.
+        let status_out = std::process::Output {
+            status: std::process::Command::new("false").status().unwrap(),
+            stdout: Vec::new(),
+            stderr: log_bytes.into_bytes(),
+        };
+        assert_eq!(
+            run_status(Game::U2, &Ok(status_out)),
+            "Error: Launch: Save conflict"
+        );
+
+        struct FakeRelay(Sync);
+        impl Relay for FakeRelay {
+            fn pull(
+                &self,
+                _game: Game,
+                _slot: u8,
+                _saves_dir: &Path,
+                _resolve: Option<Keep>,
+            ) -> uncharted_core::Result<Sync> {
+                Ok(self.0.clone())
+            }
+            fn push(
+                &self,
+                _game: Game,
+                _slot: u8,
+                _saves_dir: &Path,
+                _resolve: Option<Keep>,
+            ) -> uncharted_core::Result<Sync> {
+                Ok(self.0.clone())
+            }
+        }
+
+        let (msg, still) = keep_result_status(
+            Game::U2,
+            Keep::Server,
+            resolve_conflict(
+                &FakeRelay(Sync::Done("ok".into())),
+                Game::U2,
+                "push",
+                1,
+                Path::new("."),
+                Keep::Server,
+            ),
+        );
+        assert_eq!(msg, "Keeping the synced save of Uncharted 2.");
+        assert!(still.is_none());
+
+        let (msg, still) = keep_result_status(
+            Game::U2,
+            Keep::Local,
+            resolve_conflict(
+                &FakeRelay(Sync::Offline),
+                Game::U2,
+                "pull",
+                1,
+                Path::new("."),
+                Keep::Local,
+            ),
+        );
+        assert!(msg.contains("offline"));
+        assert!(still.is_none());
+
+        let (msg, still) = keep_result_status(
+            Game::U2,
+            Keep::Server,
+            resolve_conflict(
+                &FakeRelay(Sync::Conflict(Box::new(pair))),
+                Game::U2,
+                "pull",
+                1,
+                Path::new("."),
+                Keep::Server,
+            ),
+        );
+        assert!(msg.contains("still reports a conflict"));
+        assert!(still.is_some());
+    }
+
+    #[test]
+    fn headless_first_run_nextcloud_line_edit_does_not_wipe_password_on_edit() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let games: Vec<GameData> = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let jobs: Rc<dyn Fn(Job)> = Rc::new({
+            let seen = seen.clone();
+            move |j| seen.borrow_mut().push(j)
+        });
+        wire(&window, &ui, Rc::new(|_| {}), jobs.clone());
+        ui.open_first(None, false);
+
+        // Navigate Hub -> Prepared -> SaveSync -> Nextcloud.
+        window.invoke_fr_clicked(0);
+        ui.first_do(|f| f.event(firstrun::Event::Candidates(vec![PathBuf::from("/dump")])));
+        window.invoke_fr_clicked(0);
+        ui.first_do(|f| {
+            f.event(firstrun::Event::Checked(
+                PathBuf::from("/dump"),
+                Ok(uncharted_core::dump::DumpReport {
+                    title_id: Some("CUSA02320".into()),
+                    games: vec![uncharted_core::dump::FoundGame {
+                        game: Game::U1,
+                        folder: PathBuf::from("/dump"),
+                        app_ver: None,
+                    }],
+                    decrypted: true,
+                    problems: Vec::new(),
+                }),
+            ))
+        });
+        window.invoke_fr_clicked(0);
+        ui.first_do(|f| {
+            f.event(firstrun::Event::Prepared(vec![
+                uncharted_core::setup::Prepared {
+                    game: Game::U1,
+                    result: Ok(uncharted_core::prepare::InstallManifest {
+                        game: Game::U1,
+                        title_id: "CUSA02320".into(),
+                        app_ver: "01.00".into(),
+                        files: Vec::new(),
+                    }),
+                },
+            ]))
+        });
+        window.invoke_fr_clicked(0); // Next -> SaveSync
+        window.invoke_fr_clicked(0); // Nextcloud
+        assert_eq!(window.get_fr_title(), "Nextcloud sign-in");
+        assert!(!window.get_fr_field().is_empty());
+        assert!(!window.get_fr_field_secret());
+
+        window.invoke_field_edited("https://nc.example.invalid".into());
+        window.invoke_fr_clicked(1); // Account
+        assert_eq!(window.get_fr_field_text(), "");
+        window.invoke_field_edited("nathan".into());
+        window.invoke_fr_clicked(2); // App password
+        assert!(window.get_fr_field_secret());
+
+        // Typing into the LineEdit must preserve the widget's text while keeping fr_field_secret true.
+        window.set_fr_field_text("p1".into());
+        window.invoke_field_edited("p1".into());
+        assert_eq!(window.get_fr_field_text(), "p1");
+        window.set_fr_field_text("p123".into());
+        window.invoke_field_edited("p123".into());
+        assert_eq!(window.get_fr_field_text(), "p123");
+
+        window.invoke_fr_clicked(3); // Sign in
+        assert_eq!(
+            seen.borrow().last(),
+            Some(&Job::RelaySignInNextcloud {
+                url: "https://nc.example.invalid".into(),
+                account: "nathan".into(),
+                password: "p123".into(),
+            })
+        );
+        // Busy step clears fr_field_text and fr_field_secret.
+        assert_eq!(window.get_fr_field_text(), "");
+        assert!(!window.get_fr_field_secret());
     }
 }

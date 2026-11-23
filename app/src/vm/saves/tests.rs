@@ -238,3 +238,13 @@ fn stamps_round_trip_and_sort_by_time() {
     let vm = SavesVm::new(all, Game::U2, "");
     assert_eq!(vm.view(&clock()).backups[0].title, "by hand");
 }
+
+#[test]
+fn set_relay_updates_saves_relay_line() {
+    let mut vm = SavesVm::new(games(), Game::U2, "Checking save sync...");
+    vm.set_relay("Save sync ready (Nextcloud: nathan).");
+    assert_eq!(
+        vm.view(&clock()).relay,
+        "save-relay syncs the active slot of Uncharted 2: Slot 3. Save sync ready (Nextcloud: nathan)."
+    );
+}

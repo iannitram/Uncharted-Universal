@@ -683,6 +683,7 @@ export component AppWindow inherits Window {
     in property <int> fr-focus;
     // The text field's placeholder; "" when the step has no field.
     in property <string> fr-field;
+    in property <bool> fr-field-secret;
     in-out property <string> fr-field-text;
     // The six pairing-code boxes; empty when the step has none.
     in property <[string]> fr-code;
@@ -1601,6 +1602,7 @@ export component AppWindow inherits Window {
                     visible: root.fr-field != "";
                     height: root.fr-field == "" ? 0px : root.unit * 2.6;
                     font-size: root.unit;
+                    input-type: root.fr-field-secret ? InputType.password : InputType.text;
                     placeholder-text: root.fr-field;
                     text <=> root.fr-field-text;
                     edited(text) => { root.field-edited(text); }

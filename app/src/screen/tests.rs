@@ -667,3 +667,29 @@ fn clicks_focus_then_act() {
     screen.handle(Input::Back);
     assert_eq!(screen.click(5, 0), Command::Quit);
 }
+
+#[test]
+fn conflict_tab_toggles_side_and_tie_is_not_marked_newer() {
+    let mut screen = screen_on(Game::U2, three([0, 1, 0]));
+    let same = uncharted_core::savecard::side_by_side(
+        full_card(Game::U2, NOW - 600),
+        full_card(Game::U2, NOW - 600),
+    );
+    screen.set_conflict(Game::U2, same);
+    let OverlayView::Conflict { sides, server, .. } = screen.view(&clock()).overlay else {
+        panic!("expected conflict");
+    };
+    assert!(!server);
+    assert!(!sides[0].newer);
+    assert!(!sides[1].newer);
+    screen.handle(Input::Tab { back: false });
+    let OverlayView::Conflict { server, .. } = screen.view(&clock()).overlay else {
+        panic!("expected conflict");
+    };
+    assert!(server);
+    screen.handle(Input::Tab { back: true });
+    let OverlayView::Conflict { server, .. } = screen.view(&clock()).overlay else {
+        panic!("expected conflict");
+    };
+    assert!(!server);
+}

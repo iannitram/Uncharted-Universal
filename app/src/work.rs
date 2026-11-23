@@ -53,6 +53,15 @@ pub fn start(job: Job, cx: &Context, tx: Sender<Event>) {
 
 /// Run `job` here, sending its events to `tx`. A closed channel (the page went away) drops them.
 pub fn run(job: Job, cx: &Context, tx: &Sender<Event>) {
+    run_with_relay(job, cx, &desktop_relay(), tx);
+}
+
+pub(crate) fn run_with_relay(
+    job: Job,
+    cx: &Context,
+    relay: &dyn uncharted_core::relay::RelaySetup,
+    tx: &Sender<Event>,
+) {
     let send = |event| {
         let _ = tx.send(event);
     };
@@ -123,23 +132,19 @@ pub fn run(job: Job, cx: &Context, tx: &Sender<Event>) {
             account,
             password,
         } => {
-            use uncharted_core::relay::RelaySetup;
-            let res = desktop_relay()
+            let res = relay
                 .sign_in_nextcloud(&url, &account, &password)
                 .map_err(|e| message(&e));
             send(Event::RelaySignedIn(res));
         }
         Job::RelayStartOAuth(service) => {
-            use uncharted_core::relay::RelaySetup;
-            let res = desktop_relay()
-                .start_oauth(service)
-                .map_err(|e| message(&e));
+            let res = relay.start_oauth(service).map_err(|e| message(&e));
             send(Event::RelayChallenge(res));
         }
     }
 }
 
-fn desktop_relay() -> uncharted_core::relay::DesktopRelay {
+pub(crate) fn desktop_relay() -> uncharted_core::relay::DesktopRelay {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("uncharted-app"));
     let bin = format!("save-relay{}", std::env::consts::EXE_SUFFIX);
     let program = exe.with_file_name(&bin);
@@ -385,5 +390,122 @@ mod tests {
              Uncharted: The Nathan Drake Collection."
         );
         assert!(added_text(2, 1).starts_with("Added to Steam for 2 users, with 1 picture."));
+    }
+
+    struct FakeRelay {
+        nextcloud: Result<uncharted_core::relay::RelayAccountStatus, String>,
+        oauth: Result<uncharted_core::relay::RelayChallenge, String>,
+    }
+
+    impl uncharted_core::relay::RelaySetup for FakeRelay {
+        fn status(&self) -> uncharted_core::Result<uncharted_core::relay::RelayAccountStatus> {
+            Ok(uncharted_core::relay::RelayAccountStatus::default())
+        }
+
+        fn sign_in_nextcloud(
+            &self,
+            _url: &str,
+            _account: &str,
+            _app_password: &str,
+        ) -> uncharted_core::Result<uncharted_core::relay::RelayAccountStatus> {
+            self.nextcloud
+                .clone()
+                .map_err(uncharted_core::Error::Launch)
+        }
+
+        fn start_oauth(
+            &self,
+            _service: uncharted_core::relay::CloudService,
+        ) -> uncharted_core::Result<uncharted_core::relay::RelayChallenge> {
+            self.oauth.clone().map_err(uncharted_core::Error::Launch)
+        }
+
+        fn sign_out(&self) -> uncharted_core::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn relay_jobs_forward_success_and_credential_errors() {
+        use uncharted_core::relay::{CloudService, RelayAccountStatus, RelayChallenge};
+
+        let root = Temp::new();
+        let cx = context(root.path());
+        let ok_relay = FakeRelay {
+            nextcloud: Ok(RelayAccountStatus {
+                service: Some(CloudService::Nextcloud),
+                account: Some("nathan".into()),
+                configured: true,
+            }),
+            oauth: Ok(RelayChallenge {
+                service: CloudService::GoogleDrive,
+                verification_url: "https://example.invalid/device".into(),
+                user_code: Some("ABCD-1234".into()),
+            }),
+        };
+
+        let (tx, rx) = mpsc::channel();
+        run_with_relay(
+            Job::RelaySignInNextcloud {
+                url: "https://nc.example.invalid".into(),
+                account: "nathan".into(),
+                password: "secret".into(),
+            },
+            &cx,
+            &ok_relay,
+            &tx,
+        );
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            Event::RelaySignedIn(Ok(RelayAccountStatus {
+                service: Some(CloudService::Nextcloud),
+                account: Some("nathan".into()),
+                configured: true,
+            }))
+        );
+
+        run_with_relay(
+            Job::RelayStartOAuth(CloudService::GoogleDrive),
+            &cx,
+            &ok_relay,
+            &tx,
+        );
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            Event::RelayChallenge(Ok(RelayChallenge {
+                service: CloudService::GoogleDrive,
+                verification_url: "https://example.invalid/device".into(),
+                user_code: Some("ABCD-1234".into()),
+            }))
+        );
+
+        let locked_relay = FakeRelay {
+            nextcloud: Err("Save Relay could not access the system credential store.".into()),
+            oauth: Err("Could not start Google Drive sign-in.".into()),
+        };
+        run_with_relay(
+            Job::RelaySignInNextcloud {
+                url: "https://nc.example.invalid".into(),
+                account: "nathan".into(),
+                password: "secret".into(),
+            },
+            &cx,
+            &locked_relay,
+            &tx,
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Event::RelaySignedIn(Err(msg)) if msg.contains("credential store")
+        ));
+        run_with_relay(
+            Job::RelayStartOAuth(CloudService::GoogleDrive),
+            &cx,
+            &locked_relay,
+            &tx,
+        );
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            Event::RelayChallenge(Err(msg)) if msg.contains("Google Drive")
+        ));
     }
 }

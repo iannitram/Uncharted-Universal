@@ -103,3 +103,60 @@ impl Choice {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_styles_map_every_input_distinctly() {
+        for style in [
+            Style::Xbox,
+            Style::PlayStation,
+            Style::Nintendo,
+            Style::Keyboard,
+        ] {
+            assert_ne!(style.button(Input::Activate), style.button(Input::Back));
+            assert_ne!(style.button(Input::PrevGame), style.button(Input::NextGame));
+            assert!(!style.button(Input::OtherSaves).is_empty());
+            assert_eq!(style.button(Input::Move(Nav::Up)), "↑");
+            assert_eq!(style.button(Input::Move(Nav::Down)), "↓");
+            assert_eq!(style.button(Input::Move(Nav::Left)), "←");
+            assert_eq!(style.button(Input::Move(Nav::Right)), "→");
+            assert_eq!(style.button(Input::Tab { back: false }), "");
+        }
+        assert_eq!(Style::Nintendo.button(Input::Activate), "B");
+        assert_eq!(Style::Nintendo.button(Input::Back), "A");
+        assert_eq!(Style::Nintendo.button(Input::OtherSaves), "X");
+        assert_eq!(Style::Nintendo.button(Input::PrevGame), "L");
+        assert_eq!(Style::Nintendo.button(Input::NextGame), "R");
+        assert_eq!(Style::PlayStation.button(Input::Activate), "×");
+        assert_eq!(Style::PlayStation.button(Input::Back), "○");
+        assert_eq!(Style::PlayStation.button(Input::OtherSaves), "△");
+    }
+
+    #[test]
+    fn choice_round_trips_and_unknown_falls_back_to_automatic() {
+        for choice in Choice::ALL {
+            assert_eq!(Choice::from_id(choice.id()), choice);
+            assert!(!choice.label().is_empty());
+        }
+        assert_eq!(Choice::from_id(""), Choice::Automatic);
+        assert_eq!(Choice::from_id("steamdeck"), Choice::Automatic);
+        assert_eq!(Choice::from_id("Xbox"), Choice::Automatic);
+    }
+
+    #[test]
+    fn resolve_follows_last_pad_only_when_automatic() {
+        for pad in [
+            Style::Xbox,
+            Style::PlayStation,
+            Style::Nintendo,
+            Style::Keyboard,
+        ] {
+            assert_eq!(Choice::Automatic.resolve(pad), pad);
+            assert_eq!(Choice::Fixed(Style::Nintendo).resolve(pad), Style::Nintendo);
+            assert_eq!(Choice::Fixed(Style::Xbox).resolve(pad), Style::Xbox);
+        }
+    }
+}
