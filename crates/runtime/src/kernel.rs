@@ -692,6 +692,71 @@ mod host {
     }
 }
 
+/// Clamps single-step jumps in raw monotonic time to `max_delta_ns` (when non-zero) while
+/// staying strictly monotonic and exact for normal frame intervals (`delta <= max_delta_ns`).
+/// Prevents stall spikes (shader compiles, FIFO stalls) from multiplying physics impulses.
+pub struct MonotonicDeltaClamper {
+    state: std::sync::Mutex<Option<(u64, u64)>>,
+}
+
+impl Default for MonotonicDeltaClamper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MonotonicDeltaClamper {
+    /// Creates a new clamper with no prior sample.
+    pub const fn new() -> Self {
+        Self {
+            state: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Advances the clamped clock given a raw monotonic reading `raw_ns`.
+    /// When `max_delta_ns > 0`, any single-step advance larger than `max_delta_ns` is capped.
+    pub fn advance(&self, raw_ns: u64, max_delta_ns: u64) -> u64 {
+        let mut guard = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        match *guard {
+            None => {
+                *guard = Some((raw_ns, raw_ns));
+                raw_ns
+            }
+            Some((last_raw, last_clamped)) => {
+                let raw_delta = raw_ns.saturating_sub(last_raw);
+                let step = if max_delta_ns > 0 {
+                    raw_delta.min(max_delta_ns)
+                } else {
+                    raw_delta
+                };
+                let next_clamped = last_clamped.saturating_add(step);
+                *guard = Some((raw_ns.max(last_raw), next_clamped));
+                next_clamped
+            }
+        }
+    }
+}
+
+/// Parses `BB_MAX_FRAME_DELTA_MS` into nanoseconds (`0` when unset, `"0"`, or invalid;
+/// positive values are capped at `1_000` ms).
+pub fn parse_max_frame_delta_ns(value: Option<&str>) -> u64 {
+    let Some(raw) = value.map(str::trim).filter(|s| !s.is_empty()) else {
+        return 0;
+    };
+    let Ok(ms) = raw.parse::<u64>() else {
+        return 0;
+    };
+    ms.min(1_000).saturating_mul(1_000_000)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn max_frame_delta_ns() -> u64 {
+    static MAX_DELTA_NS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *MAX_DELTA_NS.get_or_init(|| {
+        parse_max_frame_delta_ns(std::env::var("BB_MAX_FRAME_DELTA_MS").ok().as_deref())
+    })
+}
+
 /// Marks the start of the guest's process time (`sceKernelGetProcessTime` counts from here);
 /// later calls change nothing. `runtime_start` calls it.
 #[cfg(target_arch = "x86_64")]
@@ -700,10 +765,18 @@ pub fn mark_process_start() {
 }
 
 /// Nanoseconds since [`mark_process_start`] (or the first process-time read).
+/// When `BB_MAX_FRAME_DELTA_MS` is set, single-step monotonic spikes are clamped.
 #[cfg(target_arch = "x86_64")]
 pub fn process_time_ns() -> u64 {
+    static PROCESS_CLAMPER: MonotonicDeltaClamper = MonotonicDeltaClamper::new();
     let start = host::process_start();
-    host::monotonic_ns().saturating_sub(start)
+    let raw = host::monotonic_ns().saturating_sub(start);
+    let max_delta = max_frame_delta_ns();
+    if max_delta == 0 {
+        raw
+    } else {
+        PROCESS_CLAMPER.advance(raw, max_delta)
+    }
 }
 
 /// The TSC frequency in Hz, measured once over a 20 ms sleep.
@@ -1653,6 +1726,50 @@ mod tests {
         let hz = tsc_frequency();
         assert!((100_000_000..20_000_000_000).contains(&hz), "{hz}");
         assert_eq!(ffi::runtime_tsc_frequency(), hz);
+    }
+
+    #[test]
+    fn max_frame_delta_parsing_bounds() {
+        assert_eq!(parse_max_frame_delta_ns(None), 0);
+        assert_eq!(parse_max_frame_delta_ns(Some("")), 0);
+        assert_eq!(parse_max_frame_delta_ns(Some("0")), 0);
+        assert_eq!(parse_max_frame_delta_ns(Some("-5")), 0);
+        assert_eq!(parse_max_frame_delta_ns(Some("abc")), 0);
+        assert_eq!(parse_max_frame_delta_ns(Some(" 50 ")), 50_000_000);
+        assert_eq!(parse_max_frame_delta_ns(Some("2500")), 1_000_000_000);
+    }
+
+    #[test]
+    fn monotonic_delta_clamper_caps_spikes_and_preserves_normal_cadence() {
+        let clamper = MonotonicDeltaClamper::new();
+        let max_delta = 50_000_000; // 50 ms (1.5x of a 30 Hz frame)
+
+        // First sample anchors at raw time.
+        assert_eq!(clamper.advance(100_000_000, max_delta), 100_000_000);
+
+        // Normal 30 Hz frame (33.33 ms) passes through unchanged.
+        assert_eq!(clamper.advance(133_333_333, max_delta), 133_333_333);
+
+        // Normal 60 Hz frame (16.67 ms) passes through unchanged.
+        assert_eq!(clamper.advance(150_000_000, max_delta), 150_000_000);
+
+        // Backwards / duplicate raw sample stays monotonic without advancing.
+        assert_eq!(clamper.advance(145_000_000, max_delta), 150_000_000);
+        assert_eq!(clamper.advance(150_000_000, max_delta), 150_000_000);
+
+        // 250 ms stall spike is clamped to 50 ms.
+        assert_eq!(clamper.advance(400_000_000, max_delta), 200_000_000);
+
+        // Normal 33.33 ms frame after the spike advances by exact 33.33 ms from clamped time.
+        assert_eq!(clamper.advance(433_333_333, max_delta), 233_333_333);
+    }
+
+    #[test]
+    fn monotonic_delta_clamper_unbounded_when_zero() {
+        let clamper = MonotonicDeltaClamper::new();
+        assert_eq!(clamper.advance(10_000_000, 0), 10_000_000);
+        assert_eq!(clamper.advance(510_000_000, 0), 510_000_000);
+        assert_eq!(clamper.advance(500_000_000, 0), 510_000_000);
     }
 
     #[cfg(target_arch = "x86_64")]

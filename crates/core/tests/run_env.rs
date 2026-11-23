@@ -166,6 +166,29 @@ fn profile_vblank_beats_the_default_and_settings_beat_the_profile() {
 }
 
 #[test]
+fn handheld_profile_sets_frame_delta_clamp_unless_player_overrides() {
+    let handheld = uncharted_core::profile::by_id("amd-handheld").unwrap();
+    let default_env: BTreeMap<_, _> =
+        build_env(Game::U1, &Settings::default(), handheld, &BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .collect();
+    assert_eq!(default_env["BB_VBLANK_HZ"], "30");
+    assert_eq!(default_env["BB_MAX_FRAME_DELTA_MS"], "50");
+
+    let player_env: BTreeMap<_, _> = build_env(
+        Game::U2,
+        &Settings::default(),
+        handheld,
+        &map(&[("BB_MAX_FRAME_DELTA_MS", "0")]),
+    )
+    .unwrap()
+    .into_iter()
+    .collect();
+    assert_eq!(player_env["BB_MAX_FRAME_DELTA_MS"], "0");
+}
+
+#[test]
 fn copy64_eop_readback_is_on_for_u3_only_and_the_player_wins() {
     assert_eq!(env_for(Game::U3, &[])["BB_COPY64_EOP_READBACK"], "1");
     assert!(!env_for(Game::U1, &[]).contains_key("BB_COPY64_EOP_READBACK"));

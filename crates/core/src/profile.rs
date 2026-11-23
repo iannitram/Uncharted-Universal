@@ -31,6 +31,7 @@ pub struct DeviceProfile {
 /// GPU cannot run. 30 Hz by default (`DECK_SETTINGS`); 60 is the other choice (`DECK_FRAME_RATES`).
 const AMD_HANDHELD_ENV: &[(&str, &str)] = &[
     ("BB_VBLANK_HZ", "30"),
+    ("BB_MAX_FRAME_DELTA_MS", "50"),
     ("BB_WINDOW_SIZE", "1280x800"),
     ("BB_RENDER_720P", "1"),
     ("BB_PRESENT_MODE", "Fifo"),
@@ -203,6 +204,7 @@ mod tests {
         assert_eq!(p.power, "20 W");
         let env: BTreeMap<_, _> = p.env.iter().copied().collect();
         assert_eq!(env["BB_VBLANK_HZ"], "30");
+        assert_eq!(env["BB_MAX_FRAME_DELTA_MS"], "50");
         assert_eq!(env["BB_WINDOW_SIZE"], "1280x800");
         assert_eq!(env["BB_RENDER_720P"], "1");
         assert_eq!(env["BB_PRESENT_MODE"], "Fifo");
