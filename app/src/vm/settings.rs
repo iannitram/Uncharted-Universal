@@ -22,7 +22,7 @@ use uncharted_core::run_env;
 use uncharted_core::tune::{self, Bench, Card, Cards, Device, Generation, HardwareReport, Vendor};
 
 /// The render resolutions offered (`RENDER_RESOLUTIONS` of the Python launcher).
-pub const RESOLUTIONS: [&str; 7] = [
+pub const RESOLUTIONS: [&str; 8] = [
     "1280x720",
     "1600x900",
     "1920x1080",
@@ -30,6 +30,7 @@ pub const RESOLUTIONS: [&str; 7] = [
     "2880x1620",
     "3200x1800",
     "3840x2160",
+    "5120x2160",
 ];
 
 /// The upscaling presets (`UPSCALE_PRESETS`): the resolution is the output, the game draws

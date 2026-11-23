@@ -392,3 +392,42 @@ fn back_and_tab() {
     // LB and RB do nothing here.
     assert_eq!(vm.handle(Input::NextGame), SettingsCommand::None);
 }
+
+#[test]
+fn ultrawide_5k2k_preset_is_offered_and_selectable() {
+    let vm = SettingsVm::new(
+        Stored::default(),
+        desktop(),
+        Some((rtx30(), Bench::default())),
+    );
+    let options = vm.options(Choice::Resolution);
+    assert!(options.contains(&("5120x2160".into(), "5120 x 2160".into())));
+
+    let mut stored = Stored {
+        render_resolution: "3840x2160".into(),
+        ..Stored::default()
+    };
+    let mut vm = SettingsVm::new(stored.clone(), desktop(), Some((rtx30(), Bench::default())));
+    // Move down to Resolution (cards=0, Tune=1, Profile=2, FrameRate=3, Resolution=4).
+    for _ in 0..4 {
+        vm.handle(Input::Move(Nav::Down));
+    }
+    let SettingsCommand::Save(saved) = vm.handle(Input::Move(Nav::Right)) else {
+        panic!("expected Save when stepping to 5120x2160");
+    };
+    assert_eq!(saved.render_resolution, "5120x2160");
+    let env = run_env::build_env(
+        Game::U2,
+        &run_settings(&saved, desktop()),
+        desktop(),
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(env.contains(&("BB_RESOLUTION".into(), "5120x2160".into())));
+
+    // Low-VRAM GPUs (< 6 GB) fall back to 1080p instead of offering 5120x2160.
+    stored.render_resolution = "5120x2160".into();
+    let small = probe("amd", "rdna2", "Synthetic RDNA 2", 4096, 60);
+    let vm_small = SettingsVm::new(stored, handheld(), Some((small, Bench::default())));
+    assert_eq!(vm_small.stored().render_resolution, "1920x1080");
+}
