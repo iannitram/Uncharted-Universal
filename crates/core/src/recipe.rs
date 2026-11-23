@@ -221,14 +221,8 @@ pub const CHAPTER_FIXES: &[ChapterFix] = &[
     ChapterFix {
         key: "fix_u1_ch3_copy64",
         game: Game::U1,
-        on: &[
-            ("BB_COPY64_EOP_READBACK", "1"),
-            ("BB_COPY64_EOP_GATE", "1"),
-        ],
-        off: &[
-            ("BB_COPY64_EOP_READBACK", "0"),
-            ("BB_COPY64_EOP_GATE", "0"),
-        ],
+        on: &[("BB_COPY64_EOP_READBACK", "1"), ("BB_COPY64_EOP_GATE", "1")],
+        off: &[("BB_COPY64_EOP_READBACK", "0"), ("BB_COPY64_EOP_GATE", "0")],
         chapters: &["A Surprising Find", "Chapter 3"],
         on_in_chapters: true,
         issue: "#111",

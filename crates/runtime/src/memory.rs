@@ -82,13 +82,13 @@ const PROT_MASK: i32 = 0x37;
 /// the GPU library's (`gpu/shim/bbport_toggles.h` lists them). The C `uint64_t`
 /// `runtime_disabled_optimizations`, read with `__atomic_load_n`.
 #[cfg_attr(
-    any(target_os = "linux", target_os = "android"),
+    any(target_os = "linux", target_os = "android", target_os = "windows"),
     export_name = "runtime_disabled_optimizations"
 )]
 pub static DISABLED_OPTIMIZATIONS: AtomicU64 = AtomicU64::new(0);
 /// A second number in the file: more toggles (`BbToggle::Disabled2`), starting at `BB_TOGGLE2`.
 #[cfg_attr(
-    any(target_os = "linux", target_os = "android"),
+    any(target_os = "linux", target_os = "android", target_os = "windows"),
     export_name = "runtime_disabled_optimizations2"
 )]
 pub static DISABLED_OPTIMIZATIONS2: AtomicU64 = AtomicU64::new(0);

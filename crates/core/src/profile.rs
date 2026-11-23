@@ -48,10 +48,7 @@ const STRIX_HALO_TABLET_ENV: &[(&str, &str)] = &[
     ("BB_FULLSCREEN", "1"),
 ];
 
-const DESKTOP_ENV: &[(&str, &str)] = &[
-    ("BB_VBLANK_HZ", "60"),
-    ("BB_PRESENT_MODE", "Fifo"),
-];
+const DESKTOP_ENV: &[(&str, &str)] = &[("BB_VBLANK_HZ", "60"), ("BB_PRESENT_MODE", "Fifo")];
 
 const MAC_ENV: &[(&str, &str)] = &[("BB_VBLANK_HZ", "60"), ("BB_PRESENT_MODE", "Fifo")];
 
