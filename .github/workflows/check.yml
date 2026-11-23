@@ -177,12 +177,22 @@ jobs:
           submodules: false
       - uses: dtolnay/rust-toolchain@stable
         with:
+          components: rustfmt, clippy
           targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
+      - run: cargo check --target aarch64-linux-android -p uncharted_runtime
+      - run: cargo clippy --target aarch64-linux-android -p uncharted_runtime --lib -- -D warnings
       - run: cargo build -p uncharted_runtime --lib --target aarch64-linux-android
       - run: cargo test -p uncharted_runtime --lib android_fex
+      - name: Check and test Stage 7.03 Android APK scaffold
+        run: |
+          cargo fmt --manifest-path android/apk/Cargo.toml --check
+          cargo clippy --manifest-path android/apk/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path android/apk/Cargo.toml
+          cargo check --manifest-path android/apk/Cargo.toml --target aarch64-linux-android
+          cargo build --manifest-path android/apk/Cargo.toml --lib --target aarch64-linux-android
       - name: Run synthetic FEX guest smoke harness (host + NDK cross-check if NDK installed)
         run: bash android/scripts/verify_fex_smoke.sh
 
