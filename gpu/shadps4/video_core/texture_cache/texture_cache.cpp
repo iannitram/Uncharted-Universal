@@ -1408,14 +1408,24 @@ void TextureCache::GarbageCollectImages() {
             pressure_gc_memory = std::max<u64>(base_pressure_gc_memory, others + room / 100 * 85);
             critical_gc_memory = std::max<u64>(base_critical_gc_memory, others + room);
         }
-        // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
-        // much more than images (buffers backing guest memory), and the startup budget left
-        // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
-        // collector evicted images used two or three frames ago on every submission and wrote
-        // GPU-written ones back. Compare with the driver's current budget instead.
+        // bbport: on integrated GPUs (Steam Deck, Apple Silicon) the usage covers system-memory
+        // heaps holding much more than images (buffers backing guest memory), and the startup
+        // budget left ~1 GB after its 8 GB system reserve: usage stayed above the critical mark,
+        // so the collector evicted images used two or three frames ago on every submission and
+        // wrote GPU-written ones back. Compare with the driver's current budget instead.
         // BB_GC_BUDGET_MB=N: this rule with a fixed budget on any GPU (tests on a desktop).
+        // BB_GC_BUDGET_CAP_MB=N: cap the driver's budget at N MiB on integrated GPUs (e.g. Metal's
+        // working-set budget on 18 GB+ Macs lets the cache grow unboundedly; ported from
+        // bloodborne-native/bloodborne-runtime@d97fc67, GPL-2.0-or-later).
+        static const u64 budget_cap = [] {
+            const char* env = std::getenv("BB_GC_BUDGET_CAP_MB");
+            return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
+        }();
         if (instance.IsIntegrated() || forced_budget) {
-            const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
+            u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
+            if (!forced_budget && budget_cap && (budget == 0 || budget > budget_cap)) {
+                budget = budget_cap;
+            }
             if (budget != 0) {
                 trigger_gc_memory = budget / 10 * 7;
                 pressure_gc_memory = budget / 100 * 85;
