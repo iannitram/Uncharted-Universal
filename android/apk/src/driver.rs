@@ -8,6 +8,86 @@
 use core::ffi::{c_char, c_void};
 use std::fmt;
 
+/// Qualcomm Adreno vendor ID (`0x5143`), matching `BB_ANDROID_VENDOR_QUALCOMM`.
+pub const VENDOR_ID_QUALCOMM: u32 = 0x5143;
+/// ARM Mali vendor ID (`0x13B5`), matching `BB_ANDROID_VENDOR_ARM` (e.g. Google Tensor G2 / Mali-G710).
+pub const VENDOR_ID_ARM: u32 = 0x13B5;
+/// Vulkan 1.3 packed API version (`VK_MAKE_API_VERSION(0, 1, 3, 0)`).
+pub const VK_API_VERSION_1_3: u32 = (1 << 22) | (3 << 12);
+
+/// GPU family classification for Android driver selection (`#536`).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidGpuFamily {
+    Unknown = 0,
+    Adreno = 1,
+    Mali = 2,
+}
+
+/// Classifies an Android GPU from its Vulkan vendor ID and/or device/driver name (`#536`).
+pub fn classify_android_gpu(vendor_id: u32, device_or_driver_name: &str) -> AndroidGpuFamily {
+    if vendor_id == VENDOR_ID_QUALCOMM {
+        return AndroidGpuFamily::Adreno;
+    }
+    if vendor_id == VENDOR_ID_ARM {
+        return AndroidGpuFamily::Mali;
+    }
+    if contains_ascii_case_insensitive(device_or_driver_name, "adreno")
+        || contains_ascii_case_insensitive(device_or_driver_name, "turnip")
+        || contains_ascii_case_insensitive(device_or_driver_name, "freedreno")
+    {
+        return AndroidGpuFamily::Adreno;
+    }
+    if contains_ascii_case_insensitive(device_or_driver_name, "mali") {
+        return AndroidGpuFamily::Mali;
+    }
+    AndroidGpuFamily::Unknown
+}
+
+/// Required Vulkan 1.3 / shadPS4 device capabilities for system Tensor/Mali drivers (`#536`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaliVulkanCaps {
+    pub vendor_id: u32,
+    pub api_version: u32,
+    pub dynamic_rendering: bool,
+    pub synchronization2: bool,
+    pub timeline_semaphore: bool,
+    pub buffer_device_address: bool,
+    pub swapchain_extension: bool,
+    pub driver_name: String,
+}
+
+impl MaliVulkanCaps {
+    pub fn validate(&self) -> Result<(), DriverValidationError> {
+        if classify_android_gpu(self.vendor_id, &self.driver_name) != AndroidGpuFamily::Mali {
+            return Err(DriverValidationError::MaliUnsupportedCapability(
+                "Vulkan driver is not ARM/Mali".to_owned(),
+            ));
+        }
+        if self.api_version < VK_API_VERSION_1_3 {
+            return Err(DriverValidationError::MaliUnsupportedCapability(
+                "Tensor/Mali Vulkan driver requires Vulkan 1.3 or newer".to_owned(),
+            ));
+        }
+        let missing = [
+            (!self.dynamic_rendering, "dynamicRendering"),
+            (!self.synchronization2, "synchronization2"),
+            (!self.timeline_semaphore, "timelineSemaphore"),
+            (!self.buffer_device_address, "bufferDeviceAddress"),
+            (!self.swapchain_extension, "VK_KHR_swapchain"),
+        ]
+        .into_iter()
+        .find_map(|(is_missing, name)| is_missing.then_some(name));
+
+        if let Some(feature) = missing {
+            return Err(DriverValidationError::MaliUnsupportedCapability(format!(
+                "Tensor/Mali driver missing required {feature}"
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Mirrors `BbAndroidDriverMode` in `android/driver_loader.h`.
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -114,6 +194,17 @@ impl TurnipDriverConfig {
         }
     }
 
+    pub fn system_mali() -> Self {
+        Self {
+            mode: DriverMode::System,
+            use_legacy_packaging: true,
+            native_library_dir: String::new(),
+            app_storage_dir: String::new(),
+            custom_driver_so: String::new(),
+            expected_driver_name: "mali".to_owned(),
+        }
+    }
+
     /// Validates packaging and path preconditions before any driver handle is opened.
     pub fn validate_preconditions(&self) -> Result<Option<DriverPathParts>, DriverValidationError> {
         if !self.mode.is_custom_or_bundled() {
@@ -170,6 +261,9 @@ pub enum DriverValidationError {
     OpenFailed(String),
     EmptyReportedDriver,
     DriverIdentityMismatch { expected: String, reported: String },
+    TurnipRequiredForAdreno,
+    UnsupportedGpuVendor { vendor_id: u32, name: String },
+    MaliUnsupportedCapability(String),
 }
 
 impl fmt::Display for DriverValidationError {
@@ -199,11 +293,42 @@ impl fmt::Display for DriverValidationError {
                 f,
                 "selected custom driver identity mismatch (expected '{expected}', got '{reported}'; refusing silent stock fallback)"
             ),
+            Self::TurnipRequiredForAdreno => write!(
+                f,
+                "Snapdragon/Adreno requires bundled or custom Turnip (refusing stock fallback)"
+            ),
+            Self::UnsupportedGpuVendor { vendor_id, name } => write!(
+                f,
+                "unsupported Android GPU vendor 0x{vendor_id:04x} ('{name}'); expected Snapdragon/Adreno or Tensor/Mali"
+            ),
+            Self::MaliUnsupportedCapability(reason) => write!(f, "{reason}"),
         }
     }
 }
 
 impl std::error::Error for DriverValidationError {}
+
+/// Selects the explicit driver configuration for the detected Android GPU (`#536`):
+/// - Snapdragon / Adreno (`0x5143`): requires a bundled/custom Turnip config (never falls back).
+/// - Google Tensor / Mali (`0x13B5`): selects `system_mali()` (`libvulkan.so`) for cap validation.
+/// - Unknown GPU: fails closed.
+pub fn select_driver_for_gpu(
+    vendor_id: u32,
+    device_or_driver_name: &str,
+    turnip_cfg: Option<&TurnipDriverConfig>,
+) -> Result<TurnipDriverConfig, DriverValidationError> {
+    match classify_android_gpu(vendor_id, device_or_driver_name) {
+        AndroidGpuFamily::Adreno => match turnip_cfg {
+            Some(cfg) if cfg.mode.is_custom_or_bundled() => Ok(cfg.clone()),
+            _ => Err(DriverValidationError::TurnipRequiredForAdreno),
+        },
+        AndroidGpuFamily::Mali => Ok(TurnipDriverConfig::system_mali()),
+        AndroidGpuFamily::Unknown => Err(DriverValidationError::UnsupportedGpuVendor {
+            vendor_id,
+            name: device_or_driver_name.to_owned(),
+        }),
+    }
+}
 
 /// Injectable probe mirroring `BbAndroidDriverProbe` for deterministic host tests.
 pub trait DriverLoaderProbe {
@@ -217,6 +342,14 @@ pub trait DriverLoaderProbe {
     ) -> Result<Self::Handle, String>;
     fn query_driver_name(&mut self, handle: &Self::Handle) -> Result<String, String>;
     fn close_handle(&mut self, handle: Self::Handle);
+
+    /// Optional Vulkan 1.3 capability probe for system Tensor/Mali drivers (`#536`).
+    fn query_mali_caps(
+        &mut self,
+        _handle: &Self::Handle,
+    ) -> Option<Result<MaliVulkanCaps, String>> {
+        None
+    }
 }
 
 /// Validated open driver handle returned by [`open_validated_driver`].
@@ -256,6 +389,29 @@ pub fn open_validated_driver<P: DriverLoaderProbe>(
     if let Err(err) = cfg.verify_reported_driver(&reported) {
         probe.close_handle(handle);
         return Err(err);
+    }
+
+    if cfg.mode == DriverMode::System {
+        if let Some(caps_res) = probe.query_mali_caps(&handle) {
+            let caps = match caps_res {
+                Ok(caps) => caps,
+                Err(reason) => {
+                    probe.close_handle(handle);
+                    return Err(DriverValidationError::MaliUnsupportedCapability(reason));
+                }
+            };
+            let caps_name = if caps.driver_name.is_empty() {
+                reported.as_str()
+            } else {
+                caps.driver_name.as_str()
+            };
+            if classify_android_gpu(caps.vendor_id, caps_name) == AndroidGpuFamily::Mali {
+                if let Err(err) = caps.validate() {
+                    probe.close_handle(handle);
+                    return Err(err);
+                }
+            }
+        }
     }
 
     Ok(ValidatedDriver {
@@ -318,6 +474,7 @@ mod tests {
         allow_system: bool,
         allow_custom: bool,
         reported_driver: Option<String>,
+        mali_caps: Option<Result<MaliVulkanCaps, String>>,
         open_system_calls: usize,
         open_custom_calls: usize,
         close_calls: usize,
@@ -369,6 +526,13 @@ mod tests {
 
         fn close_handle(&mut self, _handle: Self::Handle) {
             self.close_calls += 1;
+        }
+
+        fn query_mali_caps(
+            &mut self,
+            _handle: &Self::Handle,
+        ) -> Option<Result<MaliVulkanCaps, String>> {
+            self.mali_caps.clone()
         }
     }
 
@@ -501,5 +665,120 @@ mod tests {
             DriverValidationError::EmptyReportedDriver
         );
         assert_eq!(empty_probe.close_calls, 1);
+    }
+
+    fn valid_mali_g710_caps() -> MaliVulkanCaps {
+        MaliVulkanCaps {
+            vendor_id: VENDOR_ID_ARM,
+            api_version: VK_API_VERSION_1_3,
+            dynamic_rendering: true,
+            synchronization2: true,
+            timeline_semaphore: true,
+            buffer_device_address: true,
+            swapchain_extension: true,
+            driver_name: "Mali-G710".to_owned(),
+        }
+    }
+
+    #[test]
+    fn gpu_classification_and_driver_selection_cover_adreno_and_tensor_mali() {
+        assert_eq!(
+            classify_android_gpu(VENDOR_ID_QUALCOMM, "Adreno 750"),
+            AndroidGpuFamily::Adreno
+        );
+        assert_eq!(
+            classify_android_gpu(VENDOR_ID_ARM, "Mali-G710"),
+            AndroidGpuFamily::Mali
+        );
+        assert_eq!(
+            classify_android_gpu(0, "Mali-G710 r0p0"),
+            AndroidGpuFamily::Mali
+        );
+        assert_eq!(
+            classify_android_gpu(0x10de, "NVIDIA"),
+            AndroidGpuFamily::Unknown
+        );
+
+        let turnip = TurnipDriverConfig::bundled_turnip(
+            "/data/app/lib/arm64",
+            "/data/user/0/org.uncharted.universal/files",
+            "/data/user/0/org.uncharted.universal/files/drivers/libvulkan_freedreno.so",
+        );
+        assert_eq!(
+            select_driver_for_gpu(VENDOR_ID_QUALCOMM, "Adreno 750", Some(&turnip)),
+            Ok(turnip.clone())
+        );
+        assert_eq!(
+            select_driver_for_gpu(
+                VENDOR_ID_QUALCOMM,
+                "Adreno 750",
+                Some(&TurnipDriverConfig::system_adreno())
+            ),
+            Err(DriverValidationError::TurnipRequiredForAdreno)
+        );
+        assert_eq!(
+            select_driver_for_gpu(VENDOR_ID_QUALCOMM, "Adreno 750", None),
+            Err(DriverValidationError::TurnipRequiredForAdreno)
+        );
+        assert_eq!(
+            select_driver_for_gpu(VENDOR_ID_ARM, "Mali-G710", None),
+            Ok(TurnipDriverConfig::system_mali())
+        );
+        assert_eq!(
+            select_driver_for_gpu(0x9999, "UnknownGPU", Some(&turnip)),
+            Err(DriverValidationError::UnsupportedGpuVendor {
+                vendor_id: 0x9999,
+                name: "UnknownGPU".to_owned(),
+            })
+        );
+    }
+
+    #[test]
+    fn tensor_mali_validates_vulkan_13_caps_and_fails_closed_when_missing() {
+        let mali_cfg = TurnipDriverConfig::system_mali();
+        let mut ok_probe = MockProbe {
+            allow_system: true,
+            reported_driver: Some("Mali-G710".to_owned()),
+            mali_caps: Some(Ok(valid_mali_g710_caps())),
+            ..MockProbe::default()
+        };
+        let opened =
+            open_validated_driver(&mali_cfg, &mut ok_probe).expect("Tensor/Mali should pass");
+        assert_eq!(opened.mode, DriverMode::System);
+        assert_eq!(opened.reported_name, "Mali-G710");
+        assert_eq!(ok_probe.open_system_calls, 1);
+        assert_eq!(ok_probe.open_custom_calls, 0);
+
+        // Vulkan 1.2 fails closed and closes handle.
+        let mut vk12_caps = valid_mali_g710_caps();
+        vk12_caps.api_version = (1 << 22) | (2 << 12);
+        let mut vk12_probe = MockProbe {
+            allow_system: true,
+            reported_driver: Some("Mali-G710".to_owned()),
+            mali_caps: Some(Ok(vk12_caps)),
+            ..MockProbe::default()
+        };
+        assert!(matches!(
+            open_validated_driver(&mali_cfg, &mut vk12_probe),
+            Err(DriverValidationError::MaliUnsupportedCapability(_))
+        ));
+        assert_eq!(vk12_probe.close_calls, 1);
+
+        // Missing dynamicRendering fails closed and closes handle.
+        let mut no_dyn_caps = valid_mali_g710_caps();
+        no_dyn_caps.dynamic_rendering = false;
+        let mut no_dyn_probe = MockProbe {
+            allow_system: true,
+            reported_driver: Some("Mali-G710".to_owned()),
+            mali_caps: Some(Ok(no_dyn_caps)),
+            ..MockProbe::default()
+        };
+        assert_eq!(
+            open_validated_driver(&mali_cfg, &mut no_dyn_probe),
+            Err(DriverValidationError::MaliUnsupportedCapability(
+                "Tensor/Mali driver missing required dynamicRendering".to_owned()
+            ))
+        );
+        assert_eq!(no_dyn_probe.close_calls, 1);
     }
 }

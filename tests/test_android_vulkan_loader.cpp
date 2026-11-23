@@ -15,6 +15,8 @@ struct MockState {
     int close_calls = 0;
     int fake_system_handle = 1;
     int fake_custom_handle = 2;
+    bool allow_caps = true;
+    BbAndroidVulkanCaps caps = {};
 };
 
 MockState g_state;
@@ -42,11 +44,28 @@ void MockClose(void*) {
     ++g_state.close_calls;
 }
 
+int MockQueryCaps(void*, BbAndroidVulkanCaps* out_caps) {
+    if (!g_state.allow_caps || !out_caps) {
+        return -1;
+    }
+    *out_caps = g_state.caps;
+    return 0;
+}
+
 const BbAndroidDriverProbe kProbe = {
     MockOpenSystem,
     MockOpenCustom,
     MockQueryDriver,
     MockClose,
+    nullptr,
+};
+
+const BbAndroidDriverProbe kCapsProbe = {
+    MockOpenSystem,
+    MockOpenCustom,
+    MockQueryDriver,
+    MockClose,
+    MockQueryCaps,
 };
 
 } // namespace
@@ -111,6 +130,79 @@ int main() {
     g_state = MockState{};
     g_state.reported_driver = "";
     assert(bb_android_open_vulkan_driver(&sys_ok, &kProbe, &handle, err, sizeof(err)) == -3);
+    assert(handle == nullptr);
+    assert(g_state.close_calls == 1);
+
+    // 6. GPU classification & driver selection (#536): Snapdragon/Adreno vs Google Tensor/Mali.
+    assert(bb_android_classify_gpu(BB_ANDROID_VENDOR_QUALCOMM, "Adreno 750") ==
+           BB_ANDROID_GPU_ADRENO);
+    assert(bb_android_classify_gpu(BB_ANDROID_VENDOR_ARM, "Mali-G710") == BB_ANDROID_GPU_MALI);
+    assert(bb_android_classify_gpu(0, "Mali-G710 r0p0") == BB_ANDROID_GPU_MALI);
+    assert(bb_android_classify_gpu(0x10de, "NVIDIA") == BB_ANDROID_GPU_UNKNOWN);
+
+    BbAndroidDriverConfig selected = {};
+    assert(bb_android_select_driver_for_gpu(BB_ANDROID_VENDOR_QUALCOMM, "Adreno 750", &bundled_ok,
+                                            &selected, err, sizeof(err)) == 0);
+    assert(selected.mode == BB_ANDROID_DRIVER_BUNDLED);
+
+    // Adreno refuses silent fallback to system driver.
+    assert(bb_android_select_driver_for_gpu(BB_ANDROID_VENDOR_QUALCOMM, "Adreno 750", &sys_ok,
+                                            &selected, err, sizeof(err)) == -1);
+    assert(bb_android_select_driver_for_gpu(BB_ANDROID_VENDOR_QUALCOMM, "Adreno 750", nullptr,
+                                            &selected, err, sizeof(err)) == -1);
+
+    // Tensor / Mali selects system libvulkan.so.
+    assert(bb_android_select_driver_for_gpu(BB_ANDROID_VENDOR_ARM, "Mali-G710", nullptr, &selected,
+                                            err, sizeof(err)) == 0);
+    assert(selected.mode == BB_ANDROID_DRIVER_SYSTEM);
+
+    // Unknown vendor fails closed.
+    assert(bb_android_select_driver_for_gpu(0x9999, "UnknownGPU", &bundled_ok, &selected, err,
+                                            sizeof(err)) == -1);
+
+    // 7. Tensor/Mali capability validation succeeds with Vulkan 1.3 + required features.
+    g_state = MockState{};
+    g_state.reported_driver = "Mali-G710";
+    g_state.caps = BbAndroidVulkanCaps{
+        BB_ANDROID_VENDOR_ARM,
+        BB_ANDROID_VK_API_VERSION_1_3,
+        1,
+        1,
+        1,
+        1,
+        1,
+        "Mali-G710",
+    };
+    assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == 0);
+    assert(handle == &g_state.fake_system_handle);
+
+    // 8. Tensor/Mali fails closed when Vulkan < 1.3 or required features are missing.
+    g_state = MockState{};
+    g_state.reported_driver = "Mali-G710";
+    g_state.caps = BbAndroidVulkanCaps{
+        BB_ANDROID_VENDOR_ARM,
+        (1u << 22) | (2u << 12), // Vulkan 1.2
+        1,
+        1,
+        1,
+        1,
+        1,
+        "Mali-G710",
+    };
+    assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == -3);
+    assert(handle == nullptr);
+    assert(g_state.close_calls == 1);
+
+    g_state.close_calls = 0;
+    g_state.caps.api_version = BB_ANDROID_VK_API_VERSION_1_3;
+    g_state.caps.has_dynamic_rendering = 0;
+    assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == -3);
+    assert(handle == nullptr);
+    assert(g_state.close_calls == 1);
+
+    g_state.close_calls = 0;
+    g_state.allow_caps = false;
+    assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == -3);
     assert(handle == nullptr);
     assert(g_state.close_calls == 1);
 

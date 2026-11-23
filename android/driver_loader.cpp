@@ -177,9 +177,116 @@ int bb_android_open_vulkan_driver(const BbAndroidDriverConfig* cfg,
                    "selected custom driver identity mismatch (refusing silent stock fallback)");
             return -3;
         }
+    } else if (probe && probe->query_vulkan_caps) {
+        BbAndroidVulkanCaps caps = {};
+        if (probe->query_vulkan_caps(handle, &caps) != 0) {
+            close_fn(handle);
+            SetErr(err_buf, err_cap, "failed to query system Vulkan capabilities");
+            return -3;
+        }
+        const char* caps_name = NonEmpty(caps.driver_name) ? caps.driver_name : reported;
+        if (bb_android_classify_gpu(caps.vendor_id, caps_name) == BB_ANDROID_GPU_MALI) {
+            if (bb_android_validate_mali_caps(&caps, err_buf, err_cap) != 0) {
+                close_fn(handle);
+                return -3;
+            }
+        }
     }
 
     *out_handle = handle;
     SetErr(err_buf, err_cap, "");
     return 0;
+}
+
+BbAndroidGpuFamily bb_android_classify_gpu(uint32_t vendor_id, const char* driver_name) {
+    if (vendor_id == BB_ANDROID_VENDOR_QUALCOMM) {
+        return BB_ANDROID_GPU_ADRENO;
+    }
+    if (vendor_id == BB_ANDROID_VENDOR_ARM) {
+        return BB_ANDROID_GPU_MALI;
+    }
+    if (ContainsCaseInsensitive(driver_name, "adreno") ||
+        ContainsCaseInsensitive(driver_name, "turnip") ||
+        ContainsCaseInsensitive(driver_name, "freedreno")) {
+        return BB_ANDROID_GPU_ADRENO;
+    }
+    if (ContainsCaseInsensitive(driver_name, "mali")) {
+        return BB_ANDROID_GPU_MALI;
+    }
+    return BB_ANDROID_GPU_UNKNOWN;
+}
+
+int bb_android_validate_mali_caps(const BbAndroidVulkanCaps* caps, char* err_buf, size_t err_cap) {
+    if (!caps) {
+        SetErr(err_buf, err_cap, "Mali Vulkan capabilities struct is null");
+        return -1;
+    }
+    if (bb_android_classify_gpu(caps->vendor_id, caps->driver_name) != BB_ANDROID_GPU_MALI) {
+        SetErr(err_buf, err_cap, "Vulkan driver is not ARM/Mali");
+        return -3;
+    }
+    if (caps->api_version < BB_ANDROID_VK_API_VERSION_1_3) {
+        SetErr(err_buf, err_cap, "Tensor/Mali Vulkan driver requires Vulkan 1.3 or newer");
+        return -3;
+    }
+    if (!caps->has_dynamic_rendering) {
+        SetErr(err_buf, err_cap, "Tensor/Mali driver missing required dynamicRendering feature");
+        return -3;
+    }
+    if (!caps->has_synchronization2) {
+        SetErr(err_buf, err_cap, "Tensor/Mali driver missing required synchronization2 feature");
+        return -3;
+    }
+    if (!caps->has_timeline_semaphore) {
+        SetErr(err_buf, err_cap, "Tensor/Mali driver missing required timelineSemaphore feature");
+        return -3;
+    }
+    if (!caps->has_buffer_device_address) {
+        SetErr(err_buf, err_cap, "Tensor/Mali driver missing required bufferDeviceAddress feature");
+        return -3;
+    }
+    if (!caps->has_swapchain_ext) {
+        SetErr(err_buf, err_cap, "Tensor/Mali driver missing required VK_KHR_swapchain extension");
+        return -3;
+    }
+    SetErr(err_buf, err_cap, "");
+    return 0;
+}
+
+int bb_android_select_driver_for_gpu(uint32_t vendor_id,
+                                     const char* driver_name,
+                                     const BbAndroidDriverConfig* turnip_cfg,
+                                     BbAndroidDriverConfig* out_cfg,
+                                     char* err_buf,
+                                     size_t err_cap) {
+    if (!out_cfg) {
+        SetErr(err_buf, err_cap, "out_cfg is null");
+        return -1;
+    }
+    const BbAndroidGpuFamily family = bb_android_classify_gpu(vendor_id, driver_name);
+    if (family == BB_ANDROID_GPU_ADRENO) {
+        if (!turnip_cfg || (turnip_cfg->mode != BB_ANDROID_DRIVER_BUNDLED &&
+                            turnip_cfg->mode != BB_ANDROID_DRIVER_CUSTOM)) {
+            SetErr(err_buf, err_cap,
+                   "Snapdragon/Adreno requires bundled or custom Turnip (refusing stock fallback)");
+            return -1;
+        }
+        *out_cfg = *turnip_cfg;
+        SetErr(err_buf, err_cap, "");
+        return 0;
+    }
+    if (family == BB_ANDROID_GPU_MALI) {
+        *out_cfg = BbAndroidDriverConfig{
+            BB_ANDROID_DRIVER_SYSTEM,
+            1,
+            nullptr,
+            nullptr,
+            nullptr,
+            "mali",
+        };
+        SetErr(err_buf, err_cap, "");
+        return 0;
+    }
+    SetErr(err_buf, err_cap, "unsupported Android GPU vendor (expected Snapdragon/Adreno or Tensor/Mali)");
+    return -1;
 }
