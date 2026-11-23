@@ -3884,6 +3884,15 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     // TextureSetMemo: what this call resolves, to remember when the set qualifies.
     std::array<TextureSetEntry, TextureSet::MaxImages> resolved{};
     bool set_ok = set_slot != nullptr;
+    // Ported from Mevlock/uncharted_pc-dev@e779424 (from gow3_pc 1974453 / SpartanPort 03781589e0):
+    // record the generation before resolving bindings. A later binding's FindImage may (un)register
+    // images and invalidate an earlier binding's answer; only remember the set when the registry
+    // generation did not move during resolution. BB_TEXSET_STAMP=0 restores the old behavior.
+    static const bool stamp_first = [] {
+        const char* env = std::getenv("BB_TEXSET_STAMP");
+        return !(env && env[0] == '0');
+    }();
+    const u64 set_generation = texture_cache.RegistryGeneration();
     // SampleSceneProxies: bindings that may read a reduced scene proxy instead of the native
     // image (normalized sampling only; see Shader::ImageResource::needs_native).
     boost::container::small_vector<bool, 16> binding_proxy_ok;
@@ -4135,9 +4144,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
         }
     }
-    if (set_ok && image_bindings.size() == stage.images.size()) {
+    if (set_ok && image_bindings.size() == stage.images.size() &&
+        (!stamp_first || texture_cache.RegistryGeneration() == set_generation)) {
         // Remember the set: the same T#s resolve the same way while no image is (un)registered.
-        set_slot->generation = texture_cache.RegistryGeneration();
+        set_slot->generation = stamp_first ? set_generation : texture_cache.RegistryGeneration();
         set_slot->scene_generation = scene_targets->Generation();
         set_slot->count = static_cast<u32>(stage.images.size());
         std::copy_n(resolved.begin(), set_slot->count, set_slot->entries.begin());
