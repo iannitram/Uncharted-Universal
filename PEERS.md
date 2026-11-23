@@ -9,6 +9,7 @@ This file links up repos that are doing work similar to components of this proje
 ## Upstream
 
 upstream: Supermedo/uncharted_pc | GPL-2.0 | upstream: Linux, handheld, resolution, frame rate and upscaler issues and PRs
+upstream: spacepepperoni/uncharted_Linux | GPL-2.0 | second upstream, the Linux fork we also sync from (remote `pepperoni`); the fork sync reads this line
 
 ## Peers
 
