@@ -11,6 +11,7 @@ std::uint64_t runtime_disabled_optimizations = 0;
 std::uint64_t runtime_disabled_optimizations2 = 0;
 void* runtime_map_guest_memory(std::uint64_t) { std::abort(); }
 #ifdef _WIN32
+int bb_setjmp(sigjmp_buf) { return 0; }
 [[noreturn]] void bb_longjmp(sigjmp_buf, int) { std::abort(); }
 #endif
 uint64_t runtime_tsc_frequency() { return 1000000000; }
