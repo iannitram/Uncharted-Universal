@@ -987,7 +987,9 @@ unsafe extern "sysv64" fn posix_join(t: *mut c_void, r: *mut *mut c_void) -> i32
 #[no_mangle]
 pub unsafe extern "C" fn runtime_thread_spawn(
     out: *mut *mut c_void,
-    entry: Option<GuestEntry>,
+    // Spelled out, not `GuestEntry`: cbindgen copies an alias name into the
+    // header as raw Rust. The C prototype stays `void *(*entry)(void*)`.
+    entry: Option<unsafe extern "sysv64" fn(*mut c_void) -> *mut c_void>,
     argument: *mut c_void,
     stack: u64,
     name: *const c_char,
