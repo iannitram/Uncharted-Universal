@@ -63,7 +63,7 @@ void bbgpu_input_sample(void);
 void bbgpu_prepare_exit(void);
 /* Button prompts (button_prompts.cpp), the device used last: 0 keyboard or mouse (pictures of the
  * bound keys), 1 a PlayStation controller (the game's own buttons), 2 an Xbox or other controller
- * (Xbox buttons). */
+ * (Xbox buttons), 3 a Nintendo controller (Switch Pro or Joy-Con, Nintendo buttons). */
 void bbgpu_prompts_controller(int device);
 /* Mouse controls: look=1 captures the cursor while the game window has the focus (relative
  * mode). sample returns the motion (pixels) and wheel steps since the last call and the held

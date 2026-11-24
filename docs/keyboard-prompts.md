@@ -1,8 +1,9 @@
-# Keyboard, mouse and Xbox button prompts
+# Keyboard, mouse, Xbox and Nintendo button prompts
 
 The games only know PlayStation buttons. This port redraws their button pictures as the keys and
 mouse buttons bound in `input.ini` while the keyboard or mouse was used last, as Xbox buttons after
-input from an Xbox (or any other non-PlayStation) controller, and gives the game's own pictures
+input from an Xbox (or any other non-PlayStation, non-Nintendo) controller, as Nintendo Switch
+buttons after input from a Switch Pro or Joy-Con controller, and gives the game's own pictures
 back after PlayStation controller input. It also makes the bindings follow the keyboard layout.
 
 | | |
@@ -103,8 +104,8 @@ Still in the launcher: keys whose Tk keysym is not a plain letter or digit (AZER
 | Variable | Effect |
 |---|---|
 | `BB_BUTTON_PROMPTS=0` | keep the PlayStation buttons (also `off`, `playstation`) |
-| `BB_BUTTON_PROMPTS=keyboard` / `xbox` | always show that style (default `auto`: the device used last); the launcher's Controls page has the same choice |
-| `BB_BUTTON_PROMPTS_FILE=<path>` | the first word of that file (`ps`, `xbox`, `keyboard`) is the device used last, read twice a second: switching in runs without a controller (scripted runs ignore the real one) |
+| `BB_BUTTON_PROMPTS=keyboard` / `xbox` / `nintendo` / `steamdeck` | always show that style (default `auto`: the device used last); the launcher's Settings page has the same choice |
+| `BB_BUTTON_PROMPTS_FILE=<path>` | the first word of that file (`ps`, `xbox`, `nintendo` or `keyboard`) is the device used last, read twice a second: switching in runs without a controller (scripted runs ignore the real one) |
 | `BB_ICON_COLLECT=1` | save every picture sampled by a pass that draws to the display to `user/button_icons/<hash>_<w>x<h>_<format>.dds` (uncompressed slots at most 4 times: a sheet can be empty at first) |
 | `BB_TEXTURE_DUMP=1` | F10 saves every texture of the next frame and the pass list to `user/texture_dump/<time>/` |
 
@@ -131,7 +132,7 @@ The two tools are for development and off by default.
 | `gpu/shadps4/video_core/renderer_vulkan/vk_rasterizer.{h,cpp}` | switch check per submit |
 | `gpu/shadps4/video_core/renderer_vulkan/vk_frame_capture.{h,cpp}` | collector and F10 dump |
 | `gpu/bbgpu.h`, `gpu/shim/bbgpu.cpp`, `gpu/shim/window.cpp` | last device from the runtime |
-| `src/runtime_pad.c` | last device, layout-aware bindings |
+| `crates/runtime/src/pad/` | last device, SDL3 controller family mapping, layout-aware bindings |
 | `texture_cache/button_prompts_xbox.inc`, `tools/make_xbox_prompts.py` | the Xbox pictures and the script that packs them |
 | `tools/dds_view.py` | collected pictures to PNG |
 
