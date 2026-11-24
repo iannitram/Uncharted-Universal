@@ -3,7 +3,7 @@
 use super::*;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::ptr;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::OnceLock;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -12,6 +12,7 @@ use super::linux::{self as os, MemfdHost as HostImpl};
 use super::windows::{self as os, WinHost as HostImpl};
 
 static POOL: OnceLock<u64> = OnceLock::new();
+static DMEM_OVERRIDE_MB: AtomicU64 = AtomicU64::new(0);
 static MEMORY: OnceLock<Memory<HostImpl>> = OnceLock::new();
 static WATCHER: AtomicBool = AtomicBool::new(false);
 
@@ -19,11 +20,28 @@ fn env(name: &str) -> Option<String> {
     std::env::var_os(name).map(|value| value.to_string_lossy().into_owned())
 }
 
+fn dmem_override() -> Option<u64> {
+    let mb = DMEM_OVERRIDE_MB.load(Ordering::Acquire);
+    (mb != 0).then_some(mb << 20)
+}
+
+fn set_dmem_in(slot: &AtomicU64, pool_ready: bool, mb: u32) -> c_int {
+    if !(5056..=16384).contains(&mb) || pool_ready {
+        return -1;
+    }
+    if slot
+        .compare_exchange(0, u64::from(mb), Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return -1;
+    }
+    0
+}
+
 /// `BB_DMEM_MB`, read once.
 fn pool() -> u64 {
     *POOL.get_or_init(|| {
-        #[cfg(windows)]
-        if let Some(bytes) = os::dmem_override() {
+        if let Some(bytes) = dmem_override() {
             return bytes;
         }
         pool_size(env("BB_DMEM_MB").as_deref())
@@ -476,11 +494,10 @@ pub extern "C" fn runtime_memory_reserve() {
     memory().read(|s| s.host().reserve());
 }
 
-/// Windows: sets `BB_DMEM_MB` before the first allocation.
-#[cfg(windows)]
+/// Sets `BB_DMEM_MB` programmatically before the direct-memory pool is created.
 #[no_mangle]
 pub extern "C" fn runtime_memory_set_dmem(mb: u32) -> c_int {
-    os::set_dmem(mb)
+    set_dmem_in(&DMEM_OVERRIDE_MB, POOL.get().is_some(), mb)
 }
 
 /// Re-reads the `BB_TOGGLE_FILE` numbers every 250 ms and prints each change.
@@ -885,5 +902,19 @@ mod tests {
             unsafe { runtime_memory_resolve(c"n88vx3C5nW8#q#q".as_ptr()) },
             0
         );
+    }
+
+    #[test]
+    fn set_dmem_accepts_valid_range_once_before_pool_init() {
+        let slot = AtomicU64::new(0);
+        assert_eq!(set_dmem_in(&slot, false, 5055), -1);
+        assert_eq!(set_dmem_in(&slot, false, 16385), -1);
+        assert_eq!(set_dmem_in(&slot, true, 6144), -1);
+        assert_eq!(slot.load(Ordering::Acquire), 0);
+
+        assert_eq!(set_dmem_in(&slot, false, 6144), 0);
+        assert_eq!(slot.load(Ordering::Acquire), 6144);
+        assert_eq!(set_dmem_in(&slot, false, 8192), -1);
+        assert_eq!(slot.load(Ordering::Acquire), 6144);
     }
 }

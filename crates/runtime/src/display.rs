@@ -930,6 +930,97 @@ mod tests {
     }
 
     #[test]
+    fn automatic_size_covers_all_target_aspects_and_game_ceilings() {
+        const MOVIE: usize = 0x2000;
+        // All target aspect ratios: Fold 6:5, iPad mini 3:2, 16:9, 16:10, ultrawide, Fold cover.
+        for (window, game_exe, expected) in [
+            ((2208, 1840), "u3", Some((2208, 1840))), // Fold 6:5
+            ((2266, 1488), "u3", Some((2272, 1488))), // iPad mini 3:2
+            ((2160, 1440), "u3", Some((2160, 1440))), // exact 3:2
+            ((1920, 1080), "u2", None),               // 16:9 1080p (unpatched)
+            ((2560, 1440), "u2", Some((2560, 1440))), // 16:9 1440p
+            ((3840, 2160), "u1", Some((2880, 1620))), // 16:9 4K capped for U1
+            ((3840, 2160), "u2", Some((3200, 1800))), // 16:9 4K capped for U2/U3
+            ((1280, 800), "u3", Some((1280, 800))),   // 16:10 Steam Deck
+            ((2560, 1600), "u3", Some((2560, 1600))), // 16:10 Strix Halo Z13
+            ((2560, 1080), "u2", Some((2560, 1080))), // 21:9 ultrawide 1080p
+            ((3440, 1440), "u2", Some((3440, 1440))), // 21:9 ultrawide 1440p
+            ((5120, 2160), "u1", Some((3312, 1400))), // 21:9 5K2K capped for U1
+            ((5120, 2160), "u3", Some((3696, 1556))), // 21:9 5K2K capped for U3
+            ((2092, 1080), "u3", Some((2096, 1080))), // Fold cover
+        ] {
+            let mut image = synthetic_image();
+            let movie = movie_image();
+            image[MOVIE..MOVIE + movie.len()].copy_from_slice(&movie);
+            let chosen = automatic_patch(
+                &mut image,
+                window,
+                &vars(&[("BB_EXE", game_exe)]),
+                &mut |_| {},
+            );
+            assert_eq!(
+                chosen.as_ref().map(|s| (s.width, s.height)),
+                expected,
+                "window={window:?} game={game_exe}"
+            );
+            if let Some(chosen) = chosen {
+                let (rt, rt2) = render_size::render_target_growth((chosen.width, chosen.height));
+                assert!(
+                    rt + rt2 <= gpu_headroom_mib(&synthetic_image()),
+                    "exceeded arena headroom for {window:?}"
+                );
+                assert_eq!(chosen.width % 2, 0);
+                assert_eq!(chosen.height % 2, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn automatic_size_respects_bb_resolution_and_movie_fallback() {
+        const MOVIE: usize = 0x2000;
+        let mut image = synthetic_image();
+        let movie = movie_image();
+        image[MOVIE..MOVIE + movie.len()].copy_from_slice(&movie);
+
+        // Valid BB_RESOLUTION overrides the measured window size.
+        let chosen = automatic_patch(
+            &mut image,
+            (1920, 1080),
+            &vars(&[("BB_EXE", "u2"), ("BB_RESOLUTION", "3440x1440")]),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!((chosen.width, chosen.height), (3440, 1440));
+
+        // Malformed BB_RESOLUTION falls back to the measured window size.
+        let mut fallback_img = synthetic_image();
+        fallback_img[MOVIE..MOVIE + movie.len()].copy_from_slice(&movie);
+        let chosen = automatic_patch(
+            &mut fallback_img,
+            (2560, 1600),
+            &vars(&[("BB_RESOLUTION", "bad")]),
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!((chosen.width, chosen.height), (2560, 1600));
+
+        // Incomplete movie slots abort automatic growth >4 MiB without mutating the image.
+        let mut incomplete = synthetic_image();
+        let original = incomplete.clone();
+        let mut logs = Vec::new();
+        assert_eq!(
+            automatic_patch(&mut incomplete, (2560, 1440), &vars(&[]), &mut |line| {
+                logs.push(line.to_owned())
+            }),
+            None
+        );
+        assert_eq!(incomplete, original);
+        assert!(logs
+            .iter()
+            .any(|l| l.contains("movie frame buffers were not found")));
+    }
+
+    #[test]
     fn fov_follows_aspect_on_all_four_target_screens() {
         // 16:9 -> Native (0)
         let fhd = uncharted_runtime_display_fov(1920, 1080);
