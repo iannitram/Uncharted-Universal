@@ -14,7 +14,7 @@ mkdir -p "$scratch/RelayHostTest.app"
 udid=
 server_pid=
 cleanup() {
-    [ -z "$server_pid" ] || kill "$server_pid" 2>/dev/null || true
+    [ -z "$server_pid" ] || { kill "$server_pid" 2>/dev/null; wait "$server_pid" 2>/dev/null; } || true
     if [ -n "$udid" ]; then
         xcrun simctl shutdown "$udid" 2>/dev/null || true
         xcrun simctl delete "$udid" 2>/dev/null || true

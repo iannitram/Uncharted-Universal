@@ -50,14 +50,14 @@ check_app() { # <app dir> <device|simulator>
     ok "vtool: platform $want"
     # Only system libraries: any other line (@rpath, a build path, a Homebrew path) is a failure.
     deps=$(otool -L "$app/$exe" | tail -n +2 | awk '{print $1}')
-    bad=$(printf '%s\n' "$deps" | grep -v -e '^/System/' -e '^/usr/lib/' || true)
+    bad=$(grep -v -e '^/System/' -e '^/usr/lib/' <<< "$deps" || true)
     [ -z "$bad" ] || fail "non-system libraries: $bad"
     ok "otool -L: system libraries and frameworks only"
     defined=$(nm -gU "$app/$exe" | awk '{print $NF}')
     for symbol in save_relay_init save_relay_pull save_relay_push save_relay_status save_relay_setup \
         save_relay_sign_in_start save_relay_sign_in_finish save_relay_free save_relay_http_respond \
         uncharted_runtime_version; do
-        printf '%s\n' "$defined" | grep -qx "_$symbol" || fail "$symbol is not defined in $exe"
+        grep -qx "_$symbol" <<< "$defined" || fail "$symbol is not defined in $exe"
     done
     ok "nm: save_relay_* and uncharted_runtime_version defined"
     check_contents "$app" "$exe"

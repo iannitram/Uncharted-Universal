@@ -7,7 +7,7 @@ import json, sys
 for runtime in reversed(json.load(sys.stdin)["runtimes"]):
     if runtime["platform"] != "iOS" or not runtime["isAvailable"]:
         continue
-    phones = [d["identifier"] for d in runtime.get("supportedDeviceTypes", []) if d.get("productFamily") == "iPhone"]
+    phones = [d["identifier"] for d in runtime.get("supportedDeviceTypes", []) if d.get("productFamily") == "iPhone" and "Duo" not in d.get("name", "")]
     if phones:
         print(runtime["identifier"], phones[0])
         break
