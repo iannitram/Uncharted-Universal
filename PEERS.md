@@ -273,3 +273,32 @@ components are explicitly excluded from this GPL-2.0-only project.
 - `revvv991/uncharted-android`: advanced from `847faf5a8022` to [`6a74a155ef45`](https://github.com/revvv991/uncharted-android/commit/6a74a155ef45a0489ed53de497d0acaad630ae4d) (`uncharted-android 0.3.7`, +96 commits). Note: fork `erickmendes22/uncharted-android` carries `LICENSE.GPL-3.0` and is excluded.
 - `bloodborne-native/bloodborne-runtime`: advanced from `42736cf7ca77` to [`d97fc678a912`](https://github.com/bloodborne-native/bloodborne-runtime/commit/d97fc678a912) (low-memory mode texture-cache cap, headless test runs, Metal buffer memory accounting).
 - `bloodborne-native/bloodborne-mac`: advanced from `5e6e8e714550` to [`295e603bedbd`](https://github.com/bloodborne-native/bloodborne-mac/commit/295e603bedbd) (`0.10.1` + runtime bump).
+
+## Peer & upstream sync scan (2026-11-24)
+
+Read-only inspection of upstreams, shadPS4, Uncharted forks, sibling repos, and PS4/PS3 mobile/recompiler peers. Nothing submitted to upstream shadPS4 (Rule 9).
+
+### Ported in this sync
+
+| Source | License | What was ported |
+|---|---|---|
+| [`shadps4-emu/shadPS4` #5761 (`5c3b6910`)](https://github.com/shadps4-emu/shadPS4/commit/5c3b6910b99ea4e4d019533490137fe80e400306) | GPL-2.0-or-later | `IsGuestSizeOnlyMismatch` in `gpu/shadps4/video_core/texture_cache/image_info.h` and `TextureCache::ResolveOverlap` in `texture_cache.cpp`: reuse an equal-address single-slice image that differs only in `guest_size` without requiring `is_pow2` mismatch. Tested in `tests/test_resolve_overlap.cpp` (`resolve-overlap-test`). |
+| [`Mevlock/uncharted_pc-dev` `27749aa7`](https://github.com/Mevlock/uncharted_pc-dev/commit/27749aa755066e43ca89915ce63a4d03b8c13a18) | GPL-2.0 | `upscaler_in_use`, `TakeUpscalerChoice()`, and `LatchUpscalerChoice()` in `gpu/shadps4/video_core/renderer_vulkan/vk_temporal_upscaler.h` / `.cpp`: latch the active upscaler at frame start (`OnFrameStart`) so overlay/`BB_PRESET_FILE` changes mid-frame cannot mismatch `EnsureResources()` and upscale dispatch. Tested in `tests/test_upscaler_latch.cpp` (`upscaler-latch-test`). |
+
+### Checked and already present or skipped
+
+- `Supermedo/uncharted_pc` (`0eed1e95`, `v0.3.15`): 0 commits ahead of `origin/main` (already synced).
+- `spacepepperoni/uncharted_Linux` (`e3a92723`): `d96dafda` (sampler `UNREACHABLE()` fallbacks), `b59ec309` (`BB_TILE_RESIDENT`), and `22edca79` (U3 London Underground music in `crates/runtime/src/pad/hooks.rs`) are already present on `origin/main`.
+- `shadps4-emu/shadPS4`: `#5749` (`2b9ca0d9`, `DefineSharedMemory` unused segments) does not apply (our `spirv_emit_context.cpp` already skips unused `info.shared_types`); `#5668` (`9ac8b23b`, `CLEAR_STATE` defaults) is already in `gpu/shadps4/video_core/amdgpu/regs.cpp`; `#5495` (`851c9ff2`, `CarvePhysArea`) is not present in our tree.
+- `Mevlock/uncharted_pc-dev` (`3e69da84`): skipped `fix/pack-writer-stall` (`6236f86b`, our fork uses `cache_storage.cpp` without `cache_pack.cpp`), `202d5ab4` (FSR 3.1 extra mip bias: our `SceneMipBias()` does not carry the `-1.0f` bias), and `feature/charmotion-rule` / `perf/charmotion-worker` (larger motion-twin specialization changes).
+- `revvv991/uncharted-android`: advanced from `6a74a155ef45` (`0.3.7`) to [`aa151a51852b`](https://github.com/revvv991/uncharted-android/commit/aa151a51852be858e0a66e18a8c67c814c56fa97) (`0.3.8`); Android-only launcher/prep changes, no shared core fix needed.
+- `iannitram/save-relay` (`7bfe1dff`), `universal-libs` (`ba7e218`, `v0.3.0` `relay_pull`), `ACNH-Universal` (`6e44a82`), `OOT-Universal` (`134b6678`), `Return-Fire-Universal` (`19b4ba3b`): checked; `Uncharted-Universal` does not yet depend on `universal-core` (`PR #572` in flight for hub copy) and no other shared launcher/save-relay fixes are missing.
+
+### PS4 / PS3 mobile & recompiler peers (2026-11-24)
+
+| Repository | Frozen head | License evidence | Notes for Uncharted-Universal |
+|---|---|---|---|
+| [ARMSX2/ARMSX3](https://github.com/ARMSX2/ARMSX3) | [`0fc7c91d95c9`](https://github.com/ARMSX2/ARMSX3/commit/0fc7c91d95c9) | [root `LICENSE`](https://github.com/ARMSX2/ARMSX3/blob/master/LICENSE), GPL-2.0 | Active Android ARM64 RPCS3 port; reference for Android NDK/LLVM build scripts, Turnip/`libadrenotools` integration, and mobile frame-pacing. |
+| [maxjivi05/PS3Native](https://github.com/maxjivi05/PS3Native) | [`4e46dc0b7c7b`](https://github.com/maxjivi05/PS3Native/commit/4e46dc0b7c7b) | [root `LICENSE`](https://github.com/maxjivi05/PS3Native/blob/android-refresh/LICENSE), GPL-2.0 | Upstream-aligned RPCS3 Android port (`build-ffmpeg-android.sh`, `build-llvm-android.sh`, Gradle NDK setup). |
+| [thecrixux/DukePS3](https://github.com/thecrixux/DukePS3) | [`81c109e900ed`](https://github.com/thecrixux/DukePS3/commit/81c109e900ed) | [root `LICENSE`](https://github.com/thecrixux/DukePS3/blob/android-refresh/LICENSE), GPL-2.0 | Android PS3 port derived from `PS3Native` with mobile frame-pacing and scaling experiments. |
+| [aenu1/aps3e](https://github.com/aenu1/aps3e) | [`b5ae1af50d5e`](https://github.com/aenu1/aps3e/commit/b5ae1af50d5e) | No root `LICENSE` found | Experimental Android PS3 emulator based on RPCS3 with native Android UI and Mali Valhall Vulkan workarounds. Learn only; do not copy code until license terms are established. |

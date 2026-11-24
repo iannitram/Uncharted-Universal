@@ -113,4 +113,15 @@ struct ImageInfo {
     return info.pitch * info.size.height * info.size.depth * info.resources.layers * bpp;
 }
 
+/// Returns true when an equal-address image differs only in guest_size (e.g. stride/pow2 padding)
+/// and shares tiling, dimensions, pitch, and single-level/single-layer extent (shadPS4 #5761).
+[[nodiscard]] inline bool IsGuestSizeOnlyMismatch(const ImageInfo& image_info,
+                                                  const ImageInfo& cached_info) noexcept {
+    return image_info.tile_mode == cached_info.tile_mode &&
+           image_info.size == cached_info.size &&
+           image_info.pitch == cached_info.pitch && image_info.resources.levels == 1 &&
+           cached_info.resources.levels == 1 && image_info.resources.layers == 1 &&
+           cached_info.resources.layers == 1;
+}
+
 } // namespace VideoCore

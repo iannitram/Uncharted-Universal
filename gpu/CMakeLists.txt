@@ -565,6 +565,24 @@ target_include_directories(shim-boundary-test PRIVATE "${CMAKE_CURRENT_SOURCE_DI
 target_compile_options(shim-boundary-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
 target_link_libraries(shim-boundary-test PRIVATE Vulkan::Headers)
 
+add_executable(resolve-overlap-test EXCLUDE_FROM_ALL
+    ../tests/test_resolve_overlap.cpp
+    ../tests/test_gpu_runtime_stubs.cpp
+    shim/common/assert.cpp
+    shim/common/logging/log.cpp)
+target_include_directories(resolve-overlap-test PRIVATE shim "${BB_SHADPS4_CORE_DIR}")
+target_compile_options(resolve-overlap-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
+target_link_libraries(resolve-overlap-test PRIVATE Vulkan::Headers Boost::headers fmt::fmt)
+
+add_executable(upscaler-latch-test EXCLUDE_FROM_ALL
+    ../tests/test_upscaler_latch.cpp
+    ../tests/test_gpu_runtime_stubs.cpp
+    shim/common/assert.cpp
+    shim/common/logging/log.cpp)
+target_include_directories(upscaler-latch-test PRIVATE shim "${BB_SHADPS4_CORE_DIR}")
+target_compile_options(upscaler-latch-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
+target_link_libraries(upscaler-latch-test PRIVATE Vulkan::Headers Boost::headers fmt::fmt)
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     ${BB_SHADPS4_CORE_DIR}/video_core/renderer_vulkan/fsr411/fsr411.cpp)
