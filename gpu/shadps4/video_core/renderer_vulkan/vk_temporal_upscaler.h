@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
@@ -41,6 +42,22 @@ class Runtime;
 class CameraMotion;
 class SceneTargets;
 class FrameGenerator;
+
+/// Latches a new upscaler choice at a frame boundary and resets per-provider failure flags when
+/// the user switches upscaler. Returns true if the latched upscaler changed.
+[[nodiscard]] inline bool LatchUpscalerChoice(int chosen, std::atomic<int>& upscaler_in_use,
+                                              bool& failed, bool& fsr4_failed, bool& dlss_failed,
+                                              bool& xess_failed) noexcept {
+    if (chosen == upscaler_in_use.load(std::memory_order_relaxed)) {
+        return false;
+    }
+    upscaler_in_use.store(chosen, std::memory_order_relaxed);
+    failed = false;
+    fsr4_failed = false;
+    dlss_failed = false;
+    xess_failed = false;
+    return true;
+}
 
 class TemporalUpscaler {
 public:
@@ -236,6 +253,12 @@ private:
     VAddr hudless_address = 0;
     int applied_preset = -1;
     int applied_upscaler = -1;
+    /// bbport: the upscaler in use (a BbSettings::Upscaler): the setting's value latched at frame
+    /// boundaries by TakeUpscalerChoice. Everything here reads this one, not BbSettings::Get().upscaler
+    /// (which the overlay or BB_PRESET_FILE can change at any moment): a frame's resources and its
+    /// upscale dispatch always agree on the same upscaler (Mevlock/uncharted_pc-dev 27749aa7).
+    std::atomic<int> upscaler_in_use{0};
+    void TakeUpscalerChoice();
     bool dispatched_last_frame = false;
     bool last_active = false, last_jitter = false;
 
