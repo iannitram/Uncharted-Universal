@@ -55,10 +55,8 @@ fn command(root: &Path, args: &[&str]) -> Command {
 }
 
 /// Kills the hub when the test ends early, so a failed assertion leaves no listener behind.
-#[cfg(not(windows))]
 struct Running(std::process::Child);
 
-#[cfg(not(windows))]
 impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -105,7 +103,6 @@ fn publish(builds: &Path, name: &str) -> PathBuf {
     root
 }
 
-#[cfg(not(windows))]
 #[test]
 fn a_device_pairs_with_and_pulls_from_a_fake_hub_on_loopback() {
     use std::io::{BufRead, BufReader};
@@ -260,7 +257,6 @@ fn a_device_pairs_with_and_pulls_from_a_fake_hub_on_loopback() {
     assert_eq!(errors.matches("a connection failed").count(), 3, "{errors}");
 }
 
-#[cfg(not(windows))]
 #[test]
 fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     use std::io::{BufRead, BufReader};
@@ -271,9 +267,9 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     let hub_root = TempDir::new("hub-game");
     let device_root = TempDir::new("device-game");
     let game_data = hub_root.0.join("installs");
-    write(&game_data.join("u1/install.json"), b"{\"game\":\"u1\"}\n");
-    write(&game_data.join("u1/boot.bin"), b"BBPROBE2 u1");
-    write(&game_data.join("u1/saves/keep"), b"hub save");
+    write(&game_data, "u1/install.json", b"{\"game\":\"u1\"}\n");
+    write(&game_data, "u1/boot.bin", b"BBPROBE2 u1");
+    write(&game_data, "u1/saves/keep", b"hub save");
     let game_data_arg = game_data.display().to_string();
 
     let mut child = command(
@@ -387,46 +383,4 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     assert!(status.success(), "{status:?}");
     let said = reader.join().unwrap().join("\n");
     assert!(said.contains("sent game data for linux"), "{said}");
-}
-
-#[cfg(windows)]
-#[test]
-fn on_windows_the_hub_commands_fail_closed_before_any_connection() {
-    let hub_root = TempDir::new("hub-windows");
-    let builds = hub_root.0.join("builds");
-    publish(&builds, "2026-11-12");
-    let serve = uu(
-        &hub_root.0,
-        &[
-            "hub",
-            "serve",
-            "--builds",
-            &builds.display().to_string(),
-            "--role",
-            "strix-halo",
-            "--bind",
-            "127.0.0.1",
-            "--port",
-            "0",
-            "--stop-after",
-            "1",
-        ],
-    );
-    let device_root = TempDir::new("device-windows");
-    let pair = uu(
-        &device_root.0,
-        &["hub", "pair", "483921", "--hub", "127.0.0.1:9"],
-    );
-    let pull = uu(&device_root.0, &["hub", "pull", "--hub", "127.0.0.1:9"]);
-    for output in [&serve, &pair, &pull] {
-        assert_eq!(code(output), 1, "{output:?}");
-        assert!(
-            stderr(output).contains("not implemented on Windows"),
-            "{output:?}"
-        );
-        assert!(output.stdout.is_empty(), "{output:?}");
-    }
-    for root in [&hub_root.0, &device_root.0] {
-        assert!(!root.join("config/uncharted-universal/peers.json").exists());
-    }
 }

@@ -326,7 +326,7 @@ fn client_path_pairs_pulls_and_goes_to_steam() {
     page.event(Event::Pulled(Ok(Pulled {
         games: vec![Game::U1, Game::U2],
         bytes: 5_000_000_000,
-        peer_note: Some("protected paired-device storage is not implemented on Windows".into()),
+        peer_note: Some("paired-device storage is not private".into()),
     })));
     let view = page.view();
     assert_eq!(

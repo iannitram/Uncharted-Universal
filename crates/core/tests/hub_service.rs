@@ -81,7 +81,6 @@ fn an_unknown_opening_packet_is_refused() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[cfg(not(windows))]
 #[test]
 fn one_listener_pairs_a_device_and_then_serves_it_the_newest_build() {
     use uncharted_core::hub::{pair_with_service, pull_from_service, Served};
@@ -133,7 +132,6 @@ fn one_listener_pairs_a_device_and_then_serves_it_the_newest_build() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[cfg(not(windows))]
 #[test]
 fn one_listener_serves_prepared_game_data_only_to_paired_devices() {
     use uncharted_core::hub::{pair_with_service, pull_game_from_service, Served};
@@ -185,25 +183,5 @@ fn one_listener_serves_prepared_game_data_only_to_paired_devices() {
             bytes,
         }
     );
-    let _ = fs::remove_dir_all(root);
-}
-
-#[cfg(windows)]
-#[test]
-fn on_windows_the_service_stores_nothing_and_serves_nothing() {
-    use uncharted_core::hub::pair_with_service;
-
-    let root = scratch("windows");
-    publish(&root.join("builds"), "2026-11-12");
-    let (mut hub, listener) = service(&root);
-    let addr = listener.local_addr().unwrap();
-    let device_peers = root.join("device/peers.json");
-    let hub_thread = std::thread::spawn(move || hub.accept(&listener));
-    let device = pair_with_service(addr, "482913", "handheld", &device_peers);
-    let served = hub_thread.join().unwrap();
-    for error in [device.unwrap_err(), served.unwrap_err()] {
-        assert!(message(error).contains("not implemented on Windows"));
-    }
-    assert!(!device_peers.exists() && !root.join("hub/peers.json").exists());
     let _ = fs::remove_dir_all(root);
 }
