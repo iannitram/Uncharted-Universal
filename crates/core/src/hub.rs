@@ -43,7 +43,8 @@ pub use discovery::{
 };
 mod service;
 pub use service::{
-    pair_with_service, pull_from_service, HubService, Served, PORT, SERVICE_IO_TIMEOUT,
+    pair_with_service, pull_from_service, pull_game_from_service, HubService, Served, PORT,
+    SERVICE_IO_TIMEOUT,
 };
 
 /// The mDNS service a hub announces.
@@ -1291,11 +1292,18 @@ fn collect_game_files(root: &Path, current: &Path, out: &mut Vec<GameFile>) -> R
         if ty.is_symlink() {
             return Err(Error::Hub("prepared game data contains a symlink".into()));
         }
-        if relative.split('/').next().is_some_and(|part| {
+        let mut parts = relative.split('/');
+        let first = parts.next();
+        let second = parts.next();
+        let is_device_owned = |part: &str| {
             ["saves", "logs", "mods", "user"]
                 .iter()
                 .any(|owned| owned.eq_ignore_ascii_case(part))
-        }) {
+        };
+        if first.is_some_and(is_device_owned)
+            || (first.is_some_and(|p| ["u1", "u2", "u3"].iter().any(|g| g.eq_ignore_ascii_case(p)))
+                && second.is_some_and(is_device_owned))
+        {
             continue;
         }
         if sensitive_game_path(&relative) {

@@ -260,6 +260,135 @@ fn a_device_pairs_with_and_pulls_from_a_fake_hub_on_loopback() {
     assert_eq!(errors.matches("a connection failed").count(), 3, "{errors}");
 }
 
+#[cfg(not(windows))]
+#[test]
+fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let hub_root = TempDir::new("hub-game");
+    let device_root = TempDir::new("device-game");
+    let game_data = hub_root.0.join("installs");
+    write(&game_data.join("u1/install.json"), b"{\"game\":\"u1\"}\n");
+    write(&game_data.join("u1/boot.bin"), b"BBPROBE2 u1");
+    write(&game_data.join("u1/saves/keep"), b"hub save");
+    let game_data_arg = game_data.display().to_string();
+
+    let mut child = command(
+        &hub_root.0,
+        &[
+            "hub",
+            "serve",
+            "--game-data",
+            &game_data_arg,
+            "--role",
+            "strix-halo",
+            "--name",
+            "tablet",
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            "0",
+            "--stop-after",
+            "2",
+        ],
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()
+    .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut hub = Running(child);
+
+    let (tx, rx) = mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut lines = Vec::new();
+        for line in BufReader::new(stdout).lines() {
+            let line = line.unwrap();
+            let _ = tx.send(line.clone());
+            lines.push(line);
+        }
+        lines
+    });
+    let first = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let second = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    let addr = first
+        .split("listening on ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .to_owned();
+    let pairing_code = second
+        .split("pairing code: ")
+        .nth(1)
+        .unwrap()
+        .split(" (")
+        .next()
+        .unwrap()
+        .to_owned();
+
+    let pair = uu(
+        &device_root.0,
+        &[
+            "hub",
+            "pair",
+            &pairing_code,
+            "--hub",
+            &addr,
+            "--name",
+            "handheld",
+        ],
+    );
+    assert_eq!(code(&pair), 0, "{}", stderr(&pair));
+
+    let device_save = device_root
+        .0
+        .join("data/uncharted-universal/installs/u1/saves/keep");
+    fs::create_dir_all(device_save.parent().unwrap()).unwrap();
+    fs::write(&device_save, b"device save").unwrap();
+
+    let pull = uu(
+        &device_root.0,
+        &[
+            "hub",
+            "pull-game",
+            "--hub",
+            &addr,
+            "--target",
+            "linux",
+            "--name",
+            "handheld",
+        ],
+    );
+    assert_eq!(code(&pull), 0, "{}", stderr(&pull));
+    assert_eq!(
+        fs::read(
+            device_root
+                .0
+                .join("data/uncharted-universal/installs/u1/boot.bin")
+        )
+        .unwrap(),
+        b"BBPROBE2 u1"
+    );
+    assert_eq!(fs::read(&device_save).unwrap(), b"device save");
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = hub.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the hub did not stop");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status:?}");
+    let said = reader.join().unwrap().join("\n");
+    assert!(said.contains("sent game data for linux"), "{said}");
+}
+
 #[cfg(windows)]
 #[test]
 fn on_windows_the_hub_commands_fail_closed_before_any_connection() {

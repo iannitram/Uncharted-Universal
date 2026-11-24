@@ -9,14 +9,18 @@
 //! - `UUHUB1 pull <target> <device>`: the device names its target (`Os::key`) and the name the
 //!   hub stored at pairing. The hub answers `UUHUB1 ok` and then runs the sealed bundle stream
 //!   (`serve`/`pull`), or `UUHUB1 unpaired` / `UUHUB1 no-build` and closes.
+//! - `UUHUB1 pull-game <target> <device>`: same pairing and target check, then answers `UUHUB1 ok`
+//!   and runs the sealed prepared game-data stream (`serve_game`/`pull_game`), or
+//!   `UUHUB1 unpaired` / `UUHUB1 no-game` and closes.
 //!
 //! The opening packet holds no secret and grants nothing: the request after `ok` is still sealed
 //! with the key from pairing, so a device that names another device gets nothing. Connections
 //! are taken one at a time, each with `SERVICE_IO_TIMEOUT` on every read and write.
 
 use super::{
-    newest_bundle, pair_client, read_packet, read_peers, serve, valid_device_name, write_packet,
-    Clock, PairingServer, Peer, SystemClock, TcpTransport, Transport,
+    newest_bundle, pair_client, pull_game, read_packet, read_peers, serve, serve_game,
+    valid_device_name, write_packet, Clock, PairingServer, Peer, SystemClock, TcpTransport,
+    Transport,
 };
 use crate::bundle::Bundle;
 use crate::error::{Error, Result};
@@ -33,9 +37,11 @@ const HELLO_LIMIT: usize = 256;
 const REPLY_LIMIT: usize = 64;
 const HELLO_PAIR: &[u8] = b"UUHUB1 pair";
 const HELLO_PULL: &str = "UUHUB1 pull ";
+const HELLO_PULL_GAME: &str = "UUHUB1 pull-game ";
 const REPLY_OK: &[u8] = b"UUHUB1 ok";
 const REPLY_UNPAIRED: &[u8] = b"UUHUB1 unpaired";
 const REPLY_NO_BUILD: &[u8] = b"UUHUB1 no-build";
+const REPLY_NO_GAME: &[u8] = b"UUHUB1 no-game";
 
 /// What one connection to the service did.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,14 +50,21 @@ pub enum Served {
     Paired(Peer),
     /// A paired device pulled `bundle`.
     Sent { device: String, bundle: Bundle },
+    /// A paired device pulled prepared game data (`bytes` transferred).
+    SentGame {
+        device: String,
+        target: Os,
+        bytes: u64,
+    },
 }
 
-/// The hub's side: one pairing session, the paired-device file, the builds folder and the
-/// targets this hub serves (`recipe::serves`).
+/// The hub's side: one pairing session, the paired-device file, the builds folder, an optional
+/// prepared game-data folder and the targets this hub serves (`recipe::serves`).
 pub struct HubService<C: Clock = SystemClock> {
     pairing: PairingServer<C>,
     peers: PathBuf,
     builds: PathBuf,
+    game_data: Option<PathBuf>,
     targets: Vec<Os>,
 }
 
@@ -64,8 +77,15 @@ impl<C: Clock> HubService<C> {
             pairing,
             peers: peers.to_path_buf(),
             builds: builds.to_path_buf(),
+            game_data: None,
             targets: targets.to_vec(),
         }
+    }
+
+    /// Also serve prepared game data from `game_data` (`serve_game`) for `UUHUB1 pull-game`.
+    pub fn with_game_data(mut self, game_data: &Path) -> Self {
+        self.game_data = Some(game_data.to_path_buf());
+        self
     }
 
     /// The pairing code for the hub's screen ("483 921").
@@ -78,21 +98,13 @@ impl<C: Clock> HubService<C> {
         self.pairing.is_spent()
     }
 
-    /// One connection from `remote` over `t`: reads the opening packet and pairs or serves.
-    /// A pull from a device that is not paired, or for a target this hub does not serve or has no
-    /// build for, is answered with the reason and fails here with it.
-    pub fn handle(&mut self, remote: IpAddr, t: &mut dyn Transport) -> Result<Served> {
-        let hello = read_packet(t, HELLO_LIMIT)?;
-        if hello == HELLO_PAIR {
-            return self.pairing.attempt(remote, t).map(Served::Paired);
-        }
-        let (target, device) = std::str::from_utf8(&hello)
-            .ok()
-            .and_then(|text| text.strip_prefix(HELLO_PULL))
-            .and_then(|rest| rest.split_once(' '))
-            .and_then(|(target, device)| Some((Os::from_key(target)?, device)))
-            .filter(|(_, device)| valid_device_name(device))
-            .ok_or_else(|| Error::Hub("a device sent an unknown request".into()))?;
+    fn authorize_pull(
+        &self,
+        t: &mut dyn Transport,
+        target: Os,
+        device: &str,
+        no_target_reply: &[u8],
+    ) -> Result<Peer> {
         let Some(peer) = read_peers(&self.peers)?
             .into_iter()
             .find(|peer| peer.device == device)
@@ -103,12 +115,44 @@ impl<C: Clock> HubService<C> {
             )));
         };
         if !self.targets.contains(&target) {
-            let _ = write_packet(t, REPLY_NO_BUILD, REPLY_LIMIT);
+            let _ = write_packet(t, no_target_reply, REPLY_LIMIT);
             return Err(Error::Hub(format!(
                 "{device} asked for {}, which this hub does not serve",
                 target.key()
             )));
         }
+        Ok(peer)
+    }
+
+    /// One connection from `remote` over `t`: reads the opening packet and pairs or serves.
+    /// A pull from a device that is not paired, or for a target this hub does not serve or has no
+    /// build/game data for, is answered with the reason and fails here with it.
+    pub fn handle(&mut self, remote: IpAddr, t: &mut dyn Transport) -> Result<Served> {
+        let hello = read_packet(t, HELLO_LIMIT)?;
+        if hello == HELLO_PAIR {
+            return self.pairing.attempt(remote, t).map(Served::Paired);
+        }
+        if let Some((target, device)) = parse_pull_hello(HELLO_PULL_GAME, &hello) {
+            let peer = self.authorize_pull(t, target, device, REPLY_NO_GAME)?;
+            let Some(game_data) = self.game_data.as_deref().filter(|p| p.is_dir()) else {
+                let _ = write_packet(t, REPLY_NO_GAME, REPLY_LIMIT);
+                return Err(Error::Hub(format!(
+                    "{} has no prepared game data ready for {}",
+                    peer.device,
+                    target.key()
+                )));
+            };
+            write_packet(t, REPLY_OK, REPLY_LIMIT)?;
+            let bytes = serve_game(t, &peer, game_data, target)?;
+            return Ok(Served::SentGame {
+                device: peer.device,
+                target,
+                bytes,
+            });
+        }
+        let (target, device) = parse_pull_hello(HELLO_PULL, &hello)
+            .ok_or_else(|| Error::Hub("a device sent an unknown request".into()))?;
+        let peer = self.authorize_pull(t, target, device, REPLY_NO_BUILD)?;
         if let Err(error) = newest_bundle(&self.builds, target) {
             let _ = write_packet(t, REPLY_NO_BUILD, REPLY_LIMIT);
             return Err(error);
@@ -131,10 +175,57 @@ impl<C: Clock> HubService<C> {
     }
 }
 
+fn parse_pull_hello<'a>(prefix: &str, hello: &'a [u8]) -> Option<(Os, &'a str)> {
+    std::str::from_utf8(hello)
+        .ok()
+        .and_then(|text| text.strip_prefix(prefix))
+        .and_then(|rest| rest.split_once(' '))
+        .and_then(|(target, device)| Some((Os::from_key(target)?, device)))
+        .filter(|(_, device)| valid_device_name(device))
+}
+
 fn connect(hub: SocketAddr) -> Result<TcpTransport> {
     let transport = TcpTransport::connect(hub, SERVICE_IO_TIMEOUT)?;
     transport.set_timeout(SERVICE_IO_TIMEOUT)?;
     Ok(transport)
+}
+
+fn open_pull_stream(
+    hub: SocketAddr,
+    hub_peer: &Peer,
+    own_name: &str,
+    prefix: &str,
+    target: Os,
+) -> Result<TcpTransport> {
+    if !valid_device_name(own_name) {
+        return Err(Error::Hub("the device name is invalid".into()));
+    }
+    let mut transport = connect(hub)?;
+    let hello = format!("{prefix}{} {own_name}", target.key());
+    write_packet(&mut transport, hello.as_bytes(), HELLO_LIMIT)?;
+    let reply = read_packet(&mut transport, REPLY_LIMIT)?;
+    if reply == REPLY_OK {
+        Ok(transport)
+    } else if reply == REPLY_UNPAIRED {
+        Err(Error::Hub(format!(
+            "{} does not know this device as {own_name}; pair with it again",
+            hub_peer.device
+        )))
+    } else if reply == REPLY_NO_BUILD {
+        Err(Error::Hub(format!(
+            "{} has no build ready for {}",
+            hub_peer.device,
+            target.key()
+        )))
+    } else if reply == REPLY_NO_GAME {
+        Err(Error::Hub(format!(
+            "{} has no prepared game data ready for {}",
+            hub_peer.device,
+            target.key()
+        )))
+    } else {
+        Err(Error::Hub("the hub sent an unexpected reply".into()))
+    }
 }
 
 /// The device's side of pairing through a hub service at `hub` (home network only): the code
@@ -165,27 +256,20 @@ pub fn pull_from_service(
     target: Os,
     staged: &Path,
 ) -> Result<Bundle> {
-    if !valid_device_name(own_name) {
-        return Err(Error::Hub("the device name is invalid".into()));
-    }
-    let mut transport = connect(hub)?;
-    let hello = format!("{HELLO_PULL}{} {own_name}", target.key());
-    write_packet(&mut transport, hello.as_bytes(), HELLO_LIMIT)?;
-    let reply = read_packet(&mut transport, REPLY_LIMIT)?;
-    if reply == REPLY_OK {
-        super::pull(&mut transport, hub_peer, target, staged)
-    } else if reply == REPLY_UNPAIRED {
-        Err(Error::Hub(format!(
-            "{} does not know this device as {own_name}; pair with it again",
-            hub_peer.device
-        )))
-    } else if reply == REPLY_NO_BUILD {
-        Err(Error::Hub(format!(
-            "{} has no build ready for {}",
-            hub_peer.device,
-            target.key()
-        )))
-    } else {
-        Err(Error::Hub("the hub sent an unexpected reply".into()))
-    }
+    let mut transport = open_pull_stream(hub, hub_peer, own_name, HELLO_PULL, target)?;
+    super::pull(&mut transport, hub_peer, target, staged)
+}
+
+/// Pulls prepared game data for `target` from the hub service at `hub` into `staged`
+/// (`pull_game`: resume, hash verification, atomic staging). `hub_peer` is this device's record
+/// of the hub (from pairing); `own_name` is the name this device paired under.
+pub fn pull_game_from_service(
+    hub: SocketAddr,
+    hub_peer: &Peer,
+    own_name: &str,
+    target: Os,
+    staged: &Path,
+) -> Result<u64> {
+    let mut transport = open_pull_stream(hub, hub_peer, own_name, HELLO_PULL_GAME, target)?;
+    pull_game(&mut transport, hub_peer, target, staged)
 }

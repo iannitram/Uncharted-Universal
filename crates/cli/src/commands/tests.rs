@@ -669,7 +669,7 @@ fn hub_refuses_bad_arguments_with_status_two() {
     let dir = TempDir::new("hub-usage");
     let ctx = linux_home(dir.path());
     for (list, problem) in [
-        (&["hub"][..], "name serve, pair or pull"),
+        (&["hub"][..], "name serve, pair, pull or pull-game"),
         (&["hub", "join"], "unknown hub command 'join'"),
         (&["hub", "pair"], "give the pairing code the hub shows"),
         (
@@ -737,6 +737,7 @@ fn serve_plans_its_folders_role_and_port() {
             role: uncharted_core::recipe::Hub::StrixHalo,
             targets: vec![Os::Linux, Os::Android],
             builds: dir.path().join("data/uncharted-universal/builds"),
+            game_data: dir.path().join("data/uncharted-universal/installs"),
             peers: dir.path().join("config/uncharted-universal/peers.json"),
             bind: std::net::IpAddr::from([0, 0, 0, 0]),
             port: 47_210,
@@ -875,6 +876,7 @@ fn without_the_hub_feature_the_commands_say_not_built() {
         &["hub", "serve"][..],
         &["hub", "pair", "483921"],
         &["hub", "pull"],
+        &["hub", "pull-game"],
     ] {
         let out = exec(list, &ctx);
         assert_eq!(out.code, NOT_BUILT, "{list:?}");

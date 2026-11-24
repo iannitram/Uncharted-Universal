@@ -28,29 +28,33 @@ pub const DISCOVER_MS: u64 = 3000;
 
 /// The lines `hub --help` adds under the command's usage.
 pub const DETAILS: &str = "\
-  hub serve [--builds <folder>] [--role strix-halo|desktop|mac] [--name <device>]
-            [--bind <address>] [--port <n>] [--stop-after <n>]
+  hub serve [--builds <folder>] [--game-data <folder>] [--role strix-halo|desktop|mac]
+            [--name <device>] [--bind <address>] [--port <n>] [--stop-after <n>]
       run a hub here: show a pairing code, announce it on the home network and serve the
-      newest build in the builds folder to paired devices (until stopped, or <n> connections)
+      newest build and prepared game data to paired devices (until stopped, or <n> connections)
   hub pair <code> [--hub <address[:port]>] [--name <device>]
       pair with the hub showing <code>; without --hub, look for one on the home network
   hub pull [--hub <address[:port]>] [--from <hub>] [--target <os>] [--into <folder>]
            [--name <device>]
       pull and check this device's newest build from a paired hub
+  hub pull-game [--hub <address[:port]>] [--from <hub>] [--target <os>] [--into <folder>]
+                [--name <device>]
+      pull prepared game data from a paired hub (and install it unless --into is given)
 ";
 
 pub fn hub(args: &[String], ctx: &Ctx) -> Done {
     let (sub, rest) = match args.split_first() {
-        None => return Err(Outcome::usage("hub", "name serve, pair or pull")),
+        None => return Err(Outcome::usage("hub", "name serve, pair, pull or pull-game")),
         Some((sub, rest)) => (sub.as_str(), rest),
     };
     match sub {
         "serve" => serve(rest, ctx),
         "pair" => pair(rest, ctx),
         "pull" => pull(rest, ctx),
+        "pull-game" => pull_game(rest, ctx),
         other => Err(Outcome::usage(
             "hub",
-            &format!("unknown hub command '{other}' (use serve, pair or pull)"),
+            &format!("unknown hub command '{other}' (use serve, pair, pull or pull-game)"),
         )),
     }
 }
@@ -154,6 +158,7 @@ pub struct ServePlan {
     pub role: Hub,
     pub targets: Vec<Os>,
     pub builds: PathBuf,
+    pub game_data: PathBuf,
     pub peers: PathBuf,
     pub bind: std::net::IpAddr,
     pub port: u16,
@@ -164,7 +169,15 @@ pub fn serve_plan(args: &[String], ctx: &Ctx) -> std::result::Result<ServePlan, 
     let p = parsed(
         "hub",
         args,
-        &["builds", "role", "name", "bind", "port", "stop-after"],
+        &[
+            "builds",
+            "game-data",
+            "role",
+            "name",
+            "bind",
+            "port",
+            "stop-after",
+        ],
         0,
     )?;
     let role = role(&p, ctx)?;
@@ -174,15 +187,21 @@ pub fn serve_plan(args: &[String], ctx: &Ctx) -> std::result::Result<ServePlan, 
             Outcome::usage("hub", &format!("--bind takes an address, not '{text}'"))
         })?,
     };
+    let data = data_dir(ctx)?;
     let builds = match p.flag("builds") {
         Some(folder) => PathBuf::from(folder),
-        None => data_dir(ctx)?.join("builds"),
+        None => data.join("builds"),
+    };
+    let game_data = match p.flag("game-data") {
+        Some(folder) => PathBuf::from(folder),
+        None => data.join("installs"),
     };
     Ok(ServePlan {
         name: device_name(&p, ctx),
         role,
         targets: recipe::serves(role).to_vec(),
         builds,
+        game_data,
         peers: peers_file(ctx)?,
         bind,
         port: number(&p, "port")?.unwrap_or(PORT),
@@ -216,7 +235,7 @@ fn serve(args: &[String], ctx: &Ctx) -> Done {
     let plan = serve_plan(args, ctx)?;
     // Fail before listening where paired devices cannot be stored (Windows, for now).
     core("hub", hub::read_peers(&plan.peers))?;
-    if !plan.builds.is_dir() {
+    if !plan.builds.is_dir() && !plan.game_data.is_dir() {
         return Err(Outcome::error(
             "hub",
             &uncharted_core::Error::Hub(format!(
@@ -235,6 +254,9 @@ fn serve(args: &[String], ctx: &Ctx) -> Done {
     )?;
     let pairing = core("hub", PairingServer::new(&plan.name, &plan.peers))?;
     let mut service = HubService::new(pairing, &plan.peers, &plan.builds, &plan.targets);
+    if plan.game_data.is_dir() {
+        service = service.with_game_data(&plan.game_data);
+    }
 
     let say = |text: String| {
         let mut out = std::io::stdout().lock();
@@ -299,6 +321,14 @@ fn serve(args: &[String], ctx: &Ctx) -> Done {
                 bundle.target.key(),
                 bundle.patch_level,
                 bundle.files.len()
+            )),
+            Ok(Served::SentGame {
+                device,
+                target,
+                bytes,
+            }) => say(format!(
+                "sent game data for {} ({bytes} bytes) to {device}",
+                target.key()
             )),
             Err(error) => warn(format!(
                 "uncharted-universal hub: a connection failed: {error}"
@@ -495,28 +525,48 @@ fn pull(args: &[String], ctx: &Ctx) -> Done {
     ))
 }
 
+#[cfg(not(feature = "hub"))]
+fn pull_game(args: &[String], ctx: &Ctx) -> Done {
+    pull_plan(args, ctx)?;
+    Err(Outcome::error(
+        "hub",
+        &Error::NotBuilt("hub pull-game (this build has no hub feature)"),
+    ))
+}
+
+#[cfg(feature = "hub")]
+fn resolve_pull_peer(
+    plan: &PullPlan,
+    out: &mut Outcome,
+) -> std::result::Result<(std::net::SocketAddr, uncharted_core::hub::Peer), Outcome> {
+    use uncharted_core::hub;
+
+    let peers = core("hub", hub::read_peers(&plan.peers))?;
+    let names: Vec<&str> = peers.iter().map(|peer| peer.device.as_str()).collect();
+    let chosen = choose_hub(&names, plan.from.as_deref())
+        .map_err(|problem| Outcome::error("hub", &uncharted_core::Error::Hub(problem)))?;
+    let peer = peers
+        .into_iter()
+        .find(|peer| peer.device == chosen)
+        .expect("choose_hub picks a listed name");
+    let addr = match plan.hub {
+        Some(addr) => addr,
+        None => find_hub(out, Some(plan.target))?,
+    };
+    Ok((addr, peer))
+}
+
 #[cfg(feature = "hub")]
 fn pull(args: &[String], ctx: &Ctx) -> Done {
     use uncharted_core::bundle::Kind;
     use uncharted_core::hub;
 
     let plan = pull_plan(args, ctx)?;
-    let peers = core("hub", hub::read_peers(&plan.peers))?;
-    let names: Vec<&str> = peers.iter().map(|peer| peer.device.as_str()).collect();
-    let chosen = choose_hub(&names, plan.from.as_deref())
-        .map_err(|problem| Outcome::error("hub", &uncharted_core::Error::Hub(problem)))?;
-    let peer = peers
-        .iter()
-        .find(|peer| peer.device == chosen)
-        .expect("choose_hub picks a listed name");
     let mut out = Outcome::default();
-    let addr = match plan.hub {
-        Some(addr) => addr,
-        None => find_hub(&mut out, Some(plan.target))?,
-    };
+    let (addr, peer) = resolve_pull_peer(&plan, &mut out)?;
     let bundle = core(
         "hub",
-        hub::pull_from_service(addr, peer, &plan.name, plan.target, &plan.into),
+        hub::pull_from_service(addr, &peer, &plan.name, plan.target, &plan.into),
     )?;
     let shaders = bundle
         .files
@@ -533,5 +583,60 @@ fn pull(args: &[String], ctx: &Ctx) -> Done {
         bundle.files.len(),
         plan.into.display()
     ));
+    Ok(out)
+}
+
+#[cfg(feature = "hub")]
+fn pull_game(args: &[String], ctx: &Ctx) -> Done {
+    use uncharted_core::{hub, setup};
+
+    let p = parsed("hub", args, &["hub", "from", "target", "into", "name"], 0)?;
+    let into_explicit = p.flag("into").is_some();
+    let target = target(&p, ctx)?;
+    let dirs = AppDirs::new(&core("hub", super::vars(ctx))?);
+    let into = match p.flag("into") {
+        Some(folder) => PathBuf::from(folder),
+        None => setup::client::staging(&dirs),
+    };
+    let plan = PullPlan {
+        hub: hub_flag(&p)?,
+        from: p.flag("from").map(str::to_owned),
+        target,
+        into,
+        name: device_name(&p, ctx),
+        peers: peers_file(ctx)?,
+    };
+    let mut out = Outcome::default();
+    let (addr, peer) = resolve_pull_peer(&plan, &mut out)?;
+    let bytes = core(
+        "hub",
+        hub::pull_game_from_service(addr, &peer, &plan.name, plan.target, &plan.into),
+    )?;
+    if into_explicit {
+        out.line(format!(
+            "pulled game data for {} from {} ({bytes} bytes) into {}",
+            plan.target.key(),
+            peer.device,
+            plan.into.display()
+        ));
+    } else {
+        let games = core("hub", setup::install_all_pulled(&plan.into, &dirs))?;
+        if games.is_empty() {
+            return Err(Outcome::error(
+                "hub",
+                &uncharted_core::Error::Hub(
+                    "the hub sent no prepared game; prepare the games on the hub first".into(),
+                ),
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&plan.into);
+        let names: Vec<&str> = games.iter().map(|g| g.name()).collect();
+        out.line(format!(
+            "installed {} from {} ({bytes} bytes) into {}",
+            names.join(", "),
+            peer.device,
+            dirs.data.join("installs").display()
+        ));
+    }
     Ok(out)
 }

@@ -648,4 +648,52 @@ mod hub_client {
         assert!(!installed(&dirs, Game::U1));
         assert!(!has_peers(&dirs));
     }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn pair_and_pull_service_installs_from_hub_service() {
+        use crate::hub::{HubService, PairingServer};
+
+        let temp = Temp::new();
+        let hub_root = temp.0.join("hub");
+        let prepared = hub_root.join("installs");
+        write(
+            &prepared.join("u3").join("install.json"),
+            b"{\"game\":\"u3\"}\n",
+        );
+        write(&prepared.join("u3").join("boot.bin"), b"BBPROBE2 u3");
+        write(&prepared.join("u3").join("saves").join("slot"), b"hub save");
+        let hub_peers = hub_root.join("peers.json");
+        let builds = hub_root.join("builds");
+        let pairing =
+            PairingServer::with_code("357913", "test-hub", &hub_peers, SystemClock).unwrap();
+        let mut service = HubService::new(pairing, &hub_peers, &builds, &[Os::current()])
+            .with_game_data(&prepared);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let hub = std::thread::spawn(move || {
+            let _ = service.accept(&listener);
+            let _ = service.accept(&listener);
+        });
+
+        let dirs = temp.dirs();
+        write(&dirs.install("u3").join("saves").join("keep"), b"my save");
+        let pulled =
+            client::pair_and_pull_service(addr, "357 913", "handheld", &dirs, Os::current())
+                .unwrap();
+        hub.join().unwrap();
+        assert_eq!(pulled.games, [Game::U3]);
+        assert!(pulled.bytes > 0);
+        assert!(installed(&dirs, Game::U3));
+        assert_eq!(
+            fs::read(dirs.install("u3").join("boot.bin")).unwrap(),
+            b"BBPROBE2 u3"
+        );
+        assert_eq!(
+            fs::read(dirs.install("u3").join("saves").join("keep")).unwrap(),
+            b"my save"
+        );
+        assert!(!client::staging(&dirs).exists());
+        assert!(has_peers(&dirs));
+    }
 }
