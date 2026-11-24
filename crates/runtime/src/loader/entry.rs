@@ -967,6 +967,7 @@ mod runtime_boot {
         // SAFETY: image segments are mapped and writable.
         unsafe {
             hooks::install_game_callbacks(image_base, image_end, &boot.segments);
+            hooks::patch_u2_convoy_sink_segments(image_base, &boot.segments);
             crate::display::ffi::runtime_display_patch(image_base as usize as *mut u8, image_end);
         }
 

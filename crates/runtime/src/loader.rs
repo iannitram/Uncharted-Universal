@@ -574,6 +574,61 @@ pub fn find_pattern(haystack: &[u8], pattern: &str) -> Result<Vec<usize>, String
     Ok(hits)
 }
 
+/// Pattern for U2 chapter 21 (convoy) animation-node flag bug:
+/// `(mov cl, [r+0x11];) mov dl, [rax+0x80]; shl cl, 2; and dl, 0xfb; or dl, cl; mov [rax+0x80], dl`
+pub(crate) const CONVOY_SINK_PATTERN: &str =
+    "11 8a 90 80 00 00 00 c0 e1 02 80 e2 fb 08 ca 88 90 80 00 00 00";
+
+/// Replacement bytes starting at `at + 1`:
+/// `and cl, 1; shl cl, 2; and byte [rax+0x80], 0xfb; or [rax+0x80], cl; nop` (20 bytes).
+pub(crate) const CONVOY_SINK_PATCH: [u8; 20] = [
+    0x80, 0xe1, 0x01, 0xc0, 0xe1, 0x02, 0x80, 0xa0, 0x80, 0x00, 0x00, 0x00, 0xfb, 0x08, 0x88, 0x80,
+    0x00, 0x00, 0x00, 0x90,
+];
+
+#[cfg(any(target_arch = "x86_64", test))]
+pub(crate) fn convoy_sink_enabled() -> bool {
+    !std::env::var("BB_CONVOY_SINK").is_ok_and(|v| v.starts_with('0'))
+}
+
+/// Applies the U2 chapter 21 convoy sink patch to a single contiguous byte slice when the pattern
+/// occurs uniquely. Returns the patched offset (`at + 1`) when applied, or `None` otherwise.
+pub fn patch_u2_convoy_sink_in_slice(bytes: &mut [u8], enabled: bool) -> Option<usize> {
+    if !enabled {
+        return None;
+    }
+    let hits = find_pattern(bytes, CONVOY_SINK_PATTERN).ok()?;
+    if hits.len() != 1 {
+        return None;
+    }
+    let patch_at = hits[0] + 1;
+    bytes[patch_at..patch_at + CONVOY_SINK_PATCH.len()].copy_from_slice(&CONVOY_SINK_PATCH);
+    Some(patch_at)
+}
+
+/// C-ABI entry point for `src/probe.c`: applies the U2 chapter 21 convoy sink patch to
+/// `[image, image + image_size)` when `BB_CONVOY_SINK` is not `0`.
+///
+/// # Safety
+/// `image` must be null or point to `image_size` mapped, writable bytes.
+#[cfg(target_arch = "x86_64")]
+#[no_mangle]
+pub unsafe extern "C" fn runtime_patch_u2_convoy_sink(image: *mut u8, image_size: u64) {
+    if image.is_null() || image_size == 0 {
+        return;
+    }
+    let Ok(len) = usize::try_from(image_size) else {
+        return;
+    };
+    // SAFETY: caller guarantees `[image, image + len)` is mapped and writable.
+    let bytes = unsafe { std::slice::from_raw_parts_mut(image, len) };
+    if let Some(patch_offset) = patch_u2_convoy_sink_in_slice(bytes, convoy_sink_enabled()) {
+        println!(
+            "Convoy sink: animation node flag uses only bit 0 of its bool ({patch_offset:#x})"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

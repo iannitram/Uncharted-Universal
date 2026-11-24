@@ -1,7 +1,7 @@
 //! Guest hook/patch thunks, TCB load rewriting, and rel32-reachable thunk allocation for
 //! [`super`] (moving `src/probe.c`'s patching helpers into Rust for 3.17).
 
-use super::{find_pattern, Segment};
+use super::{convoy_sink_enabled, find_pattern, Segment, CONVOY_SINK_PATCH, CONVOY_SINK_PATTERN};
 use crate::patch_util::{host, write_code};
 use iced_x86::{Decoder, DecoderOptions};
 use std::ffi::CStr;
@@ -304,6 +304,50 @@ pub unsafe fn install_game_callbacks(image_base: u64, image_size: u64, segments:
     }
 }
 
+/// Applies the U2 chapter 21 convoy sink patch across executable segments of a loaded guest image
+/// (`BB_CONVOY_SINK=0` disables).
+///
+/// # Safety
+/// Every executable segment `[image_base + seg.address, +seg.size)` must be mapped and writable.
+pub unsafe fn patch_u2_convoy_sink_segments(image_base: u64, segments: &[Segment]) -> Option<u64> {
+    if !convoy_sink_enabled() {
+        return None;
+    }
+    let mut match_seg: Option<(usize, usize)> = None;
+    let mut total_hits = 0usize;
+    for (idx, seg) in segments.iter().enumerate() {
+        if (seg.flags & 1) == 0 {
+            continue;
+        }
+        // SAFETY: caller guarantees executable segments are mapped.
+        let hay = unsafe {
+            std::slice::from_raw_parts((image_base + seg.address) as *const u8, seg.size as usize)
+        };
+        if let Ok(hits) = find_pattern(hay, CONVOY_SINK_PATTERN) {
+            total_hits += hits.len();
+            if total_hits > 1 {
+                return None;
+            }
+            if let Some(&hit) = hits.first() {
+                match_seg = Some((idx, hit));
+            }
+        }
+    }
+    let (seg_idx, hit) = match_seg?;
+    let seg = &segments[seg_idx];
+    let patch_offset = seg.address + hit as u64 + 1;
+    // SAFETY: caller guarantees executable segments are mapped and writable.
+    let dst = unsafe {
+        std::slice::from_raw_parts_mut(
+            (image_base + patch_offset) as *mut u8,
+            CONVOY_SINK_PATCH.len(),
+        )
+    };
+    dst.copy_from_slice(&CONVOY_SINK_PATCH);
+    println!("Convoy sink: animation node flag uses only bit 0 of its bool ({patch_offset:#x})");
+    Some(patch_offset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +431,92 @@ mod tests {
         assert_eq!(res, 42);
         assert_eq!(SEEN_ARG0.load(Ordering::Relaxed), 41);
         assert_eq!(SEEN_BASE.load(Ordering::Relaxed), 0x1234_5678);
+    }
+
+    #[test]
+    fn u2_convoy_sink_patches_unique_match_and_decodes_cleanly() {
+        let original = [
+            0x41u8, 0x8a, 0x4c, 0x24, // mov cl, [r12+0x11] (prefix up to +0x11)
+            0x11, 0x8a, 0x90, 0x80, 0x00, 0x00, 0x00, 0xc0, 0xe1, 0x02, 0x80, 0xe2, 0xfb, 0x08,
+            0xca, 0x88, 0x90, 0x80, 0x00, 0x00, 0x00, 0xc3,
+        ];
+
+        let mut disabled = original;
+        assert_eq!(
+            super::super::patch_u2_convoy_sink_in_slice(&mut disabled, false),
+            None
+        );
+        assert_eq!(disabled, original);
+
+        let mut buf = original;
+        let patch_at =
+            super::super::patch_u2_convoy_sink_in_slice(&mut buf, true).expect("unique match");
+        assert_eq!(patch_at, 5);
+        assert_eq!(buf[..5], original[..5]);
+        assert_eq!(
+            &buf[patch_at..patch_at + CONVOY_SINK_PATCH.len()],
+            &CONVOY_SINK_PATCH
+        );
+        assert_eq!(buf[25], 0xc3);
+
+        // Verify the 20-byte replacement decodes into 5 valid x86-64 instructions.
+        let mut decoder = Decoder::with_ip(64, &CONVOY_SINK_PATCH, 0, DecoderOptions::NONE);
+        let mut count = 0usize;
+        let mut decoded_len = 0usize;
+        while decoder.can_decode() {
+            let instr = decoder.decode();
+            assert!(!instr.is_invalid());
+            decoded_len += instr.len();
+            count += 1;
+        }
+        assert_eq!(count, 5);
+        assert_eq!(decoded_len, CONVOY_SINK_PATCH.len());
+
+        // Duplicate matches and missing patterns must leave the buffer untouched.
+        let mut dup = Vec::new();
+        dup.extend_from_slice(&original);
+        dup.extend_from_slice(&original);
+        let dup_orig = dup.clone();
+        assert_eq!(
+            super::super::patch_u2_convoy_sink_in_slice(&mut dup, true),
+            None
+        );
+        assert_eq!(dup, dup_orig);
+
+        let mut none = [0x90u8; 32];
+        assert_eq!(
+            super::super::patch_u2_convoy_sink_in_slice(&mut none, true),
+            None
+        );
+        assert_eq!(none, [0x90u8; 32]);
+    }
+
+    #[test]
+    fn u2_convoy_sink_segments_scans_executable_segments_only() {
+        let mut exec = [
+            0x11u8, 0x8a, 0x90, 0x80, 0x00, 0x00, 0x00, 0xc0, 0xe1, 0x02, 0x80, 0xe2, 0xfb, 0x08,
+            0xca, 0x88, 0x90, 0x80, 0x00, 0x00, 0x00,
+        ];
+        let mut data = exec;
+        let base = exec.as_mut_ptr() as u64;
+        let data_off = (data.as_mut_ptr() as u64).wrapping_sub(base);
+        let segs = [
+            Segment {
+                address: 0,
+                size: exec.len() as u64,
+                flags: 1,
+            },
+            Segment {
+                address: data_off,
+                size: data.len() as u64,
+                flags: 0,
+            },
+        ];
+        // SAFETY: both buffers are valid for their segment lengths.
+        let patched = unsafe { patch_u2_convoy_sink_segments(base, &segs) };
+        assert_eq!(patched, Some(1));
+        assert_eq!(&exec[1..], &CONVOY_SINK_PATCH);
+        assert_eq!(data[1..], data[1..]);
+        assert_ne!(&data[1..], &CONVOY_SINK_PATCH);
     }
 }
