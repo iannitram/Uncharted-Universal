@@ -766,6 +766,10 @@ impl SettingsVm {
                 profile.power
             ));
         }
+        notes.push(
+            "Aspect ratios: 6:5, 3:2, 16:10, 16:9, 21:9, and cover screens adapt 3D FOV with 16:9 HUD; cutscenes and other shapes fall back to bars."
+                .into(),
+        );
         notes
     }
 }

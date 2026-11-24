@@ -60,7 +60,7 @@ Once your game folder has been specified: Play, Add to Steam (recommended for St
 
 - All three games from one launcher: Drake's Fortune, Among Thieves and Drake's Deception.
 - 60 FPS like on PS4, or 120 FPS (higher rates are experimental).
-- Render resolution above 1080p (up to 3200x1800) and ultrawide aspect ratios: the games draw a real larger or wider picture, set in the launcher.
+- Render resolution above 1080p (up to 3200x1800) and aspect-ratio adaptation (6:5, 3:2, 16:10, 16:9, 21:9 ultrawide, and cover screens such as 17.4:9): the games draw a real larger, wider (Hor+), or taller (Vert+) 3D picture with HUD/menus anchored in a centered 16:9 safe area; pre-rendered cutscenes, live-resized windows, and unsupported aspect ratios fall back to centered letterbox/pillarbox bars without stretching.
 - Anti-aliasing with TAA, AMD FSR 3.1, AMD FSR 4 or NVIDIA DLSS (DLAA).
 - Frame generation: AMD FSR 3 (any GPU) or NVIDIA DLSS (RTX 40 2x, RTX 50 up to 4x).
 - Keyboard, mouse and controller together, all remappable. Mouse look in U3; opt-in raw 1:1 mouse aiming and cover camera in U1 and U2 (US 1.02).

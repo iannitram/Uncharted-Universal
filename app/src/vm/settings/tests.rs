@@ -467,3 +467,21 @@ fn button_prompts_choice_cycles_and_preserves_display_settings() {
         SettingsCommand::SaveButtonPrompts(prompts::Choice::Automatic)
     );
 }
+
+#[test]
+fn notes_document_supported_aspects_and_bar_fallback() {
+    let vm = SettingsVm::new(Stored::default(), desktop(), None);
+    let view = vm.view();
+    assert!(
+        view.notes.iter().any(|note| {
+            note.contains("6:5")
+                && note.contains("3:2")
+                && note.contains("16:10")
+                && note.contains("16:9")
+                && note.contains("21:9")
+                && note.contains("bars")
+        }),
+        "expected aspect-ratio support note in {:?}",
+        view.notes
+    );
+}

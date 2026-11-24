@@ -197,6 +197,19 @@ std::condition_variable g_window_cv;
 bool g_window_ready;
 BbRenderSize g_startup_window_size{};
 BbRenderSize g_auto_render_size{};
+BbRenderSize ActiveRenderSize() {
+    if (g_auto_render_size.width && g_auto_render_size.height) {
+        return g_auto_render_size;
+    }
+    if (const char* res = std::getenv("BB_GAME_RES")) {
+        u32 w = 0, h = 0;
+        if (std::sscanf(res, "%ux%u", &w, &h) == 2 && w >= 640 && h >= 360 && w <= 7680 &&
+            h <= 4320) {
+            return {w & ~1u, h & ~1u};
+        }
+    }
+    return g_startup_window_size;
+}
 } // namespace
 
 extern "C" BbRenderSize bbgpu_auto_render_size() {
@@ -204,8 +217,9 @@ extern "C" BbRenderSize bbgpu_auto_render_size() {
 }
 
 extern "C" BbFovScale bbgpu_fov_scale() {
-    const u32 w = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;
-    const u32 h = g_auto_render_size.height ? g_auto_render_size.height : g_startup_window_size.height;
+    const BbRenderSize size = ActiveRenderSize();
+    const u32 w = size.width;
+    const u32 h = size.height;
     if (!w || !h) {
         return {0, 1.0f, 1.0f};
     }
@@ -239,8 +253,9 @@ extern "C" BbMovieRect bbgpu_safe_area(uint32_t screen_w, uint32_t screen_h) {
 extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
     static std::mutex resize_mutex;
     static BbResizeTracker tracker{kBbResizeDebounceMs};
-    const u32 sw = g_auto_render_size.width ? g_auto_render_size.width : g_startup_window_size.width;
-    const u32 sh = g_auto_render_size.height ? g_auto_render_size.height : g_startup_window_size.height;
+    const BbRenderSize active = ActiveRenderSize();
+    const u32 sw = active.width;
+    const u32 sh = active.height;
     const u64 now_ms = u64(std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now().time_since_epoch())
                               .count());
