@@ -243,3 +243,42 @@ ar rcs libvulkan-1.a *.o
 clang++ smoke.o libvulkan-1.a libspirv-cross-{msl,glsl,core}.a -framework Metal -framework Foundation \
   -framework QuartzCore -framework CoreGraphics -framework IOSurface -o smoke
 ```
+
+## Independent verification (2026-11-24, two Opus reviewers)
+
+Two separate reviews re-checked this probe against the adapter source at pin `6127cba8` and against our `gpu/`. One re-derived what our renderer needs; the other spot-checked 21 adapter claims (all 21 held). Their corrections change the estimate and the order of work:
+
+**New hard gaps (block a first frame):**
+- **Per-instance vertex input is rejected outright,** not just the divisor: any `inputRate != VERTEX` returns `VK_ERROR_FEATURE_NOT_PRESENT` (`MetalVulkanCommands.mm:4465-4466`, tessellation path `:2616`), and bindings ≥ 16 are refused (`:4479`). Our pipelines use per-instance bindings for step-rate fetch (`vk_graphics_pipeline.cpp:477-489`, `vk_draw_prep.cpp:161-167`), so every instanced pipeline fails and its draws are skipped (`vk_graphics_pipeline.cpp:443-446`). About 3–5 days in the adapter.
+- **Metal binding-slot limits:** the adapter binds directly to Metal slots, not argument buffers (`MetalVulkanCommands.mm:2302-2328`). It reports 29 storage buffers, 16 samplers and 8 storage images per stage (`MetalVulkanCore.mm:1605-1609`), and vertex buffers share that slot table. Our recompiler allows 40 buffers and 64 images per shader (`shader_recompiler/resource.h:15-17`). How often real shaders exceed this is unmeasured. Argument buffers or slot remapping: 5–15 days.
+- **RectList and QuadList always go through tessellation** (`vk_graphics_pipeline.cpp:92-96`, `:195-215`). On the adapter that is the software tessellator, which is on the path of ordinary full-screen passes.
+- **`vkCmdSetLineWidth` ≠ 1.0 fails the whole command buffer** (`MetalVulkanCommands.mm:6129` → `RecordError` → `vkEndCommandBuffer` error → our `ASSERT_MSG`). We set it on every draw (`vk_rasterizer.cpp:5345`). Clamp it: 0.1 days. Recording errors in general need to be survivable.
+- **Mutable-format views are narrower than Vulkan allows:** depth↔colour and cross-family BC views are refused, and `minLod != 0` is refused (`MetalVulkanCore.mm:901-916`, `:3144-3146`). Our texture cache makes every image `eMutableFormat` (`texture_cache/image.cpp:234`). Effort unknown.
+- **The sparse arena reaches into shader code:** `GetSparsePageShift()` feeds the pipeline cache and the shaders' `get_bda_pointer` page table (`vk_rasterizer.cpp:238`, `vk_pipeline_cache.cpp:306`, `spirv_emit_context.cpp:1213-1240`). Replacing it touches the recompiler and the fault manager too, and the `BufferCache` constructor calls `vkGetDeviceBufferMemoryRequirements` (`buffer_cache.cpp:154`) before any draw. So the sparse replacement is a **prerequisite**, not a parallel fallback condition.
+- **Shader capabilities the adapter reports false:** `GroupNonUniformQuad` (when `uses_group_quad`), `StorageImageReadWithoutFormat` (always, for storage images), `DemoteToHelperInvocation` (on discard). Subgroups are reported for compute and fragment only (`MetalVulkanCore.mm:1786-1790`).
+- **Vulkan 1.3 properties read as zero** (no handler for `VkPhysicalDeviceVulkan13Properties`). So `GetMaxBufferSize()` is 0 and the subgroup-size checks read zeros. Unknown feature structs in `vkCreateDevice` are silently ignored (`MetalVulkanCore.mm:1908-1952`), so a missing `nullDescriptor` only shows up at the first null binding.
+
+**Rows corrected downward:**
+- `vkCmdUpdateBuffer`: either not reached, or reached only through `Runtime::InlineData`, which writes one u32. Use `vkCmdFillBuffer` either way: about 0.1 days.
+- Buffer views: no texel-buffer descriptors exist in our tree: 0 days.
+- Debug-utils labels: the calls are gated by `BB_VK_MARKERS` (default off): soft.
+- Geometry shaders: ES/GS pipelines are skipped with a warning (missing geometry, not a crash).
+- `vkGetDeviceImageMemoryRequirements` is a separate row (texture-cache allocation fallback, `image.cpp:131-147`): about 0.5 days, or guard the call. VMA at 1.3 also wants the `vkGetDevice*MemoryRequirements` pair.
+
+**Revised estimate:** A rises from 30–55 to roughly **40–70 days**, which overlaps B's 40–80. "C entered through A" is no longer clearly cheaper; it is a bet that pays off only if the decisive unknowns come out small.
+
+**Revised order (replaces the plan above):**
+1. **Cheap decisive tests first (days, no renderer port):**
+   - run SPIRV-Cross MSL (pin `d8e3e2b1`) offline over our recompiler's SPIR-V;
+   - count per-stage buffer, image and sampler bindings against the 29/16/8 limits;
+   - count shaders needing quad subgroups, read-without-format or demote.
+
+   These need real shader SPIR-V from a game run. Keep it local and report aggregate counts only (M9).
+2. Device creation on the adapter (assert patches, 1.2 version path, 1.3 properties).
+3. Buffer cache without sparse, behind a two-week stop rule.
+4. First pipelines and draws: instance-rate input, line width, survivable recording errors, mutable views.
+
+**Stop rules (fall back to B, the `renderer_metal` reconcile):**
+- step 1 shows more than a handful of the first 50 pipelines over the slot limits, or SPIRV-Cross failing broadly;
+- instance rate and the binding limits can't be fixed in the adapter within about a week;
+- the sparse replacement runs past about two weeks.
