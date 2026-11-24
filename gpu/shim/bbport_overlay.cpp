@@ -321,6 +321,100 @@ void Menu() {
     ImGui::Text(T("%.0f FPS  (%.1f ms)", "%.0f FPS  (%.1f мс)"),
                 frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f, frame_ms_avg);
 
+    const int effective_profile = BbSettings::EffectiveProfile();
+    ImGui::SeparatorText(T("Device profile", "Профиль устройства"));
+    const int selected_profile = s.device_profile;
+    char profile_preview[96];
+    if (selected_profile == BbSettings::ProfileAuto) {
+        std::snprintf(profile_preview, sizeof(profile_preview), "%s (%s)",
+                      T("Auto", "Авто"), BbSettings::ProfileLabel(s.detected_profile));
+    } else {
+        std::snprintf(profile_preview, sizeof(profile_preview), "%s",
+                      BbSettings::ProfileLabel(selected_profile));
+    }
+    if (ImGui::BeginCombo(T("Profile", "Профиль"), profile_preview)) {
+        for (int i = 0; i < BbSettings::ProfileCount; ++i) {
+            char item_label[96];
+            if (i == BbSettings::ProfileAuto) {
+                std::snprintf(item_label, sizeof(item_label), "%s (%s)",
+                              T("Auto", "Авто"), BbSettings::ProfileLabel(s.detected_profile));
+            } else {
+                std::snprintf(item_label, sizeof(item_label), "%s",
+                              BbSettings::ProfileLabel(i));
+            }
+            if (ImGui::Selectable(item_label, i == selected_profile)) {
+                BbSettings::ApplyProfile(i);
+                dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (effective_profile == BbSettings::ProfileHandheld) {
+        Hint(T("Handheld profile: 30/45/60 FPS, FSR 4 / DLSS / Stereo 3D are disabled for this device.",
+               "Профиль портативки: 30/45/60 FPS, FSR 4 / DLSS / стерео 3D отключены для этого устройства."));
+    } else {
+        Hint(T("Picking a profile applies its recommended frame rate, resolution, upscaler and stereo "
+               "settings. Auto detects your hardware.",
+               "Выбор профиля применяет рекомендуемые частоту кадров, разрешение, апскейлер и стерео. "
+               "Авто определяет устройство автоматически."));
+    }
+
+    ImGui::SeparatorText(T("Frame rate", "Частота кадров"));
+    static constexpr int vblank_choices[] = {30, 45, 60, 120, 0};
+    const int cur_vblank = s.vblank_hz;
+    char vblank_preview[48];
+    if (cur_vblank == 0) {
+        std::snprintf(vblank_preview, sizeof(vblank_preview), "%s",
+                      T("Uncapped (display refresh)", "Без лимита (частота экрана)"));
+    } else {
+        std::snprintf(vblank_preview, sizeof(vblank_preview), "%d FPS", cur_vblank);
+    }
+    if (ImGui::BeginCombo(T("Target frame rate", "Целевая частота"), vblank_preview)) {
+        for (const int hz : vblank_choices) {
+            const bool allowed = BbSettings::ProfileAllowsFrameRate(effective_profile, hz);
+            char label[48];
+            if (hz == 0) {
+                std::snprintf(label, sizeof(label), "%s",
+                              T("Uncapped (display refresh)", "Без лимита (частота экрана)"));
+            } else {
+                std::snprintf(label, sizeof(label), "%d FPS", hz);
+            }
+            ImGui::BeginDisabled(!allowed);
+            if (ImGui::Selectable(label, hz == cur_vblank)) {
+                Store(s.vblank_hz, hz, true);
+            }
+            ImGui::EndDisabled();
+            if (!allowed) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", T("— not in profile", "— недоступно в профиле"));
+            }
+        }
+        ImGui::EndCombo();
+    }
+    static constexpr int fps_cap_choices[] = {-1, 0, 30, 45, 60, 90, 120};
+    const int cur_cap = s.fps_limit;
+    auto cap_label = [&](int cap, char* buf, size_t len) {
+        if (cap < 0) std::snprintf(buf, len, "%s", T("Auto (by target rate)", "Авто (по целевой)"));
+        else if (cap == 0) std::snprintf(buf, len, "%s", T("No limit", "Без ограничения"));
+        else std::snprintf(buf, len, "%d FPS", cap);
+    };
+    char cap_preview[48];
+    cap_label(cur_cap, cap_preview, sizeof(cap_preview));
+    if (ImGui::BeginCombo(T("Frame rate cap", "Ограничение FPS"), cap_preview)) {
+        for (const int cap : fps_cap_choices) {
+            char label[48];
+            cap_label(cap, label, sizeof(label));
+            if (ImGui::Selectable(label, cap == cur_cap)) {
+                Store(s.fps_limit, cap, true);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    Hint(T("Applies after restarting the game. Frame rate cap limits presentation while keeping "
+           "vblank timing.",
+           "Применяется после перезапуска игры. Ограничение FPS сдерживает вывод кадров, сохраняя "
+           "тайминг vblank."));
+
     ImGui::SeparatorText(T("Anti-aliasing", "Сглаживание"));
     const char* upscalers[] = {T("Off (the game's own)", "Выкл (сглаживание игры)"), "FSR 3.1",
                                "FSR 4 (INT8)", "FSR 4.1.1 (INT8)", "TAA", "DLSS (NVIDIA RTX)",
@@ -329,10 +423,12 @@ void Menu() {
     int upscaler = s.upscaler;
     if (ImGui::BeginCombo(T("Method", "Метод"), upscalers[upscaler])) {
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
-            const bool supported = i == BbSettings::UpscalerFsr4 ? s.fsr4_supported.load()
+            const bool gpu_supported = i == BbSettings::UpscalerFsr4 ? s.fsr4_supported.load()
                 : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                 : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
                 : i == BbSettings::UpscalerXess   ? s.xess_supported.load() : true;
+            const bool profile_allowed = BbSettings::ProfileAllowsUpscaler(effective_profile, i);
+            const bool supported = gpu_supported && profile_allowed;
             ImGui::BeginDisabled(!supported);
             if (ImGui::Selectable(upscalers[i], i == upscaler)) {
                 Store(s.upscaler, i, true);
@@ -340,13 +436,17 @@ void Menu() {
             ImGui::EndDisabled();
             if (!supported) {
                 ImGui::SameLine();
-                // Linux fork: FSR 4 on a capable GPU without its assets (fsr4_shaders).
-                const char* fsr4_problem = s.fsr4_problem.load();
-                const bool no_assets = i == BbSettings::UpscalerFsr4 && fsr4_problem &&
-                                       std::strncmp(fsr4_problem, "assets", 6) == 0;
-                ImGui::TextDisabled("%s", no_assets ? T("— files not installed",
-                                                        "— файлы не установлены")
-                                                    : unsupported);
+                if (!profile_allowed) {
+                    ImGui::TextDisabled("%s", T("— disabled by profile", "— отключено профилем"));
+                } else {
+                    // Linux fork: FSR 4 on a capable GPU without its assets (fsr4_shaders).
+                    const char* fsr4_problem = s.fsr4_problem.load();
+                    const bool no_assets = i == BbSettings::UpscalerFsr4 && fsr4_problem &&
+                                           std::strncmp(fsr4_problem, "assets", 6) == 0;
+                    ImGui::TextDisabled("%s", no_assets ? T("— files not installed",
+                                                            "— файлы не установлены")
+                                                        : unsupported);
+                }
             }
         }
         ImGui::EndCombo();
@@ -506,7 +606,9 @@ void Menu() {
     const int frame_gen = s.frame_gen;
     if (ImGui::BeginCombo(T("Generation", "Генерация"), frame_gens[frame_gen])) {
         for (int i = 0; i < BbSettings::FrameGenCount; ++i) {
-            const bool supported = i != BbSettings::FrameGenDlss || s.dlssg_max_multiplier > 1;
+            const bool gpu_supported = i != BbSettings::FrameGenDlss || s.dlssg_max_multiplier > 1;
+            const bool profile_allowed = BbSettings::ProfileAllowsFrameGen(effective_profile, i);
+            const bool supported = gpu_supported && profile_allowed;
             ImGui::BeginDisabled(!supported);
             if (ImGui::Selectable(frame_gens[i], i == frame_gen)) {
                 Store(s.frame_gen, i, true);
@@ -514,7 +616,9 @@ void Menu() {
             ImGui::EndDisabled();
             if (!supported) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("%s", unsupported);
+                ImGui::TextDisabled("%s", !profile_allowed
+                                              ? T("— disabled by profile", "— отключено профилем")
+                                              : unsupported);
             }
         }
         ImGui::EndCombo();
@@ -579,12 +683,35 @@ void Menu() {
            "остаётся в 1080p (заметно медленнее на Steam Deck и старых ГПУ). Выкл: всё рендерится "
            "в размере пресета, смена требует перезапуска. Авто включает для мощных дискретных ГПУ. "
            "Применяется после перезапуска игры."));
+    ImGui::SeparatorText(T("Stereo 3D (Uncharted 3)", "Стерео 3D (Uncharted 3)"));
+    const int stereo_mode = s.stereo_mode;
+    if (ImGui::BeginCombo(T("Stereo mode", "Режим стерео"),
+                          BbSettings::StereoModeLabel(stereo_mode))) {
+        for (int i = 0; i < BbSettings::StereoModeCount; ++i) {
+            const bool allowed = BbSettings::ProfileAllowsStereo(effective_profile, i);
+            ImGui::BeginDisabled(!allowed);
+            if (ImGui::Selectable(BbSettings::StereoModeLabel(i), i == stereo_mode)) {
+                Store(s.stereo_mode, i, true);
+            }
+            ImGui::EndDisabled();
+            if (!allowed) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", T("— disabled by profile", "— отключено профилем"));
+            }
+        }
+        ImGui::EndCombo();
+    }
+    Hint(T("Stereoscopic 3D output mode for Uncharted 3. Applies after restarting the game.",
+           "Режим стереоскопического 3D для Uncharted 3. Применяется после перезапуска игры."));
+
     // No game-effect, cheat or model-detail toggles here: those were Bloodborne patches
     // (scripts/patches.py, patches/Bloodborne.xml), which the Uncharted launch never applies.
     const bool resize_restart = resize_restart_needed.load(std::memory_order_relaxed);
     bool restart = s.object_motion != s.startup_object_motion ||
                    s.live_resolution != s.startup_live_resolution ||
                    BbSettings::ResolutionNeedsRestart() ||
+                   BbSettings::FrameRateNeedsRestart() ||
+                   BbSettings::StereoNeedsRestart() ||
                    resize_restart;
     if (restart) {
         if (resize_restart) {
