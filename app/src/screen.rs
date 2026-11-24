@@ -496,6 +496,12 @@ impl Screen {
                     start,
                 }
             }
+            Input::Tab { .. } => {
+                self.overlay = Overlay::Conflict {
+                    server: !server,
+                    start,
+                }
+            }
             Input::Activate => {
                 let keep = if server { Keep::Server } else { Keep::Local };
                 self.conflicts[self.current] = None;

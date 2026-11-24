@@ -90,9 +90,13 @@ impl Editor {
         Edit::None
     }
 
-    pub fn view(&self) -> EditorView {
+    pub fn view_masked(&self, mask: bool) -> EditorView {
         EditorView {
-            text: self.text.clone(),
+            text: if mask {
+                "•".repeat(self.text.chars().count())
+            } else {
+                self.text.clone()
+            },
             rows: self
                 .rows()
                 .iter()

@@ -221,6 +221,10 @@ impl SavesVm {
         status.clone_into(&mut self.status);
     }
 
+    pub fn set_relay(&mut self, relay: &str) {
+        relay.clone_into(&mut self.relay);
+    }
+
     /// New data from disk after a command: the same game stays shown, focus stays on the
     /// nearest button.
     pub fn reload(&mut self, games: Vec<GameSaves>) {

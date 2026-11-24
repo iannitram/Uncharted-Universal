@@ -172,6 +172,7 @@ enum Step {
     SaveSyncBusy {
         service: CloudService,
         after_lines: Vec<String>,
+        nextcloud: Option<(String, String)>,
     },
     OAuthChallenge {
         challenge: RelayChallenge,
@@ -194,6 +195,8 @@ pub struct FirstRunView {
     pub focus: usize,
     /// The text field's placeholder; empty when the step has no field.
     pub field: String,
+    /// True when the active field holds a secret (masked in `LineEdit` and the pad editor).
+    pub field_secret: bool,
     /// The committed draft for the active field, separate for folder and hub.
     pub field_text: String,
     /// The six code boxes ("" for an empty one) and the cursor; empty when the step has none.
@@ -355,7 +358,11 @@ impl FirstRun {
                 let Some(editor) = &self.editor else {
                     return Job::None;
                 };
-                self.field(&editor.text.clone())
+                let job = self.field(&editor.text.clone());
+                if matches!(self.step, Step::Nextcloud { .. }) && self.error.is_empty() {
+                    self.editor = None;
+                }
+                job
             }
         }
     }
@@ -584,6 +591,7 @@ impl FirstRun {
                 self.go(Step::SaveSyncBusy {
                     service: CloudService::GoogleDrive,
                     after_lines,
+                    nextcloud: None,
                 });
                 Job::RelayStartOAuth(CloudService::GoogleDrive)
             }
@@ -592,6 +600,7 @@ impl FirstRun {
                 self.go(Step::SaveSyncBusy {
                     service: CloudService::Dropbox,
                     after_lines,
+                    nextcloud: None,
                 });
                 Job::RelayStartOAuth(CloudService::Dropbox)
             }
@@ -635,10 +644,20 @@ impl FirstRun {
                         "Enter the Nextcloud address, account and app password first.".into();
                     return Job::None;
                 }
+                if url.chars().any(char::is_control)
+                    || account.chars().any(char::is_control)
+                    || password.contains(['\n', '\r'])
+                {
+                    self.error =
+                        "Nextcloud sign-in fields cannot contain line breaks or control characters."
+                            .into();
+                    return Job::None;
+                }
                 let after_lines = after_lines.clone();
                 self.go(Step::SaveSyncBusy {
                     service: CloudService::Nextcloud,
                     after_lines,
+                    nextcloud: Some((url.clone(), account.clone())),
                 });
                 Job::RelaySignInNextcloud {
                     url,
@@ -835,8 +854,16 @@ impl FirstRun {
                     self.error = sentence(&err);
                 }
             },
-            (Event::RelaySignedIn(result), Step::SaveSyncBusy { after_lines, .. }) => {
+            (
+                Event::RelaySignedIn(result),
+                Step::SaveSyncBusy {
+                    after_lines,
+                    nextcloud,
+                    ..
+                },
+            ) => {
                 let after_lines = std::mem::take(after_lines);
+                let nextcloud = nextcloud.take();
                 match result {
                     Ok(status) => {
                         let mut lines = after_lines;
@@ -850,7 +877,17 @@ impl FirstRun {
                         self.go(Step::Done { lines });
                     }
                     Err(err) => {
-                        self.go(Step::SaveSync { after_lines });
+                        if let Some((url, account)) = nextcloud {
+                            self.go(Step::Nextcloud {
+                                url,
+                                account,
+                                password: String::new(),
+                                active: NextcloudField::Password,
+                                after_lines,
+                            });
+                        } else {
+                            self.go(Step::SaveSync { after_lines });
+                        }
                         self.error = sentence(&err);
                     }
                 }
@@ -1075,9 +1112,21 @@ impl FirstRun {
             ),
             _ => (Vec::new(), 0),
         };
+        let field_secret = matches!(
+            self.step,
+            Step::Nextcloud {
+                active: NextcloudField::Password,
+                ..
+            }
+        );
         let field = match &self.step {
             Step::PickDump { .. } => "The dump folder, as /home/deck/Games/CUSA02320",
             Step::FindHub { .. } => "The hub's address and port, as 192.168.1.20:47120",
+            Step::Nextcloud { active, .. } => match active {
+                NextcloudField::Url => "Nextcloud address, as https://cloud.example.com",
+                NextcloudField::Account => "Nextcloud username",
+                NextcloudField::Password => "Nextcloud app password",
+            },
             _ => "",
         };
         let progress = match &self.step {
@@ -1112,13 +1161,17 @@ impl FirstRun {
             focus: self.focus.min(options.len().saturating_sub(1)),
             options,
             field: field.to_owned(),
+            field_secret,
             field_text: self.field_draft().unwrap_or_default().to_owned(),
             code,
             code_cursor,
             progress,
             busy,
             error: self.error.clone(),
-            editor: self.editor.as_ref().map(Editor::view),
+            editor: self
+                .editor
+                .as_ref()
+                .map(|editor| editor.view_masked(field_secret)),
         }
     }
 }
