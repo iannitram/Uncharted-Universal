@@ -92,6 +92,11 @@ const COMMANDS: &[(&str, &str, &str)] = &[
         "[status|hub [<dump>] [u1|u2|u3]|client <address:port> <code>|steam [--close-steam]]",
         "first run: prepare from the dump, or pull from the hub; add to Steam",
     ),
+    (
+        "playtest",
+        "validate <route.json> | report <report.json> [--format md|json]",
+        "validate a playtest route or render a build report",
+    ),
 ];
 
 /// Exit status: the command did what it was asked.

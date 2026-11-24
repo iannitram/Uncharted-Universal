@@ -1202,3 +1202,75 @@ fn play_uses_bundled_save_relay_beside_executable() {
         let _ = (relay_name, run_name, relay_body, run_body);
     }
 }
+
+// ---- playtest ----
+
+#[test]
+fn playtest_validate_and_report_commands() {
+    use uncharted_core::playtest::{
+        BuildReport, FailureKind, Route, ScriptStep, Section, SectionFailure, SectionResult,
+        SectionStatus,
+    };
+
+    let dir = TempDir::new("playtest-cli");
+    let route_path = dir.path().join("route.json");
+    let mut s1 = Section::new("intro", "Train Intro");
+    s1.steps = vec![ScriptStep::new("cross", 150)];
+    let route = Route {
+        game: Game::U2,
+        name: "u2-opening".into(),
+        sections: vec![s1],
+    };
+    fs::write(&route_path, route.to_json()).unwrap();
+
+    let out = exec(
+        &["playtest", "validate", &route_path.display().to_string()],
+        &ctx(),
+    );
+    assert_eq!(out.code, OK, "{}", out.stderr);
+    assert!(out.stdout.contains("u2 'u2-opening': 1 sections"));
+
+    let report_path = dir.path().join("report.json");
+    let report = BuildReport {
+        build: "v0.3.15".into(),
+        game: Game::U2,
+        route_name: "u2-opening".into(),
+        at_unix: 1_700_000_000,
+        sections: vec![SectionResult {
+            id: "intro".into(),
+            title: "Train Intro".into(),
+            status: SectionStatus::Fail,
+            attempts: 1,
+            recoveries: Vec::new(),
+            duration_ms: 500,
+            frames: 15,
+            avg_fps: Some(30.0),
+            min_fps: Some(25.0),
+            max_frame_ms: Some(40.0),
+            stall_count: 0,
+            frozen_frames: 0,
+            failures: vec![SectionFailure {
+                kind: FailureKind::Crash,
+                message: "Crash: test".into(),
+            }],
+            log_excerpts: vec!["Crash: test".into()],
+            screenshot_paths: Vec::new(),
+            trophies_unlocked: Vec::new(),
+            checkpoint_diff: None,
+        }],
+    };
+    fs::write(&report_path, report.to_json()).unwrap();
+
+    let out = exec(
+        &["playtest", "report", &report_path.display().to_string()],
+        &ctx(),
+    );
+    assert_eq!(out.code, FAILED);
+    assert!(out
+        .stdout
+        .contains("# Playtest Report: Uncharted 2 (u2) — FAIL"));
+    assert!(out.stdout.contains("## Broken Sections"));
+
+    assert_eq!(exec(&["playtest"], &ctx()).code, USAGE);
+    assert_eq!(exec(&["playtest", "unknown", "x"], &ctx()).code, USAGE);
+}

@@ -47,6 +47,7 @@ pub mod mods;
 pub mod patches;
 pub mod pkg;
 pub mod platform;
+pub mod playtest;
 pub mod prepare;
 pub mod profile;
 pub mod recipe;
