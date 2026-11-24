@@ -24,6 +24,7 @@
 #include "bbport_resize.h"
 #include "bbport_settings.h"
 #include "bbport_shader_preload.h"
+#include "bbport_stereo.h"
 #include "bbport_threads.h"
 #include "bbport_toggles.h"
 #include "bbport_video_pacing.h"
@@ -48,6 +49,7 @@ inline constexpr const char* const AllowedShimHeaders[] = {
     "bbport_resize.h",
     "bbport_settings.h",
     "bbport_shader_preload.h",
+    "bbport_stereo.h",
     "bbport_threads.h",
     "bbport_toggles.h",
     "bbport_video_pacing.h",
