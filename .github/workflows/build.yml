@@ -169,6 +169,13 @@ jobs:
             HOME=/tmp ./AppRun --help | grep -q "uncharted-universal"
             { ./uncharted-run --help 2>&1 || true; } | grep -q "usage: uncharted-run"
             LD_PRELOAD= HOME=/tmp ./uncharted-universal --help >/dev/null
+            test -x ./save-relay
+            test -f ./components.lock.json
+            test -f ./licenses/save-relay-LICENSE.txt
+            test -f ./save-relay-manifests/uncharted-1.json
+            test -f ./save-relay-manifests/uncharted-2.json
+            test -f ./save-relay-manifests/uncharted-3.json
+            python3 -c "import hashlib, json, pathlib; lock = json.loads(pathlib.Path(\"components.lock.json\").read_text())[\"save-relay\"]; assert hashlib.sha256(pathlib.Path(\"save-relay\").read_bytes()).hexdigest() == lock[\"sha256\"]"
           '
       - name: Copy dist back to the workspace
         run: |

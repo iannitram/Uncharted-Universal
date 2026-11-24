@@ -1141,3 +1141,64 @@ fn direct_play_passes_saved_prompt_choices_to_the_runtime_child() {
         "playstation"
     );
 }
+
+#[test]
+fn play_uses_bundled_save_relay_beside_executable() {
+    let dir = TempDir::new("play-bundled-relay");
+    let bin = dir.path().join("bundle");
+    let manifests = bin.join("save-relay-manifests");
+    fs::create_dir_all(&manifests).unwrap();
+    fs::write(
+        manifests.join("uncharted-2.json"),
+        saves::relay_manifest(Game::U2),
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    let (relay_name, run_name, relay_body, run_body) = (
+        "save-relay",
+        "uncharted-run",
+        format!(
+            "#!/bin/sh\nset -eu\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  pull) echo '{{\"ok\":true,\"command\":\"pull\",\"data\":{{\"game\":\"uncharted-2-slot-1\",\"action\":\"pulled\"}}}}' ;;\n  push) echo '{{\"ok\":true,\"command\":\"push\",\"data\":{{\"game\":\"uncharted-2-slot-1\",\"action\":\"pushed\"}}}}' ;;\nesac\n",
+            dir.path().join("relay.calls").display()
+        ),
+        "#!/bin/sh\nexit 0\n".to_owned(),
+    );
+    #[cfg(windows)]
+    let (relay_name, run_name, relay_body, run_body) = (
+        "save-relay.exe",
+        "uncharted-run.exe",
+        // Not executed on Windows without a PE binary; covered by tests/windows_relay.py.
+        String::new(),
+        String::new(),
+    );
+
+    if cfg!(unix) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let relay_path = bin.join(relay_name);
+            let run_path = bin.join(run_name);
+            fs::write(&relay_path, relay_body).unwrap();
+            fs::write(&run_path, run_body).unwrap();
+            fs::set_permissions(&relay_path, fs::Permissions::from_mode(0o755)).unwrap();
+            fs::set_permissions(&run_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+            let mut ctx = home(dir.path());
+            ctx.os = Os::Linux;
+            ctx.exe = bin.join("uncharted-universal");
+            let out = exec(&["play", "u2"], &ctx);
+            assert_eq!(out.code, OK, "{}", out.stderr);
+            assert!(out.stdout.contains("before play: downloaded saves"));
+            assert!(out.stdout.contains("after play: uploaded saves"));
+            assert!(!out.stdout.contains("no Save Relay"));
+            let calls = fs::read_to_string(dir.path().join("relay.calls")).unwrap();
+            let lines: Vec<_> = calls.lines().collect();
+            assert_eq!(lines.len(), 2);
+            assert!(lines[0].starts_with("pull uncharted-2 "));
+            assert!(lines[1].starts_with("push uncharted-2 "));
+        }
+    } else {
+        let _ = (relay_name, run_name, relay_body, run_body);
+    }
+}
