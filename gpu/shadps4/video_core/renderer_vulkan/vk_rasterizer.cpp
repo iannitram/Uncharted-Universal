@@ -13,7 +13,7 @@
 #include "core/libraries/videoout/driver.h"
 #include <xxhash.h>
 #include "video_core/renderer_vulkan/ui_composition.h"
-#include "../../../bbgpu.h"
+#include "bbgpu.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"

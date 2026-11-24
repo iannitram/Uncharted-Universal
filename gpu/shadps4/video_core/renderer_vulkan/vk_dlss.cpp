@@ -17,12 +17,12 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include "../../../dlss_bridge/bbport_dlss_bridge.h"
+#include "dlss_bridge/bbport_dlss_bridge.h"
 #elif defined(__linux__)
 // Linux: the same bridge built as libbbport_dlss.so against the DLSS SDK's Linux libraries
 // (libnvsdk_ngx.a and libnvidia-ngx-dlss.so.<version>, github.com/NVIDIA/DLSS).
 #include <dlfcn.h>
-#include "../../../dlss_bridge/bbport_dlss_bridge.h"
+#include "dlss_bridge/bbport_dlss_bridge.h"
 #define BB_DLSS_BRIDGE 1
 #endif
 #ifdef _WIN32

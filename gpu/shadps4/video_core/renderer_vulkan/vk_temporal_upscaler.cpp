@@ -4,7 +4,7 @@
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/ui_composition.h"
-#include "../../../bbgpu.h"
+#include "bbgpu.h"
 
 #include <algorithm>
 #include <cmath>
