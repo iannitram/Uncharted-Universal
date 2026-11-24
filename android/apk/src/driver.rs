@@ -38,7 +38,9 @@ pub fn classify_android_gpu(vendor_id: u32, device_or_driver_name: &str) -> Andr
     {
         return AndroidGpuFamily::Adreno;
     }
-    if contains_ascii_case_insensitive(device_or_driver_name, "mali") {
+    if contains_ascii_case_insensitive(device_or_driver_name, "mali")
+        || contains_ascii_case_insensitive(device_or_driver_name, "immortalis")
+    {
         return AndroidGpuFamily::Mali;
     }
     AndroidGpuFamily::Unknown
@@ -245,6 +247,13 @@ impl TurnipDriverConfig {
                     reported: reported.to_owned(),
                 });
             }
+        } else if !self.expected_driver_name.is_empty()
+            && !contains_ascii_case_insensitive(reported, &self.expected_driver_name)
+        {
+            return Err(DriverValidationError::DriverIdentityMismatch {
+                expected: self.expected_driver_name.clone(),
+                reported: reported.to_owned(),
+            });
         }
         Ok(())
     }
@@ -780,5 +789,81 @@ mod tests {
             ))
         );
         assert_eq!(no_dyn_probe.close_calls, 1);
+
+        // Missing synchronization2, timelineSemaphore, bufferDeviceAddress, swapchain, or non-Mali vendor fail closed.
+        for (mut caps, expected_substr) in [
+            (
+                MaliVulkanCaps {
+                    synchronization2: false,
+                    ..valid_mali_g710_caps()
+                },
+                "synchronization2",
+            ),
+            (
+                MaliVulkanCaps {
+                    timeline_semaphore: false,
+                    ..valid_mali_g710_caps()
+                },
+                "timelineSemaphore",
+            ),
+            (
+                MaliVulkanCaps {
+                    buffer_device_address: false,
+                    ..valid_mali_g710_caps()
+                },
+                "bufferDeviceAddress",
+            ),
+            (
+                MaliVulkanCaps {
+                    swapchain_extension: false,
+                    ..valid_mali_g710_caps()
+                },
+                "VK_KHR_swapchain",
+            ),
+        ] {
+            let mut p = MockProbe {
+                allow_system: true,
+                reported_driver: Some("Mali-G710".to_owned()),
+                mali_caps: Some(Ok(caps.clone())),
+                ..MockProbe::default()
+            };
+            let err = open_validated_driver(&mali_cfg, &mut p).unwrap_err();
+            assert!(
+                matches!(err, DriverValidationError::MaliUnsupportedCapability(ref msg) if msg.contains(expected_substr)),
+                "unexpected error for {expected_substr}: {err:?}"
+            );
+            assert_eq!(p.close_calls, 1);
+            caps.vendor_id = VENDOR_ID_QUALCOMM;
+            caps.driver_name = "Adreno 750".to_owned();
+            assert!(matches!(
+                caps.validate(),
+                Err(DriverValidationError::MaliUnsupportedCapability(_))
+            ));
+        }
+
+        // system_mali() fails closed if an Adreno driver is reported.
+        let mut adreno_on_mali_probe = MockProbe {
+            allow_system: true,
+            reported_driver: Some("Qualcomm Adreno 750".to_owned()),
+            ..MockProbe::default()
+        };
+        assert_eq!(
+            open_validated_driver(&mali_cfg, &mut adreno_on_mali_probe).unwrap_err(),
+            DriverValidationError::DriverIdentityMismatch {
+                expected: "mali".to_owned(),
+                reported: "Qualcomm Adreno 750".to_owned(),
+            }
+        );
+        assert_eq!(adreno_on_mali_probe.close_calls, 1);
+
+        // Immortalis and Freedreno/Turnip string classification.
+        assert_eq!(
+            classify_android_gpu(0, "Immortalis-G715"),
+            AndroidGpuFamily::Mali
+        );
+        assert_eq!(
+            classify_android_gpu(0, "Turnip Adreno 740"),
+            AndroidGpuFamily::Adreno
+        );
     }
 }
