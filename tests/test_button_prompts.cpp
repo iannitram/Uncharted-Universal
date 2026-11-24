@@ -9,6 +9,7 @@
 
 #include "video_core/texture_cache/button_prompts.h"
 
+#ifndef TEST_LINK_BBGPU
 #ifdef BB_FONT_PATH
 asm(".section .rodata\n"
     ".balign 16\n"
@@ -18,6 +19,7 @@ asm(".section .rodata\n"
     ".previous\n");
 #else
 extern "C" const unsigned char bb_font_ttf[1] = {0};
+#endif
 #endif
 
 using VideoCore::ButtonPrompts::Find;

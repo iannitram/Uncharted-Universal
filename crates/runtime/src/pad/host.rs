@@ -27,8 +27,7 @@ pub mod axis {
 pub type PadId = u32;
 
 /// The device values [`Host::prompts_controller`] takes: 0 keyboard, 1 PlayStation, 2 Xbox,
-/// 3 Nintendo (Switch Pro and Joy-Con). The GPU side shows Nintendo as Xbox until #439 adds
-/// its pictures, but keeps the family so the launcher can tell them apart.
+/// 3 Nintendo (Switch Pro and Joy-Con).
 pub const PROMPTS_KEYBOARD: i32 = 0;
 pub const PROMPTS_PLAYSTATION: i32 = 1;
 pub const PROMPTS_XBOX: i32 = 2;
