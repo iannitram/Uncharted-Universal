@@ -53,6 +53,19 @@ pub fn configure_fault_hooks(hooks: FaultHooks) {
     );
 }
 
+/// Registers only the benchmark crash flush hook without overwriting the GPU/recovery hooks.
+pub fn configure_benchmark_crash(hook: Option<unsafe extern "C" fn()>) {
+    BENCHMARK_CRASH_FN.store(hook.map_or(0, |f| f as usize), Ordering::Release);
+}
+
+unsafe fn run_benchmark_crash_hook() {
+    let bench_ptr = BENCHMARK_CRASH_FN.load(Ordering::Acquire);
+    if bench_ptr != 0 {
+        let f: unsafe extern "C" fn() = unsafe { std::mem::transmute(bench_ptr) };
+        unsafe { f() };
+    }
+}
+
 /// Returns the configured `(image_base, exe_base, gpu_enabled)` tuple.
 pub fn fault_context() -> (u64, u64, bool) {
     (
@@ -423,11 +436,7 @@ pub mod linux {
                     f(context);
                 }
             }
-            let bench_ptr = BENCHMARK_CRASH_FN.load(Ordering::Acquire);
-            if bench_ptr != 0 {
-                let f: unsafe extern "C" fn() = std::mem::transmute(bench_ptr);
-                f();
-            }
+            run_benchmark_crash_hook();
             libc::_exit(128 + sig);
         }
     }
@@ -456,6 +465,7 @@ pub mod linux {
             }
             signal_other_threads_dump();
             crash::report_signal_safe(crash::CrashKind::Exception, "watchdog", "watchdog timeout");
+            run_benchmark_crash_hook();
             libc::usleep(100_000);
             libc::_exit(128 + sig);
         }
@@ -809,11 +819,7 @@ pub mod windows {
                 }
             }
         }
-        let bench_ptr = BENCHMARK_CRASH_FN.load(Ordering::Acquire);
-        if bench_ptr != 0 {
-            let f: unsafe extern "C" fn() = unsafe { std::mem::transmute(bench_ptr) };
-            unsafe { f() };
-        }
+        unsafe { run_benchmark_crash_hook() };
         unsafe { TerminateProcess(GetCurrentProcess(), 3) };
         EXCEPTION_CONTINUE_SEARCH
     }
@@ -841,6 +847,20 @@ mod tests {
             FAULT_RECOVER_FN.load(Ordering::Acquire),
             dummy_recover as *const () as usize
         );
+
+        extern "C" fn dummy_bench_crash() {}
+        configure_benchmark_crash(Some(dummy_bench_crash));
+        assert_eq!(
+            FAULT_RECOVER_FN.load(Ordering::Acquire),
+            dummy_recover as *const () as usize
+        );
+        assert_eq!(
+            BENCHMARK_CRASH_FN.load(Ordering::Acquire),
+            dummy_bench_crash as *const () as usize
+        );
+        configure_benchmark_crash(None);
+        assert_eq!(BENCHMARK_CRASH_FN.load(Ordering::Acquire), 0);
+
         configure_fault_hooks(FaultHooks::default());
         configure_fault_context(0, 0, false);
     }
@@ -931,7 +951,13 @@ mod tests {
         assert!(libc::WIFEXITED(status2));
         assert_eq!(libc::WEXITSTATUS(status2), 0);
 
-        // 3. Fatal SIGSEGV emits exactly one `Crash: kind=fault ...` line on stderr and exits 128+11.
+        // 3. Fatal SIGSEGV emits exactly one `Crash: kind=fault ...` line on stderr, invokes
+        //    the benchmark crash hook, and exits 128+11.
+        extern "C" fn on_bench_crash() {
+            unsafe {
+                libc::write(2, b"BENCH_CRASH_CALLED\n".as_ptr().cast(), 19);
+            }
+        }
         let mut pipefd = [0 as libc::c_int; 2];
         assert_eq!(unsafe { libc::pipe(pipefd.as_mut_ptr()) }, 0);
         let pid3 = unsafe { libc::fork() };
@@ -943,6 +969,7 @@ mod tests {
                 libc::close(pipefd[1]);
                 configure_fault_context(0x1000_0000, 0, false);
                 configure_fault_hooks(FaultHooks::default());
+                configure_benchmark_crash(Some(on_bench_crash));
                 linux::install_handlers();
                 let null_ptr = 0x10usize as *const u8;
                 let _ = std::ptr::read_volatile(null_ptr);
@@ -972,6 +999,10 @@ mod tests {
             crash_lines[0].starts_with("Crash: kind=fault where="),
             "unexpected crash line: {}",
             crash_lines[0]
+        );
+        assert!(
+            stderr.contains("BENCH_CRASH_CALLED"),
+            "expected benchmark crash hook output, got:\n{stderr}"
         );
         assert!(uncharted_core::logs::crash_line(&stderr).is_some());
     }
