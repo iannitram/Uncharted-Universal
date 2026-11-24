@@ -10,7 +10,7 @@
 #include <cstring>
 
 #include "bbport_toggles.h"
-#include "../../../bbgpu.h"
+#include "bbgpu.h"
 
 #include "video_core/host_shaders/camera_motion_comp.h"
 #include "video_core/host_shaders/camera_motion_debug_comp.h"
