@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 #include "bbport_threads.h"
+#include "bbport_toggles.h"
 #include "common/hash.h"
 #include "common/thread.h"
 #include "common/io_file.h"
@@ -560,6 +561,9 @@ struct CompileTimer {
         if (!worker) {
             g_bb_compile_ns += ns;
             ++g_bb_compiles;
+        } else {
+            BbStats::worker_compile_ns.fetch_add(ns, std::memory_order_relaxed);
+            BbStats::worker_compiles.fetch_add(1, std::memory_order_relaxed);
         }
         g_last_compile_ms.store(NowMs(), std::memory_order_relaxed);
         static const bool log = std::getenv("BB_COMPILE_LOG") != nullptr;

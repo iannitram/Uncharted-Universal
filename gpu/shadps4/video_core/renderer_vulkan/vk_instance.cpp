@@ -7,6 +7,7 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
+#include "bbport_diag.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/types.h"
@@ -200,6 +201,28 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 
     CreateDevice();
     CollectPhysicalMemoryInfo();
+    {
+        const VkPhysicalDeviceMemoryProperties raw_mem = memory_properties;
+        const bbport::GpuCapsSummary caps{
+            .vendor_id = properties.vendorID,
+            .device_id = properties.deviceID,
+            .driver_id = static_cast<u32>(driver_id),
+            .subgroup_size = vk11_props.subgroupSize,
+            .subgroup_64 = CanRequireSubgroupSize64(vk::ShaderStageFlagBits::eCompute),
+            .vertex_input_dynamic = vertex_input_dynamic_state,
+            .barycentric = fragment_shader_barycentric,
+            .dynamic_color_write_mask = IsDynamicColorWriteMaskSupported(),
+            .max_push_descriptors = push_descriptor_props.maxPushDescriptors,
+            .gfx_queue_family = queue_family_index,
+            .side_queue_family = side_queue_family_index,
+            .sparse_queue_family = sparse_queue_family_index,
+            .host_visible_vram_mib = bbport::HostVisibleDeviceLocalBytes(raw_mem) >> 20,
+            .memory_budget_mib = total_memory_budget >> 20,
+            .vram_legacy = Vram::Legacy(),
+        };
+        std::printf("%s\n", bbport::FormatGpuCapsSummary(caps).c_str());
+        std::fflush(stdout);
+    }
     CollectImageFormatInfo();
     CollectToolingInfo();
 }

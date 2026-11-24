@@ -235,4 +235,8 @@ inline std::atomic<std::uint64_t> gpu_signal_faults{0};
 /// Protection changes: calls and pages, those removing write access (TLB shootdowns) apart.
 inline std::atomic<std::uint64_t> protect_calls{0}, protect_pages{0}, protect_revoke_calls{0},
     protect_revoke_pages{0};
+/// Wall time spent in swapchain acquire + present (ns, BB_FRAME_STATS).
+inline std::atomic<std::uint64_t> present_wait_ns{0};
+/// Draw-prep worker shader/pipeline compiles (count and total thread-ns, BB_FRAME_STATS).
+inline std::atomic<std::uint64_t> worker_compiles{0}, worker_compile_ns{0};
 } // namespace BbStats
