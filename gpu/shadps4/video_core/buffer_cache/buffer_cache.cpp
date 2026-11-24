@@ -2425,7 +2425,6 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
         .pSignalSemaphores = &signal_sema,
     };
 
-    info.AddWait(signal_sema, signal_tick);
     // bbport: BB_SPARSE_IDLE=1: the arena's page mappings change only while the GPU runs none of
     // the work submitted before (diagnosis of device-lost faults in freshly bound memory).
     static const bool sparse_idle = [] {
@@ -2467,12 +2466,12 @@ void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
         }
     }
 
-    pending_binds.clear();
-    // bbport (ReclaimArenaMemory): memory whose unbinds are now submitted may be bound elsewhere.
-    if (has_pending_unbinds) {
-        has_pending_unbinds = false;
-        free_runs.insert(free_runs.end(), quarantined_runs.begin(), quarantined_runs.end());
-        quarantined_runs.clear();
+    // Only wait on `signal_sema` and retire `quarantined_runs` if `bindSparse` succeeded;
+    // otherwise `signal_tick` is never signaled and the graphics queue would stall forever.
+    if (FinishSparseBindSubmission(submit_result == vk::Result::eSuccess, info, signal_sema,
+                                   signal_tick, has_pending_unbinds, free_runs,
+                                   quarantined_runs)) {
+        pending_binds.clear();
     }
 }
 

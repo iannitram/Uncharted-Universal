@@ -78,4 +78,25 @@ inline u16 ComputeProbationEpochs(u16 age_epochs, bool disabled) {
     return disabled ? u16(0) : std::max<u16>(3, age_epochs / 4);
 }
 
+/// Finalizes a sparse bind/unbind submission: only adds the timeline wait on `signal_sema` and
+/// retires `quarantined_runs` into `free_runs` when `bind_succeeded` is true. Adding the wait
+/// after a failed `bindSparse` would stall the graphics queue on an unsignaled semaphore.
+template <typename SubmitInfoT>
+inline bool FinishSparseBindSubmission(bool bind_succeeded, SubmitInfoT& info,
+                                       vk::Semaphore signal_sema, u64 signal_tick,
+                                       bool& has_pending_unbinds,
+                                       std::vector<FreeArenaRun>& free_runs,
+                                       std::vector<FreeArenaRun>& quarantined_runs) {
+    if (!bind_succeeded) {
+        return false;
+    }
+    info.AddWait(signal_sema, signal_tick);
+    if (has_pending_unbinds) {
+        has_pending_unbinds = false;
+        free_runs.insert(free_runs.end(), quarantined_runs.begin(), quarantined_runs.end());
+        quarantined_runs.clear();
+    }
+    return true;
+}
+
 } // namespace VideoCore
