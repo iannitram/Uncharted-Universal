@@ -6,15 +6,13 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 use uncharted_core::games::Game;
-use uncharted_core::hub::{self, SystemClock, TcpTransport};
+use uncharted_core::hub;
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::prepare::PrepareOptions;
 use uncharted_core::setup::{self, client};
 
 /// How long discovery listens for hubs.
 const DISCOVER_MS: u64 = 1_500;
-/// How long a connection to a hub may take to open.
-const CONNECT: Duration = Duration::from_secs(10);
 /// How often the bytes of a pull are counted.
 const PULL_POLL: Duration = Duration::from_millis(500);
 /// How long Steam gets to quit.
@@ -100,16 +98,13 @@ pub(crate) fn run_with_relay(
             let (done_tx, done_rx) = std::sync::mpsc::channel();
             std::thread::scope(|scope| {
                 scope.spawn(|| {
-                    let result = TcpTransport::connect(hub.addr, CONNECT).and_then(|mut t| {
-                        client::pair_and_pull(
-                            &mut t,
-                            &hub.name,
-                            &code,
-                            &cx.dirs,
-                            cx.os,
-                            &SystemClock,
-                        )
-                    });
+                    let result = client::pair_and_pull_service(
+                        hub.addr,
+                        &code,
+                        &setup::device_name(cx.env),
+                        &cx.dirs,
+                        cx.os,
+                    );
                     let _ = done_tx.send(result.map_err(|e| message(&e)));
                 });
                 loop {

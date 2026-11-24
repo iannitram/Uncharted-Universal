@@ -3,7 +3,7 @@
 //! what is ours or made from ours: the runtime libraries, the settings, the shader translations.
 //! What is derived from the game (the program built from the recompiled code, and the game's
 //! data folder) is never in a bundle (SPEC.md M9, "Implementation decisions"). Issue #189's
-//! separate paired transfer of those files is not implemented by this module.
+//! separate paired transfer of those files lives in `crate::hub` (`serve_game`/`pull_game`).
 //! `is_forbidden` is checked for every file, and a test enforces it. New module; the text
 //! format and the flow are copied from iannitram/totk-native's `bundle.rs` (MIT).
 

@@ -133,6 +133,61 @@ fn one_listener_pairs_a_device_and_then_serves_it_the_newest_build() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(not(windows))]
+#[test]
+fn one_listener_serves_prepared_game_data_only_to_paired_devices() {
+    use uncharted_core::hub::{pair_with_service, pull_game_from_service, Served};
+
+    let root = scratch("game-data");
+    let game_data = root.join("installs");
+    write(&game_data, "u1/install.json", b"{\"game\":\"u1\"}\n");
+    write(&game_data, "u1/boot.bin", b"BBPROBE2 synthetic");
+    write(&game_data, "u1/saves/keep", b"hub save");
+    let (hub, listener) = service(&root);
+    let mut hub = hub.with_game_data(&game_data);
+    let addr = listener.local_addr().unwrap();
+    let device_peers = root.join("device/peers.json");
+    let staged = root.join("staged");
+
+    let hub_thread =
+        std::thread::spawn(move || (0..4).map(|_| hub.accept(&listener)).collect::<Vec<_>>());
+    let hub_record = pair_with_service(addr, "482-913", "handheld", &device_peers).unwrap();
+    let stranger = pull_game_from_service(addr, &hub_record, "stranger", Os::Linux, &staged);
+    assert_eq!(
+        message(stranger.unwrap_err()),
+        "test-hub does not know this device as stranger; pair with it again"
+    );
+    let windows = pull_game_from_service(addr, &hub_record, "handheld", Os::Windows, &staged);
+    assert_eq!(
+        message(windows.unwrap_err()),
+        "test-hub has no prepared game data ready for windows"
+    );
+    let bytes = pull_game_from_service(addr, &hub_record, "handheld", Os::Linux, &staged).unwrap();
+    assert!(bytes > 0);
+    assert_eq!(
+        fs::read(staged.join("u1/boot.bin")).unwrap(),
+        b"BBPROBE2 synthetic"
+    );
+    assert!(!staged.join("u1/saves/keep").exists());
+
+    let mut served = hub_thread.join().unwrap().into_iter();
+    assert!(matches!(
+        served.next(),
+        Some(Ok(Served::Paired(peer))) if peer.device == "handheld"
+    ));
+    assert!(message(served.next().unwrap().unwrap_err()).contains("not paired with this hub"));
+    assert!(message(served.next().unwrap().unwrap_err()).contains("does not serve"));
+    assert_eq!(
+        served.next().unwrap().unwrap(),
+        Served::SentGame {
+            device: "handheld".into(),
+            target: Os::Linux,
+            bytes,
+        }
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
 #[cfg(windows)]
 #[test]
 fn on_windows_the_service_stores_nothing_and_serves_nothing() {

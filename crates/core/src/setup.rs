@@ -448,13 +448,38 @@ pub mod client {
             .map(|e| e.to_string());
         let staged = staging(dirs);
         let bytes = hub::pull_game(t, &peer, target, &staged)?;
-        let games = install_all_pulled(&staged, dirs)?;
+        install_staged_games(&staged, dirs, bytes, peer_note)
+    }
+
+    /// Pair with a [`hub::HubService`] at `hub`, pull the prepared games for `target` into
+    /// `staged` (`hub::pull_game_from_service`) and install each (`install_all_pulled`).
+    pub fn pair_and_pull_service(
+        hub: SocketAddr,
+        code: &str,
+        own_name: &str,
+        dirs: &AppDirs,
+        target: Os,
+    ) -> Result<Pulled> {
+        let code = super::pairing_code(code)?;
+        let peer = hub::pair_with_service(hub, &code, own_name, &peers_file(dirs))?;
+        let staged = staging(dirs);
+        let bytes = hub::pull_game_from_service(hub, &peer, own_name, target, &staged)?;
+        install_staged_games(&staged, dirs, bytes, None)
+    }
+
+    fn install_staged_games(
+        staged: &Path,
+        dirs: &AppDirs,
+        bytes: u64,
+        peer_note: Option<String>,
+    ) -> Result<Pulled> {
+        let games = install_all_pulled(staged, dirs)?;
         if games.is_empty() {
             return Err(Error::Hub(
                 "the hub sent no prepared game; prepare the games on the hub first".into(),
             ));
         }
-        let _ = std::fs::remove_dir_all(&staged);
+        let _ = std::fs::remove_dir_all(staged);
         Ok(Pulled {
             games,
             bytes,
