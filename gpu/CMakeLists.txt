@@ -514,6 +514,11 @@ set_source_files_properties(../tests/test_button_prompts.cpp PROPERTIES
 target_link_libraries(button-prompts-test PRIVATE bbgpu)
 add_dependencies(button-prompts-test host_shaders)
 
+add_executable(shader-preload-test EXCLUDE_FROM_ALL ../tests/test_shader_preload.cpp)
+target_include_directories(shader-preload-test PRIVATE shim shadps4)
+target_compile_options(shader-preload-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_link_libraries(shader-preload-test PRIVATE fmt::fmt)
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)

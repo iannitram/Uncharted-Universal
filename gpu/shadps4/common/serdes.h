@@ -56,6 +56,10 @@ struct Archive {
         return offset >= container.size();
     }
 
+    [[nodiscard]] size_t Remaining() const {
+        return offset <= container.size() ? container.size() - offset : 0;
+    }
+
     Archive() = default;
     explicit Archive(std::vector<u8>&& v) : container{v} {}
 
@@ -103,6 +107,58 @@ struct Writer {
 };
 
 struct Reader {
+    [[nodiscard]] bool CanRead(size_t size) const {
+        return ar.Remaining() >= size;
+    }
+
+    template <typename T>
+    [[nodiscard]] bool TryRead(T* ptr, size_t size) {
+        if (!CanRead(size)) {
+            return false;
+        }
+        std::memcpy(reinterpret_cast<void*>(ptr), ar.CurrPtr(), size);
+        ar.Advance(size);
+        return true;
+    }
+
+    template <typename T>
+        requires(!Container<T>)
+    [[nodiscard]] bool TryRead(T& value) {
+        return TryRead(&value, sizeof(value));
+    }
+
+    [[nodiscard]] bool TryRead(Container auto& v) {
+        size_t num_elements{};
+        if (!TryRead(num_elements)) {
+            return false;
+        }
+        using ValueType = typename std::remove_reference_t<decltype(v)>::value_type;
+        if constexpr (!Container<ValueType>) {
+            if (num_elements > ar.Remaining() / (sizeof(ValueType) ? sizeof(ValueType) : 1)) {
+                return false;
+            }
+        } else if (num_elements > ar.Remaining()) {
+            return false;
+        }
+        v.clear();
+        for (size_t i = 0; i < num_elements; ++i) {
+            v.emplace_back();
+            if (!TryRead(v.back())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool TryRead(std::string& s) {
+        size_t length{};
+        if (!TryRead(length) || !CanRead(length)) {
+            return false;
+        }
+        s.resize(length);
+        return TryRead(s.data(), length);
+    }
+
     template <typename T>
     void Read(T* ptr, size_t size) {
         ASSERT_MSG(ar.offset + size <= ar.container.size(),

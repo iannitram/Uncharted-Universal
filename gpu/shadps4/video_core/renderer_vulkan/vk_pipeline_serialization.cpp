@@ -24,6 +24,8 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "bbport_focus_fix.h"
+#include "bbport_shader_preload.h"
+#include "common/elf_info.h"
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
@@ -130,21 +132,24 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
     Serialization::Reader meta{ar};
 
     u32 meta_version{};
-    meta.Read(meta_version);
-    if (meta_version != Serialization::ShaderMetaVersion) {
+    if (!meta.TryRead(meta_version) || meta_version != Serialization::ShaderMetaVersion) {
         return false;
     }
 
     u32 binary_version{};
-    meta.Read(binary_version);
-    if (binary_version != Serialization::ShaderBinaryVersion) {
+    if (!meta.TryRead(binary_version) || binary_version != Serialization::ShaderBinaryVersion) {
         return false;
     }
 
     u64 perm_hash_ar{};
-    meta.Read(perm_hash_ar);
-    meta.Read(perm_idx);
+    if (!meta.TryRead(perm_hash_ar) || !meta.TryRead(perm_idx)) {
+        return false;
+    }
 
+    if (!meta.CanRead(sizeof(Shader::StageSpecialization::bitset) +
+                      sizeof(Shader::StageSpecialization::runtime_info))) {
+        return false;
+    }
     spec.Deserialize(ar);
     info.Deserialize(ar);
 
@@ -159,8 +164,7 @@ void ComputePipelineKey::Serialize(Serialization::Archive& ar) const {
 
 bool ComputePipelineKey::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader key{ar};
-    key.Read(value);
-    return true;
+    return key.TryRead(value);
 }
 
 void ComputePipeline::SerializationSupport::Serialize(Serialization::Archive& ar) const {
@@ -182,8 +186,7 @@ void GraphicsPipelineKey::Serialize(Serialization::Archive& ar) const {
 bool GraphicsPipelineKey::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader key{ar};
 
-    key.Read(this, sizeof(*this));
-    return true;
+    return key.TryRead(this, sizeof(*this));
 }
 
 void GraphicsPipeline::SerializationSupport::Serialize(Serialization::Archive& ar) const {
@@ -200,13 +203,10 @@ void GraphicsPipeline::SerializationSupport::Serialize(Serialization::Archive& a
 bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive& ar) {
     Serialization::Reader sdata{ar};
 
-    sdata.Read(&vertex_attributes, sizeof(vertex_attributes));
-    sdata.Read(&vertex_bindings, sizeof(vertex_bindings));
-    sdata.Read(&divisors, sizeof(divisors));
-    sdata.Read(multisampling);
-    sdata.Read(tcs);
-    sdata.Read(tes);
-    return true;
+    return sdata.TryRead(&vertex_attributes, sizeof(vertex_attributes)) &&
+           sdata.TryRead(&vertex_bindings, sizeof(vertex_bindings)) &&
+           sdata.TryRead(&divisors, sizeof(divisors)) && sdata.TryRead(multisampling) &&
+           sdata.TryRead(tcs) && sdata.TryRead(tes);
 }
 
 namespace {
@@ -294,18 +294,35 @@ void PipelineCache::WarmUpThread() {
     };
 
     // Check if cache is compatible: the shader profile (what the translator was told about the
-    // GPU) and the GPU it was written by must both be the current ones.
+    // GPU), the GPU/driver identity, game revision, shader versions, and feature flags must match.
     std::vector<u8> profile_data{};
     db.Load(Storage::BlobType::ShaderProfile, "profile", profile_data);
     std::vector<u8> device_data{};
     db.Load(Storage::BlobType::ShaderProfile, "device", device_data);
+    std::vector<u8> identity_data{};
+    db.Load(Storage::BlobType::ShaderProfile, "identity", identity_data);
     const auto& device_tag = db.DeviceTag();
+    const auto& elf_info = Common::ElfInfo::Instance();
+    BbShaderPreload::CacheIdentity current_identity{
+        .meta_version = Serialization::ShaderMetaVersion,
+        .binary_version = Serialization::ShaderBinaryVersion,
+        .pipeline_key_version = Serialization::PipelineKeyVersion,
+        .vendor_id = instance.GetVendorID(),
+        .device_id = instance.GetDeviceID(),
+        .driver_id = static_cast<u32>(instance.GetDriverID()),
+        .driver_version = instance.GetDriverVersion(),
+        .pipeline_cache_uuid = instance.GetPipelineCacheUUID(),
+        .feature_flags = BbShaderPreload::CurrentFeatureFlags(),
+        .game_serial = std::string{elf_info.GameSerial()},
+        .app_ver = std::string{elf_info.AppVer()},
+    };
     const auto write_profile = [&] {
         profile_data.resize(sizeof(profile));
         std::memcpy(profile_data.data(), &profile, sizeof(profile));
         db.Save(Storage::BlobType::ShaderProfile, "profile", std::move(profile_data));
         db.Save(Storage::BlobType::ShaderProfile, "device",
                 std::vector<u8>(device_tag.begin(), device_tag.end()));
+        db.Save(Storage::BlobType::ShaderProfile, "identity", current_identity.Serialize());
     };
     bool compatible = true;
     if (profile_data.empty()) {
@@ -326,13 +343,19 @@ void PipelineCache::WarmUpThread() {
         const bool same_device = device_data.size() == device_tag.size() &&
                                  std::equal(device_data.begin(), device_data.end(),
                                             device_tag.begin());
+        BbShaderPreload::CacheIdentity cached_identity{};
+        std::string mismatch_reason;
+        const bool identity_ok =
+            !identity_data.empty() && cached_identity.Deserialize(std::move(identity_data)) &&
+            cached_identity.Matches(current_identity, mismatch_reason);
         if (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile ||
-            !same_device) {
+            !same_device || !identity_ok) {
             // bbport: upstream closed the cache for the session here, so it was never rewritten
             // and every later session compiled every shader again (stutters on each new area).
             // Start a fresh cache for this build and GPU instead.
             LOG_WARNING(Render,
-                        "Pipeline cache isn't compatible with current system: rebuilding it");
+                        "Pipeline cache isn't compatible with current system ({}): rebuilding it",
+                        mismatch_reason.empty() ? "profile or device mismatch" : mismatch_reason);
             db.Clear();
             db.FinishPreload();
             write_profile();
@@ -340,6 +363,8 @@ void PipelineCache::WarmUpThread() {
         }
     }
     if (!compatible) {
+        warm_progress.Reset(0);
+        warm_progress.done.store(true, std::memory_order_release);
         warm_done.store(true, std::memory_order_release);
         warm_done.notify_all();
         return;
@@ -506,18 +531,25 @@ void PipelineCache::WarmUpThread() {
     // pointed at the programs' Infos.
     std::atomic<u32> num_pipelines{0};
     ParallelFor(stored.size(), threads, [&](size_t i) {
+        if (warm_progress.IsCancelled()) {
+            return;
+        }
         auto& entry = stored[i];
         if (!entry.parsed) {
+            warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         if (entry.compute) {
             const auto it = by_hash.find(entry.ckey.value);
             if (it == by_hash.end() || !it->second->ready) {
+                warm_progress.skipped_entries.fetch_add(1, std::memory_order_relaxed);
+                warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
             {
                 std::shared_lock lock{pipelines_mutex};
                 if (compute_pipelines.contains(entry.ckey)) {
+                    warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
                     return;
                 }
             }
@@ -527,11 +559,17 @@ void PipelineCache::WarmUpThread() {
             // bbport: a cached pipeline the driver cannot create (a new driver, or one saved by
             // a build that stopped on it) is compiled again when the game uses it.
             if (!pipeline->IsValid()) {
+                warm_progress.failed_entries.fetch_add(1, std::memory_order_relaxed);
+                warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
             pipeline->RebindStage(&it->second->owner->info);
             std::unique_lock lock{pipelines_mutex};
-            num_pipelines += compute_pipelines.try_emplace(entry.ckey, std::move(pipeline)).second;
+            if (compute_pipelines.try_emplace(entry.ckey, std::move(pipeline)).second) {
+                num_pipelines.fetch_add(1, std::memory_order_relaxed);
+                warm_progress.warmed_pipelines.fetch_add(1, std::memory_order_relaxed);
+            }
+            warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         std::array<const Shader::Info*, MaxShaderStages> infos{};
@@ -582,16 +620,22 @@ void PipelineCache::WarmUpThread() {
             no_runtime_infos, fetch_shader, modules, entry.gsdata, true);
         if (!pipeline->IsValid()) { // bbport: as for compute pipelines
             ReleaseClaim(claim_id);
+            warm_progress.failed_entries.fetch_add(1, std::memory_order_relaxed);
+            warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         pipeline->RebindStages(program_infos);
         {
             std::unique_lock lock{pipelines_mutex};
-            num_pipelines +=
-                graphics_pipelines.try_emplace(entry.gkey, std::move(pipeline)).second;
+            if (graphics_pipelines.try_emplace(entry.gkey, std::move(pipeline)).second) {
+                num_pipelines.fetch_add(1, std::memory_order_relaxed);
+                warm_progress.warmed_pipelines.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         ReleaseClaim(claim_id);
+        warm_progress.completed_entries.fetch_add(1, std::memory_order_relaxed);
     });
+    warm_progress.done.store(true, std::memory_order_release);
     const u32 num_total_pipelines = static_cast<u32>(stored.size());
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines.load());
     if (num_total_pipelines > num_pipelines.load()) {

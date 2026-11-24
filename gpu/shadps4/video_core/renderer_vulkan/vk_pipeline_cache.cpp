@@ -429,6 +429,7 @@ bool PipelineCache::DriverCacheHeaderMatches(const std::vector<char>& data) cons
 
 PipelineCache::~PipelineCache() {
     g_exit_pipeline_cache = nullptr;
+    warm_progress.RequestCancel();
     if (warm_thread.joinable()) {
         warm_thread.join();
     }
@@ -514,6 +515,7 @@ void PipelineCache::DriverCacheSaver(std::stop_token stop) {
 }
 
 void PipelineCache::SaveForExit() {
+    warm_progress.RequestCancel();
     Storage::DataBase::Instance().Flush(3000);
     if (driver_cache_dirty.load() != 0 && IsWarm()) {
         SaveDriverCache();
