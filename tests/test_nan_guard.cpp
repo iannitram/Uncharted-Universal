@@ -17,7 +17,8 @@
 #include "shader_recompiler/ir/program.h"
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
-#include "video_core/amdgpu/types.h"
+#include "video_core/amdgpu/pixel_format.h"
+#include "video_core/amdgpu/regs_shader.h"
 
 namespace {
 
@@ -48,8 +49,12 @@ std::vector<u32> EmitComputeImageWrite(AmdGpu::NumberFormat nfmt) {
     runtime.Initialize(HwStage::Compute, SwStage::Compute);
     runtime.hw.cs.workgroup_size = {64, 1, 1};
 
+    AmdGpu::Image tsharp = AmdGpu::Image::Null(false);
+    tsharp.num_format = u64(nfmt);
     ImageResource img{};
-    img.nfmt = nfmt;
+    img.sharp_fetch.offsets.fill(0);
+    img.sharp_fetch.load_mask = 0;
+    std::memcpy(img.sharp_fetch.immediates.data(), &tsharp, sizeof(tsharp));
     img.is_written = true;
     info.images.push_back(img);
 
@@ -82,8 +87,7 @@ std::vector<u32> EmitFragmentMrtWrite() {
     info.hw_stage = HwStage::Fragment;
     RuntimeInfo runtime{};
     runtime.Initialize(HwStage::Fragment, SwStage::Fragment);
-    runtime.hw.fs.num_color_buffers = 1;
-    runtime.hw.fs.color_buffers[0].export_format = AmdGpu::ExportFormat::R16G16B16A16_FLOAT;
+    runtime.hw.fs.color_buffers[0].export_format = AmdGpu::ShaderExportFormat::ABGR_FP16;
 
     Profile profile{};
     Common::ObjectPool<IR::Inst> inst_pool;

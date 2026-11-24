@@ -445,7 +445,6 @@ target_link_libraries(vram-fallback-test PRIVATE bbgpu)
 
 add_executable(vram-probation-test EXCLUDE_FROM_ALL ../tests/test_vram_probation.cpp)
 target_include_directories(vram-probation-test PRIVATE shim shadps4)
-target_compile_definitions(vram-probation-test PRIVATE VULKAN_HPP_NO_CONSTRUCTORS VULKAN_HPP_NO_STRUCT_SETTERS)
 target_compile_options(vram-probation-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-sign-compare)
 target_link_libraries(vram-probation-test PRIVATE Vulkan::Headers Boost::headers)
 

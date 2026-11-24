@@ -56,12 +56,12 @@ int main() {
     using namespace Shader;
     using namespace Shader::Gcn;
 
-    // 1. Verify GCN decode + translate of IMAGE_SAMPLE_C_D (42), IMAGE_SAMPLE_CD (104),
-    //    and IMAGE_SAMPLE_C_CD (106).
+    // 1. Verify GCN decode + translate of IMAGE_SAMPLE_C_D (42), IMAGE_SAMPLE_C_D_O (58),
+    //    and IMAGE_SAMPLE_CD (104).
     for (const auto& [op, expect_depth, expect_deriv] : std::array{
              std::tuple{42u, true, true},
+             std::tuple{58u, true, true},
              std::tuple{104u, false, true},
-             std::tuple{106u, true, true},
          }) {
         const auto words = EncodeMimgSample(op, 0x1u, 0u, 8u, 0u, 4u);
         GcnCodeSlice code(words.data(), words.data() + words.size());
@@ -71,7 +71,7 @@ int main() {
 
         Info info{};
         RuntimeInfo runtime{};
-        runtime.Initialize(HwStage::Pixel, SwStage::Fragment);
+        runtime.Initialize(HwStage::Fragment, SwStage::Fragment);
         Profile profile{};
         Translator translator(info, runtime, profile);
         Common::ObjectPool<IR::Inst> pool;
@@ -95,32 +95,33 @@ int main() {
     //    emits OpImageSampleDrefExplicitLod (90) rather than OpImageSampleExplicitLod (88).
     {
         Info info{};
-        info.hw_stage = HwStage::Pixel;
-        info.stage = Stage::Fragment;
+        info.hw_stage = HwStage::Fragment;
 
         // Populate user_data with a valid 2D Image T# (8 dwords at s0..s7) and Sampler S# (4 dwords at s8..s11).
+        std::array<u32, 16> user_data_buf{};
         const AmdGpu::Image tsharp = AmdGpu::Image::Null(true);
         std::array<u32, 8> tsharp_dwords{};
         std::memcpy(tsharp_dwords.data(), &tsharp, sizeof(tsharp));
         for (u32 i = 0; i < 8; ++i) {
-            info.user_data[i] = tsharp_dwords[i];
+            user_data_buf[i] = tsharp_dwords[i];
         }
         AmdGpu::Sampler ssharp{};
-        ssharp.depth_compare_func = AmdGpu::DepthCompare::LessEqual;
+        ssharp.depth_compare_func.Assign(AmdGpu::DepthCompare::LessEqual);
         std::array<u32, 4> ssharp_dwords{};
         std::memcpy(ssharp_dwords.data(), &ssharp, sizeof(ssharp));
         for (u32 i = 0; i < 4; ++i) {
-            info.user_data[8 + i] = ssharp_dwords[i];
+            user_data_buf[8 + i] = ssharp_dwords[i];
         }
+        info.user_data = user_data_buf;
 
         IR::Program program{info};
         RuntimeInfo runtime{};
-        runtime.Initialize(HwStage::Pixel, SwStage::Fragment);
+        runtime.Initialize(HwStage::Fragment, SwStage::Fragment);
         Profile profile{};
 
         Common::ObjectPool<IR::Inst> pool;
         IR::Block entry{pool};
-        IR::IREmitter ir{entry};
+        IR::IREmitter ir(entry, entry.end());
 
         const IR::Value tsharp_low = ir.CompositeConstruct(
             ir.GetUserData(IR::ScalarReg(0)), ir.GetUserData(IR::ScalarReg(1)),
@@ -164,8 +165,10 @@ int main() {
         program.blocks = {&entry};
         program.post_order_blocks = {&entry};
 
-        const auto resources = Optimization::ResourceDiscoveryPass(program);
+        Optimization::FlattenExtendedUserdataPass(program);
+        const auto resources = Optimization::ResourceDiscoverPass(program, profile);
         Optimization::ResourcePatchingPass(program.info, resources, profile);
+        Optimization::DeadCodeEliminationPass(program);
 
         assert(program.info.images.size() == 1);
         assert(program.info.images[0].is_depth);
