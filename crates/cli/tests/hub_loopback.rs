@@ -271,9 +271,9 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     let hub_root = TempDir::new("hub-game");
     let device_root = TempDir::new("device-game");
     let game_data = hub_root.0.join("installs");
-    write(&game_data.join("u1/install.json"), b"{\"game\":\"u1\"}\n");
-    write(&game_data.join("u1/boot.bin"), b"BBPROBE2 u1");
-    write(&game_data.join("u1/saves/keep"), b"hub save");
+    write(&game_data, "u1/install.json", b"{\"game\":\"u1\"}\n");
+    write(&game_data, "u1/boot.bin", b"BBPROBE2 u1");
+    write(&game_data, "u1/saves/keep", b"hub save");
     let game_data_arg = game_data.display().to_string();
 
     let mut child = command(
