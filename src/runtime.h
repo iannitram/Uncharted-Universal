@@ -112,4 +112,6 @@ typedef struct {
 } RuntimeGuestCallback;
 const RuntimeGuestCallback *runtime_guest_callbacks(size_t *count);
 extern int runtime_raw_mouse_hooks; /* Rust (crates/runtime pad); set by probe.c when a "(raw mouse)" hook was installed */
+/* U2 chapter 21 (convoy) animation-node flag patch (crates/runtime/src/loader.rs). */
+void runtime_patch_u2_convoy_sink(uint8_t *image, uint64_t image_size);
 #endif

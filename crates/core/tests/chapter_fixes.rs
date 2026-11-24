@@ -67,6 +67,8 @@ fn the_glitch_fixes_turn_off_in_the_jungle_and_back_on_elsewhere() {
         ("Borneo", false),
         ("Getting Warmer", false),
         ("Urban Warfare", true),
+        ("Convoy", true),
+        ("Chapter 21", true),
     ] {
         let json = u2(subtitle);
         for key in ["fix_tiny_readback", "fix_u2_gpu_results"] {
