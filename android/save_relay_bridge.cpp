@@ -1172,11 +1172,10 @@ int bb_android_save_relay_sign_in_start(const char* service, const char* redirec
     CopyCString(out_challenge->service, sizeof(out_challenge->service), service);
     CopyCString(out_challenge->verification_url, sizeof(out_challenge->verification_url),
                 SanitizeText(url->str_val, 1023));
-    if (const JsonValue* code = data->Get("user_code")) {
-        if (code->type == JsonValue::String) {
-            CopyCString(out_challenge->user_code, sizeof(out_challenge->user_code),
-                        SanitizeText(code->str_val, 63));
-        }
+    const JsonValue* code = data->Get("user_code") ? data->Get("user_code") : data->Get("code");
+    if (code && code->type == JsonValue::String) {
+        CopyCString(out_challenge->user_code, sizeof(out_challenge->user_code),
+                    SanitizeText(code->str_val, 63));
     }
     if (const JsonValue* msg = data->Get("message")) {
         if (msg->type == JsonValue::String) {
