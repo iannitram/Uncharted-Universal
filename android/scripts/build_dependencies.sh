@@ -632,6 +632,17 @@ for bin in uncharted-android-smoke uncharted-android-fex-smoke test_android_fex_
     fi
 done
 
+for lib in libvulkan_freedreno.so libSDL3.so; do
+    file "$WORK/dist/$lib"
+    readelf -h "$WORK/dist/$lib" | grep -E 'Class:|Machine:|Type:'
+    readelf -h "$WORK/dist/$lib" | grep -Eq 'Machine:[[:space:]]*AArch64' || {
+        echo "$lib is not AArch64" >&2; exit 1
+    }
+    if readelf -d "$WORK/dist/$lib" | grep -q 'libc\.so\.6'; then
+        echo "$lib unexpectedly links glibc libc.so.6" >&2; exit 1
+    fi
+done
+
 if command -v adb >/dev/null 2>&1 && adb get-state >/dev/null 2>&1; then
     echo '== Execute synthetic smoke binaries on the attached Android device'
     adb shell mkdir -p /data/local/tmp/uncharted-android-smoke
