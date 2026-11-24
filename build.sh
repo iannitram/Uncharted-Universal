@@ -68,11 +68,11 @@ MINGW*|MSYS*)
         -DBB_PGO_DIR="$pgo_dir" -DBB_LTO="${BB_LTO:-OFF}" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
         -DCMAKE_C_FLAGS_RELWITHDEBINFO="$opt" -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="$opt" >/dev/null
     echo "GPU library and loader: LTO ${BB_LTO:-OFF}, PGO $pgo, -O${BB_OPT:-2}"
-    if ! ninja -C out/gpu bb-probe bb-gpu-capabilities > out/gpu-build.log 2>&1; then
+    if ! ninja -C out/gpu bb-probe uncharted-run bb-gpu-capabilities > out/gpu-build.log 2>&1; then
         awk 'substr($0, 1, 1) != "[" && $0 !~ /-Wbackend-plugin/' out/gpu-build.log | tail -60 >&2 || true
         echo 'Build failed (full log: out/gpu-build.log)' >&2; exit 1
     fi
-    cp out/gpu/bb-probe.exe out/gpu/bb-gpu-capabilities.exe out/
+    cp out/gpu/bb-probe.exe out/gpu/uncharted-run.exe out/gpu/bb-gpu-capabilities.exe out/
     if [[ $pgo == use ]]; then
         # How far the code has moved from the profile: clang's per-file counts of functions
         # changed since it was recorded (out of date) or added (no data). Only the files
@@ -101,7 +101,7 @@ MINGW*|MSYS*)
                  }
              }' out/gpu-build.log || exit 1
     fi
-    echo "Built $PWD/out/bb-probe.exe"
+    echo "Built $PWD/out/bb-probe.exe and $PWD/out/uncharted-run.exe"
     if [[ ${1:-} == --test ]]; then
         tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test resolve-overlap-test upscaler-latch-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test clear-state-and-submit-waits-test signal-flip-gate-test u2-stall-guards-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test)
         ninja_jobs=()
@@ -111,6 +111,13 @@ MINGW*|MSYS*)
             echo 'GPU unit test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
         fi
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
+        # uncharted-run (roadmap 3.17d): the Rust loader linked against the GPU library. Headless
+        # smoke checks only (no game, no Vulkan device): --help, a bad argument and --probe.
+        out/uncharted-run.exe --help > /dev/null
+        if out/uncharted-run.exe --no-such-option > /dev/null 2>&1; then
+            echo 'uncharted-run accepted an unknown option' >&2; exit 1
+        fi
+        out/uncharted-run.exe --probe > /dev/null
         BB_BUTTON_PROMPTS=nintendo "out/gpu/button-prompts-test.exe" --forced-nintendo
         # The file module is Rust now (crates/runtime/src/file.rs, piece 3.09): its Windows
         # coverage is the crate's own tests (check.yml, windows-latest).

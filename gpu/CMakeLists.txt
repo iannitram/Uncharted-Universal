@@ -371,6 +371,20 @@ if (WIN32)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
     target_link_options(bb-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
+    # uncharted-run (roadmap 3.17d, #457): the Rust loader (crates/runtime/src/loader/cli.rs) with a
+    # C main (crates/runtime/c/uncharted_run_main.c) that hands it the GPU library's entry points.
+    # It links the same libraries as bb-probe, minus probe.c, whose runtime_quit/runtime_restart
+    # the C main replaces. bb-probe stays until the live-hardware run is checked (3.17e).
+    add_executable(uncharted-run ../crates/runtime/c/uncharted_run_main.c ${BB_RUNTIME} ../src/compat_win.c
+        ../packaging/windows/uncharted-run.rc)
+    set_target_properties(uncharted-run PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(uncharted-run PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
+    target_include_directories(uncharted-run PRIVATE .. ../src)
+    target_link_libraries(uncharted-run PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread
+        "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
+    add_dependencies(uncharted-run uncharted_runtime_rust)
+    set_source_files_properties(../src/runtime_benchmark.c PROPERTIES COMPILE_DEFINITIONS BB_RUST_BENCHMARK)
+    target_link_options(uncharted-run PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/bb-gpu-capabilities.rc)
     target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan)
 endif()

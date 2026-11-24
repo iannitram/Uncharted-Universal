@@ -156,7 +156,7 @@ jobs:
             mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
             mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
             mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
-      - name: Add the Rust target that matches CLANG64 (bb-probe links crates/runtime)
+      - name: Add the Rust target that matches CLANG64 (bb-probe and uncharted-run link crates/runtime)
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
