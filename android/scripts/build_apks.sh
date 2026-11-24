@@ -146,7 +146,7 @@ cargo build --manifest-path "$REPO_ROOT/Cargo.toml" \
 RUNTIME_LIB="$CARGO_TARGET_DIR/aarch64-linux-android/$CARGO_TARGET_SUBDIR/libuncharted_runtime.a"
 
 echo "== Compiling NDK r30 native glue and C++ bridges"
-"$CLANG" -c -fPIC -O2 -DANDROID -I"$GLUE_DIR" \
+"$CLANG" -c -fPIC -O2 -DANDROID -DANativeActivity_onCreate=glue_ANativeActivity_onCreate -I"$GLUE_DIR" \
     "$GLUE_DIR/android_native_app_glue.c" \
     -o "$WORK/obj/android_native_app_glue.o"
 
@@ -257,9 +257,14 @@ for game in "${GAMES[@]}"; do
     fi
     "$LLVM_STRIP" --strip-unneeded "$SO_OUT"
 
+    "$AAPT2" compile \
+        --dir "$REPO_ROOT/android/apk/res" \
+        -o "$STAGE/res_flat.zip"
+
     "$AAPT2" link \
         -I "$ANDROID_JAR" \
         --manifest "$manifest" \
+        "$STAGE/res_flat.zip" \
         -o "$STAGE/base.apk"
 
     python3 - "$STAGE/base.apk" "$STAGE/lib/arm64-v8a" <<'PY'

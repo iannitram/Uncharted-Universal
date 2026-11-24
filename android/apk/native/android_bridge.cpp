@@ -4,14 +4,18 @@
 #include "android/driver_loader.h"
 #include "android/fex_bridge.h"
 
+#include <android/configuration.h>
 #include <android/input.h>
 #include <android/keycodes.h>
 #include <android/log.h>
+#include <android/looper.h>
 #include <android/native_activity.h>
 #include <android/window.h>
 #include <android_native_app_glue.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <jni.h>
+#include <unistd.h>
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
@@ -75,6 +79,123 @@ struct ApkRuntimeState {
     AndroidApkFfiSession* session = nullptr;
     uint64_t timestamp_ms = 0;
 };
+
+ANativeActivity* g_ui_activity = nullptr;
+int g_ui_pipe[2] = {-1, -1};
+
+void HideSystemBars(JNIEnv* env, jobject activity) {
+    if (!env || !activity) {
+        return;
+    }
+    jclass act = env->GetObjectClass(activity);
+    jmethodID get_win = act ? env->GetMethodID(act, "getWindow", "()Landroid/view/Window;") : nullptr;
+    jobject window = get_win ? env->CallObjectMethod(activity, get_win) : nullptr;
+    if (env->ExceptionCheck() || !window) {
+        env->ExceptionClear();
+        if (act) env->DeleteLocalRef(act);
+        return;
+    }
+    jclass winc = env->GetObjectClass(window);
+    jmethodID get_ctl =
+        winc ? env->GetMethodID(winc, "getInsetsController", "()Landroid/view/WindowInsetsController;")
+             : nullptr;
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    jobject ctl = get_ctl ? env->CallObjectMethod(window, get_ctl) : nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        ctl = nullptr;
+    }
+    if (ctl) {
+        jclass cc = env->GetObjectClass(ctl);
+        jclass types = env->FindClass("android/view/WindowInsets$Type");
+        jmethodID sys_bars =
+            types ? env->GetStaticMethodID(types, "systemBars", "()I") : nullptr;
+        jint bars = sys_bars ? env->CallStaticIntMethod(types, sys_bars) : 0;
+        jmethodID set_beh =
+            cc ? env->GetMethodID(cc, "setSystemBarsBehavior", "(I)V") : nullptr;
+        jmethodID hide_m = cc ? env->GetMethodID(cc, "hide", "(I)V") : nullptr;
+        if (set_beh) env->CallVoidMethod(ctl, set_beh, 2); // BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (hide_m && bars != 0) env->CallVoidMethod(ctl, hide_m, bars);
+        if (types) env->DeleteLocalRef(types);
+        if (cc) env->DeleteLocalRef(cc);
+        env->DeleteLocalRef(ctl);
+    } else if (winc) {
+        jmethodID get_decor = env->GetMethodID(winc, "getDecorView", "()Landroid/view/View;");
+        jobject decor = get_decor ? env->CallObjectMethod(window, get_decor) : nullptr;
+        if (decor) {
+            jclass dc = env->GetObjectClass(decor);
+            jmethodID set_vis = dc ? env->GetMethodID(dc, "setSystemUiVisibility", "(I)V") : nullptr;
+            if (set_vis) env->CallVoidMethod(decor, set_vis, 0x1706);
+            if (dc) env->DeleteLocalRef(dc);
+            env->DeleteLocalRef(decor);
+        }
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (winc) env->DeleteLocalRef(winc);
+    env->DeleteLocalRef(window);
+    env->DeleteLocalRef(act);
+}
+
+// Large screens (>= 600 dp, e.g. Pixel Fold inner screen or tablet) allow any user orientation
+// (SCREEN_ORIENTATION_FULL_USER = 13), while smaller cover/phone screens lock to
+// SCREEN_ORIENTATION_SENSOR_LANDSCAPE (6), matching ACNH-Universal.
+void ApplyPixelFoldOrientation(JNIEnv* env, jobject activity) {
+    if (!env || !activity) {
+        return;
+    }
+    int32_t sw = -1;
+    jclass ac = env->GetObjectClass(activity);
+    jmethodID get_res =
+        ac ? env->GetMethodID(ac, "getResources", "()Landroid/content/res/Resources;") : nullptr;
+    jobject res = get_res ? env->CallObjectMethod(activity, get_res) : nullptr;
+    if (res) {
+        jclass rc = env->GetObjectClass(res);
+        jmethodID get_cfg =
+            rc ? env->GetMethodID(rc, "getConfiguration", "()Landroid/content/res/Configuration;")
+               : nullptr;
+        jobject cfg = get_cfg ? env->CallObjectMethod(res, get_cfg) : nullptr;
+        if (cfg) {
+            jclass cc = env->GetObjectClass(cfg);
+            jfieldID f = cc ? env->GetFieldID(cc, "smallestScreenWidthDp", "I") : nullptr;
+            if (f) sw = env->GetIntField(cfg, f);
+            if (cc) env->DeleteLocalRef(cc);
+            env->DeleteLocalRef(cfg);
+        }
+        if (rc) env->DeleteLocalRef(rc);
+        env->DeleteLocalRef(res);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    const int want = sw >= 600 ? 13 : 6;
+    static int asked = -1;
+    if (want != asked) {
+        jmethodID m = ac ? env->GetMethodID(ac, "setRequestedOrientation", "(I)V") : nullptr;
+        if (m) env->CallVoidMethod(activity, m, want);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        asked = want;
+        LOGI("android: smallest side %d dp: orientation %s", sw,
+             want == 13 ? "any (large screen)" : "landscape");
+    }
+    if (ac) env->DeleteLocalRef(ac);
+}
+
+int OnUiThreadRequest(int fd, int, void*) {
+    char buf[16];
+    while (::read(fd, buf, sizeof(buf)) > 0) {
+    }
+    if (!g_ui_activity) {
+        return 1;
+    }
+    HideSystemBars(g_ui_activity->env, g_ui_activity->clazz);
+    ApplyPixelFoldOrientation(g_ui_activity->env, g_ui_activity->clazz);
+    return 1;
+}
+
+void RequestUiBarsAndOrientation() {
+    if (g_ui_pipe[1] >= 0) {
+        const char b = 1;
+        (void)::write(g_ui_pipe[1], &b, 1);
+    }
+}
 
 std::string JStringToStd(JNIEnv* env, jstring jstr) {
     if (!jstr) {
@@ -348,7 +469,10 @@ void HandleAppCmd(struct android_app* app, int32_t cmd) {
         return;
     }
 
-    if ((cmd == APP_CMD_INIT_WINDOW || cmd == APP_CMD_WINDOW_RESIZED) && app->window) {
+    if ((cmd == APP_CMD_INIT_WINDOW || cmd == APP_CMD_WINDOW_RESIZED ||
+         cmd == APP_CMD_GAINED_FOCUS || cmd == APP_CMD_CONFIG_CHANGED) &&
+        app->window) {
+        RequestUiBarsAndOrientation();
         const int32_t w = ANativeWindow_getWidth(app->window);
         const int32_t h = ANativeWindow_getHeight(app->window);
         if (w > 0 && h > 0) {
@@ -362,6 +486,25 @@ void HandleAppCmd(struct android_app* app, int32_t cmd) {
 }
 
 } // namespace
+
+extern "C" void glue_ANativeActivity_onCreate(ANativeActivity* activity, void* saved, size_t size);
+
+extern "C" JNIEXPORT void ANativeActivity_onCreate(ANativeActivity* activity,
+                                                   void* saved_state,
+                                                   size_t saved_state_size) {
+    g_ui_activity = activity;
+    if (g_ui_pipe[0] < 0 && ::pipe(g_ui_pipe) == 0) {
+        ::fcntl(g_ui_pipe[0], F_SETFL, O_NONBLOCK);
+        ::fcntl(g_ui_pipe[1], F_SETFL, O_NONBLOCK);
+        if (ALooper* looper = ALooper_forThread()) {
+            ALooper_addFd(looper, g_ui_pipe[0], ALOOPER_POLL_CALLBACK, ALOOPER_EVENT_INPUT,
+                          OnUiThreadRequest, nullptr);
+        }
+    }
+    HideSystemBars(activity->env, activity->clazz);
+    ApplyPixelFoldOrientation(activity->env, activity->clazz);
+    glue_ANativeActivity_onCreate(activity, saved_state, saved_state_size);
+}
 
 void android_main(struct android_app* app) {
     if (!app) {
