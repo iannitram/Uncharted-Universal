@@ -37,6 +37,7 @@ pub fn load(config: &Path) -> Stored {
         anti_aliasing: display.anti_aliasing,
         upscale_preset: display.upscale_preset,
         frame_generation: display.frame_generation,
+        stereo_mode: display.stereo_mode,
         button_prompts: prompts::Choice::from_id(
             map.get("button_prompts")
                 .and_then(Value::as_str)
@@ -57,6 +58,7 @@ pub fn save(config: &Path, stored: &Stored) -> io::Result<()> {
         ("anti_aliasing", &stored.anti_aliasing),
         ("upscale_preset", &stored.upscale_preset),
         ("frame_generation", &stored.frame_generation),
+        ("stereo_mode", &stored.stereo_mode),
     ] {
         map.insert(key.to_owned(), Value::from(value.as_str()));
     }

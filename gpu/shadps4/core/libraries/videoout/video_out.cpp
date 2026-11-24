@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include "bbport_settings.h"
 #include "bbport_threads.h"
 #include "common/assert.h"
 #include "common/thread.h"
@@ -322,6 +323,8 @@ s32 PS4_SYSV_ABI sceVideoOutGetResolutionStatus(s32 handle, SceVideoOutResolutio
     }
 
     *status = port->resolution;
+    status->flags |=
+        StereoResolutionFlags(BbSettings::Get().stereo_mode.load(std::memory_order_relaxed));
     return ORBIS_OK;
 }
 
@@ -464,9 +467,22 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
     return ORBIS_OK;
 }
 
+u64 StereoDeviceCapability(int stereo_mode) {
+    return stereo_mode != BbSettings::StereoOff
+               ? ORBIS_VIDEO_OUT_DEVICE_CAPABILITY_S3D_FRAME_PACKING_59_94HZ
+               : 0;
+}
+
+u16 StereoResolutionFlags(int stereo_mode) {
+    return stereo_mode != BbSettings::StereoOff
+               ? ORBIS_VIDEO_OUT_RESOLUTION_STATUS_FLAGS_OUTPUT_IN_3D
+               : 0;
+}
+
 s32 PS4_SYSV_ABI sceVideoOutGetDeviceCapabilityInfo(
     s32 handle, SceVideoOutDeviceCapabilityInfo* pDeviceCapabilityInfo) {
-    pDeviceCapabilityInfo->capability = 0;
+    pDeviceCapabilityInfo->capability =
+        StereoDeviceCapability(BbSettings::Get().stereo_mode.load(std::memory_order_relaxed));
     if (presenter->IsHDRSupported()) {
         auto& game_info = Common::ElfInfo::Instance();
         if (game_info.GetPSFAttributes().support_hdr) {

@@ -18,6 +18,15 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 /// Frame generation (vk_frame_generation.h): frames generated between two of the game's.
 enum FrameGen : int { FrameGenOff = 0, FrameGenFsr3 = 1, FrameGenDlss = 2, FrameGenCount };
+/// Stereoscopic 3D presentation mode (Uncharted 3 stereo, Issues #10, #19).
+enum StereoMode : int {
+    StereoOff = 0,
+    StereoPassthrough = 1,
+    StereoSideBySide = 2,
+    StereoTopBottom = 3,
+    StereoAnaglyph = 4,
+    StereoModeCount
+};
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 /// Per-device graphics profile (Issue #10).
 enum DeviceProfile : int {
@@ -27,14 +36,6 @@ enum DeviceProfile : int {
     ProfileDesktop = 3,
     ProfileStereo3D = 4,
     ProfileCount
-};
-/// Uncharted 3 stereoscopic 3D output mode (Issue #10, #19).
-enum StereoMode : int {
-    StereoOff = 0,
-    StereoSideBySide = 1,
-    StereoTopBottom = 2,
-    StereoAnaglyph = 3,
-    StereoModeCount
 };
 
 struct ProfilePreset {
@@ -122,7 +123,7 @@ struct Values {
     std::atomic<int> frame_gen_multiplier{2};
     std::atomic<int> dlssg_max_multiplier{1};
     std::atomic<const char*> frame_gen_problem{nullptr};
-    /// Per-device profile, frame rate, and Uncharted 3 stereo mode (Issue #10).
+    /// Per-device profile, frame rate, and Uncharted 3 stereo mode (Issues #10, #19).
     std::atomic<int> device_profile{ProfileAuto};
     std::atomic<int> detected_profile{ProfileDesktop};
     std::atomic<int> vblank_hz{60};   ///< 30, 45, 60, 120, or 0 (uncapped)
@@ -197,7 +198,8 @@ const char* UpscalerName(int upscaler);
 const char* FrameGenName(int frame_gen);
 const char* ProfileName(int profile);
 const char* ProfileLabel(int profile);
-const char* StereoModeName(int mode);
+int ParseStereoMode(const char* value);
+const char* StereoModeName(int stereo_mode);
 const char* StereoModeLabel(int mode);
 
 /// Whether FSR 3.1 has been seen rendering correctly on this driver (a VkDriverId value).

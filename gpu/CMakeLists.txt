@@ -588,6 +588,16 @@ target_include_directories(upscaler-latch-test PRIVATE shim "${BB_SHADPS4_CORE_D
 target_compile_options(upscaler-latch-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
 target_link_libraries(upscaler-latch-test PRIVATE Vulkan::Headers Boost::headers fmt::fmt)
 
+add_executable(stereo-test EXCLUDE_FROM_ALL
+    ../tests/test_stereo.cpp
+    ../tests/test_gpu_runtime_stubs.cpp
+    shim/bbport_settings.cpp
+    shim/common/assert.cpp
+    shim/common/logging/log.cpp)
+target_include_directories(stereo-test PRIVATE .. shim "${BB_SHADPS4_CORE_DIR}")
+target_compile_options(stereo-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+target_link_libraries(stereo-test PRIVATE fmt::fmt)
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
     ${BB_SHADPS4_CORE_DIR}/video_core/renderer_vulkan/fsr411/fsr411.cpp)

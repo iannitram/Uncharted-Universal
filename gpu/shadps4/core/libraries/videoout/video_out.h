@@ -36,10 +36,13 @@ constexpr int SCE_VIDEO_OUT_PIXEL_FORMAT_A16R16G16B16_FLOAT = 0xC1060000;
 constexpr int SCE_VIDEO_OUT_PIXEL_FORMAT_YCBCR420_BT709 = 0x08322200;
 
 constexpr int SCE_VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE = 0;
+constexpr int SCE_VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STEREO = 1;
 constexpr int SCE_VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_VR = 7;
 constexpr int SCE_VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY = 8;
 
+constexpr u64 ORBIS_VIDEO_OUT_DEVICE_CAPABILITY_S3D_FRAME_PACKING_59_94HZ = 0x1;
 constexpr int ORBIS_VIDEO_OUT_DEVICE_CAPABILITY_BT2020_PQ = 0x80;
+constexpr u16 ORBIS_VIDEO_OUT_RESOLUTION_STATUS_FLAGS_OUTPUT_IN_3D = 0x1;
 
 enum OrbisVideoOutColorimetry : u8 {
     Bt2020PQ = 12,
@@ -140,6 +143,10 @@ s32 PS4_SYSV_ABI sceVideoOutAdjustColor(s32 handle, const SceVideoOutColorSettin
 
 // Internal system functions
 s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, void** unk);
+
+/// bbport: stereo capability and resolution flags for the active BbSettings::StereoMode.
+u64 StereoDeviceCapability(int stereo_mode);
+u16 StereoResolutionFlags(int stereo_mode);
 
 void RegisterLib(Core::Loader::SymbolsResolver* sym);
 

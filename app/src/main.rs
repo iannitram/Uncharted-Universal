@@ -2137,7 +2137,7 @@ mod tests {
         assert_eq!(cards[1].title, "Balanced 60");
         assert!(cards[1].in_use);
         let choices: Vec<_> = window.get_choices().iter().collect();
-        assert_eq!(choices.len(), 10);
+        assert_eq!(choices.len(), 11);
         assert_eq!(
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
@@ -2150,12 +2150,12 @@ mod tests {
             Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "30"
         ));
         // The raw mouse checkbox and sensitivity share mouse, keyboard and controller handling.
-        assert!(choices[6].checkbox && !choices[6].checked);
-        assert_eq!(choices[7].value, "1.00");
-        window.invoke_page_clicked(8, 1);
-        assert!(window.get_choices().row_data(6).unwrap().checked);
+        assert!(choices[7].checkbox && !choices[7].checked);
+        assert_eq!(choices[8].value, "1.00");
         window.invoke_page_clicked(9, 1);
-        assert_eq!(window.get_choices().row_data(7).unwrap().value, "1.01");
+        assert!(window.get_choices().row_data(7).unwrap().checked);
+        window.invoke_page_clicked(10, 1);
+        assert_eq!(window.get_choices().row_data(8).unwrap().value, "1.01");
         assert!(
             matches!(commands.borrow().last(), Some(Cmd::Settings(SettingsCommand::Save(stored)))
             if stored.mouse.raw && stored.mouse.sensitivity() == "1.01")
@@ -2384,7 +2384,7 @@ mod tests {
         window.invoke_input(2);
         window.invoke_input(6);
         assert_eq!(window.get_page(), 2);
-        for _ in 0..11 {
+        for _ in 0..12 {
             window.invoke_input(1);
         }
         window.invoke_input(3);
@@ -2440,7 +2440,7 @@ mod tests {
         window.invoke_input(2);
         window.invoke_input(2);
         window.invoke_input(6);
-        for _ in 0..11 {
+        for _ in 0..12 {
             window.invoke_input(1);
         }
         for _ in 0..6 {
@@ -2675,13 +2675,13 @@ mod tests {
         assert_eq!(window.get_page(), 2);
         pads.connect(2, Style::Nintendo);
         assert_eq!(window.get_prompt_hints().confirm, "×");
-        for _ in 0..10 {
+        for _ in 0..11 {
             press(&pads, 2, DPadDown);
         }
-        assert_eq!(window.get_page_row(), 10);
+        assert_eq!(window.get_page_row(), 11);
         assert_eq!(window.get_prompt_hints().confirm, "B");
         assert_eq!(window.get_prompt_hints().back, "A");
-        let choice = window.get_choices().row_data(8).unwrap();
+        let choice = window.get_choices().row_data(9).unwrap();
         assert_eq!(choice.label, "Tastenhinweise");
         assert_eq!(choice.value, "Automatisch");
 

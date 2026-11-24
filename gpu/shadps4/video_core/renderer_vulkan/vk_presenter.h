@@ -129,6 +129,9 @@ private:
     bool PresentImage(Frame* frame, vk::Image image, bool last, u64 latency_id = 0);
 
     void SetExpectedGameSize(s32 width, s32 height);
+    /// bbport: retained previous-eye image for side-by-side / top-bottom stereo composition.
+    void EnsureStereoPrev(u32 width, u32 height, vk::CommandBuffer cmdbuf);
+    void DestroyStereoPrev();
 
 private:
     float expected_ratio{1920.0 / 1080.0f};
@@ -167,6 +170,15 @@ private:
     std::atomic<double> game_frame_ms{BbVideoPacing::DefaultFrameMs}; ///< written by the present thread
     std::atomic<bool> fast_game{false};
     u32 fast_switches{0};
+    struct StereoHistory {
+        VmaAllocation allocation{};
+        vk::Image image{};
+        u32 width{0};
+        u32 height{0};
+        bool valid{false};
+    };
+    StereoHistory stereo_prev{};
+    int stereo_eye{0};
 };
 
 } // namespace Vulkan

@@ -43,6 +43,14 @@ pub const PRESETS: [(&str, &str); 5] = [
     ("ultra", "Ultra performance (3x)"),
 ];
 
+/// Stereoscopic 3D presentation modes for Uncharted 3 (`BB_STEREO_MODE`).
+pub const STEREO_MODES: [(&str, &str); 4] = [
+    ("off", "Off"),
+    ("passthrough", "Frame-sequential (Passthrough)"),
+    ("side-by-side", "Side-by-side (Left / Right)"),
+    ("top-bottom", "Top-bottom"),
+];
+
 /// The settings the page keeps (display values in `<config>/settings.json`, `settings_store.rs`;
 /// mouse values in `<data>/input.ini`, `input_settings.rs`). An empty display value is not set
 /// yet: [`SettingsVm::new`] fills it with the device's default.
@@ -60,6 +68,8 @@ pub struct Stored {
     pub upscale_preset: String,
     /// off, fsr3, dlss: `BB_FRAME_GEN`.
     pub frame_generation: String,
+    /// off, passthrough, side-by-side, top-bottom: `BB_STEREO_MODE` (Uncharted 3 only).
+    pub stereo_mode: String,
     pub button_prompts: prompts::Choice,
     /// Interface language setting (`""` for Automatic, or a language code).
     pub ui_language: String,
@@ -77,6 +87,7 @@ impl Stored {
             anti_aliasing: card.anti_aliasing.clone(),
             upscale_preset: card.upscale_preset.clone(),
             frame_generation: card.frame_generation.clone(),
+            stereo_mode: self.stereo_mode.clone(),
             button_prompts: self.button_prompts,
             ui_language: self.ui_language.clone(),
             mouse: self.mouse,
@@ -95,6 +106,7 @@ impl Stored {
             Choice::Upscaler => &self.anti_aliasing,
             Choice::Quality => &self.upscale_preset,
             Choice::FrameGeneration => &self.frame_generation,
+            Choice::StereoMode => &self.stereo_mode,
             Choice::ButtonPrompts => return self.button_prompts.id().to_owned(),
             Choice::Language => &self.ui_language,
             Choice::RawMouse => return u8::from(self.mouse.raw).to_string(),
@@ -127,6 +139,7 @@ impl Stored {
             Choice::Upscaler => &mut self.anti_aliasing,
             Choice::Quality => &mut self.upscale_preset,
             Choice::FrameGeneration => &mut self.frame_generation,
+            Choice::StereoMode => &mut self.stereo_mode,
             Choice::Language => &mut self.ui_language,
             Choice::RawMouse | Choice::AimSensitivity | Choice::ButtonPrompts => unreachable!(),
         } = value;
@@ -146,6 +159,7 @@ pub fn run_settings(stored: &Stored, profile: &DeviceProfile) -> run_env::Settin
             anti_aliasing: stored.anti_aliasing.clone(),
             upscale_preset: stored.upscale_preset.clone(),
             frame_generation: stored.frame_generation.clone(),
+            stereo_mode: stored.stereo_mode.clone(),
         },
         profile,
     )
@@ -217,6 +231,7 @@ pub enum Choice {
     Upscaler,
     Quality,
     FrameGeneration,
+    StereoMode,
     RawMouse,
     AimSensitivity,
     ButtonPrompts,
@@ -224,13 +239,14 @@ pub enum Choice {
 }
 
 impl Choice {
-    pub const ALL: [Choice; 10] = [
+    pub const ALL: [Choice; 11] = [
         Choice::Profile,
         Choice::FrameRate,
         Choice::Resolution,
         Choice::Upscaler,
         Choice::Quality,
         Choice::FrameGeneration,
+        Choice::StereoMode,
         Choice::RawMouse,
         Choice::AimSensitivity,
         Choice::ButtonPrompts,
@@ -245,6 +261,7 @@ impl Choice {
             Choice::Upscaler => "Upscaler",
             Choice::Quality => "Quality",
             Choice::FrameGeneration => "Frame generation",
+            Choice::StereoMode => "3D stereo (Uncharted 3)",
             Choice::RawMouse => "Raw mouse aiming and cover camera (Uncharted 1 and 2)",
             Choice::AimSensitivity => "Aim sensitivity (raw mouse)",
             Choice::ButtonPrompts => "Button prompts",
@@ -261,6 +278,7 @@ impl Choice {
             Choice::Upscaler => "anti_aliasing",
             Choice::Quality => "upscale_preset",
             Choice::FrameGeneration => "frame_generation",
+            Choice::StereoMode => "stereo_mode",
             Choice::RawMouse => "mouse_raw",
             Choice::AimSensitivity => "mouse_aim_sensitivity",
             Choice::ButtonPrompts => "button_prompts",
@@ -294,6 +312,13 @@ fn frame_generation_label(value: &str) -> String {
 
 fn preset_label(value: &str) -> String {
     PRESETS
+        .iter()
+        .find(|(v, _)| *v == value)
+        .map_or_else(|| value.to_owned(), |(_, label)| (*label).to_owned())
+}
+
+fn stereo_mode_label(value: &str) -> String {
+    STEREO_MODES
         .iter()
         .find(|(v, _)| *v == value)
         .map_or_else(|| value.to_owned(), |(_, label)| (*label).to_owned())
@@ -458,6 +483,10 @@ impl SettingsVm {
                     .filter(allowed)
                     .collect(),
                 frame_generation_label,
+            ),
+            Choice::StereoMode => pairs(
+                STEREO_MODES.iter().map(|(v, _)| *v).collect(),
+                stereo_mode_label,
             ),
             Choice::ButtonPrompts => prompts::Choice::ALL
                 .into_iter()
