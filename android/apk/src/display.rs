@@ -43,6 +43,47 @@ pub const PIXEL_FOLD_DENSITY_DPI: u32 = 420;
 /// Pixel Fold 1 outside cover display camera cutout height (133 px), observed via `dumpsys display`.
 pub const PIXEL_FOLD_COVER_CUTOUT_PX: u32 = 133;
 
+/// Aspect factor bounds (aspect / (16/9)), matching ACNH-Universal `nvn_aspect.h`:
+/// - `0.45` allows Pixel Fold upright inner screen (5:6 -> k ≈ 0.469),
+/// - `3.0` matches `android:max_aspect="3.0"`.
+pub const MIN_ASPECT_FACTOR: f64 = 0.45;
+pub const MAX_ASPECT_FACTOR: f64 = 3.0;
+pub const LARGE_SCREEN_MIN_DP: i32 = 600;
+
+/// Android `ActivityInfo` orientation constant (`android.content.pm.ActivityInfo`),
+/// matching ACNH-Universal `apply_orientation`:
+/// - `SensorLandscape (6)` on cover/phone screens (`smallestScreenWidthDp < 600`),
+/// - `FullUser (13)` on unfolded Pixel Fold / tablets (`smallestScreenWidthDp >= 600`).
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestedOrientation {
+    SensorLandscape = 6,
+    FullUser = 13,
+}
+
+pub const fn requested_orientation_for_smallest_width_dp(
+    smallest_width_dp: i32,
+) -> RequestedOrientation {
+    if smallest_width_dp >= LARGE_SCREEN_MIN_DP {
+        RequestedOrientation::FullUser
+    } else {
+        RequestedOrientation::SensorLandscape
+    }
+}
+
+pub fn clamped_aspect_factor(width: u32, height: u32) -> Result<f64, DisplayError> {
+    if width == 0 || height == 0 {
+        return Err(DisplayError::ZeroSize {
+            what: "Display",
+            width,
+            height,
+        });
+    }
+    let ratio = f64::from(width) / f64::from(height);
+    let base = f64::from(NATIVE_ASPECT.0) / f64::from(NATIVE_ASPECT.1);
+    Ok((ratio / base).clamp(MIN_ASPECT_FACTOR, MAX_ASPECT_FACTOR))
+}
+
 /// Dimension delta (in pixels) above which a live fold/unfold or resize offers a restart prompt
 /// for a full re-render (`M21e`, `#436`).
 pub const RESIZE_RESTART_THRESHOLD_PX: u32 = 16;
@@ -1407,5 +1448,22 @@ mod tests {
         assert_eq!((out.render_width, out.render_height), (1296, 1080));
         assert!(out.needs_restart);
         assert!(!out.touch_overlay_visible);
+    }
+
+    #[test]
+    fn acnh_orientation_and_aspect_factor_cover_pixel_fold_inner_and_cover() {
+        assert_eq!(
+            requested_orientation_for_smallest_width_dp(411),
+            RequestedOrientation::SensorLandscape
+        );
+        assert_eq!(
+            requested_orientation_for_smallest_width_dp(700),
+            RequestedOrientation::FullUser
+        );
+        let upright_k = clamped_aspect_factor(1840, 2208).unwrap();
+        assert!((upright_k - 0.46875).abs() < 0.001);
+        assert!(upright_k >= MIN_ASPECT_FACTOR);
+        let wide_k = clamped_aspect_factor(2092, 1080).unwrap();
+        assert!(wide_k > 1.0 && wide_k <= MAX_ASPECT_FACTOR);
     }
 }

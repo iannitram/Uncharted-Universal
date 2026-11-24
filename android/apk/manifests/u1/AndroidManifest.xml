@@ -28,9 +28,12 @@
     -->
     <application
         android:allowBackup="false"
+        android:appCategory="game"
         android:extractNativeLibs="true"
         android:hasCode="false"
-        android:label="Uncharted 1">
+        android:isGame="true"
+        android:label="Uncharted 1"
+        android:largeHeap="true">
 
         <meta-data
             android:name="org.uncharted.game_id"
@@ -38,14 +41,20 @@
 
         <activity
             android:name="android.app.NativeActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape">
+            android:resizeableActivity="true"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Game"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing">
 
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="uncharted_android_apk" />
+            <meta-data
+                android:name="android.max_aspect"
+                android:value="3.0" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

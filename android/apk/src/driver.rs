@@ -12,8 +12,32 @@ use std::fmt;
 pub const VENDOR_ID_QUALCOMM: u32 = 0x5143;
 /// ARM Mali vendor ID (`0x13B5`), matching `BB_ANDROID_VENDOR_ARM` (e.g. Google Tensor G2 / Mali-G710).
 pub const VENDOR_ID_ARM: u32 = 0x13B5;
+/// Samsung Xclipse (RDNA) vendor ID (`0x144D`).
+pub const VENDOR_ID_SAMSUNG: u32 = 0x144D;
 /// Vulkan 1.3 packed API version (`VK_MAKE_API_VERSION(0, 1, 3, 0)`).
 pub const VK_API_VERSION_1_3: u32 = (1 << 22) | (3 << 12);
+
+/// Android GPU memory/swapchain tuning hints ported from ACNH-Universal (`nvn_vk.cpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AndroidVulkanTuning {
+    /// Recommended upload ring buffer in MiB: 256 MiB for ARM Mali (`0x13B5`, non-mappable dma-buf)
+    /// and Samsung Xclipse (`0x144D`), 64 MiB default on Adreno/Turnip.
+    pub upload_ring_mb: u32,
+    /// Android surfaces rarely expose `B8G8R8A8_UNORM`; prefer `R8G8B8A8_UNORM`.
+    pub prefer_rgba8_swapchain: bool,
+}
+
+pub const fn android_vulkan_tuning(vendor_id: u32) -> AndroidVulkanTuning {
+    let upload_ring_mb = if vendor_id == VENDOR_ID_ARM || vendor_id == VENDOR_ID_SAMSUNG {
+        256
+    } else {
+        64
+    };
+    AndroidVulkanTuning {
+        upload_ring_mb,
+        prefer_rgba8_swapchain: true,
+    }
+}
 
 /// GPU family classification for Android driver selection (`#536`).
 #[repr(u32)]
@@ -865,5 +889,10 @@ mod tests {
             classify_android_gpu(0, "Turnip Adreno 740"),
             AndroidGpuFamily::Adreno
         );
+
+        let mali_tuning = android_vulkan_tuning(VENDOR_ID_ARM);
+        assert_eq!(mali_tuning.upload_ring_mb, 256);
+        assert!(mali_tuning.prefer_rgba8_swapchain);
+        assert_eq!(android_vulkan_tuning(VENDOR_ID_QUALCOMM).upload_ring_mb, 64);
     }
 }
