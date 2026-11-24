@@ -289,3 +289,6 @@ msgstr "Decidi dopo"
 
 msgid "Play anyway"
 msgstr "Gioca comunque"
+
+msgid "Trophies"
+msgstr "Trofei"

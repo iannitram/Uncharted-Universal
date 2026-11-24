@@ -76,7 +76,8 @@ use uncharted_core::setup;
 use vm::after_crash::{self, AfterCrash, Context, Host, Pressed};
 use vm::saves::{GameSaves, SavesCommand, SavesView};
 use vm::settings::{SettingsCommand, SettingsView};
-use vm::{FleetVm, SavesVm, SettingsVm};
+use vm::trophies::TrophiesCommand;
+use vm::{FleetVm, SavesVm, SettingsVm, TrophiesVm};
 
 slint::include_modules!();
 
@@ -591,12 +592,45 @@ fn apply_settings(window: &AppWindow, view: &SettingsView, lang: &Lang) {
     window.set_page_status(view.status.as_str().into());
 }
 
+fn apply_trophies(window: &AppWindow, vm: &TrophiesVm, pictures: &mut Pictures) {
+    let page = vm.page();
+    let games: Vec<SharedString> = vm.games().into_iter().map(SharedString::from).collect();
+    window.set_trophy_games(ModelRc::new(VecModel::from(games)));
+    window.set_trophy_current(vm.current() as i32);
+    window.set_trophy_title(page.title.as_str().into());
+    window.set_trophy_summary(page.summary.as_str().into());
+    window.set_trophy_empty(page.empty_text.as_str().into());
+    window.set_trophy_focus(vm.focused() as i32);
+    window.set_trophy_back_index(vm.back_index() as i32);
+    window.set_trophy_rows(ModelRc::new(VecModel::from(
+        page.rows
+            .iter()
+            .map(|r| {
+                let (icon, has_icon) = match pictures.get(r.icon.as_deref()) {
+                    Some(img) => (img, true),
+                    None => (Image::default(), false),
+                };
+                TrophyRowData {
+                    name: r.name.as_str().into(),
+                    detail: r.detail.as_str().into(),
+                    grade: r.grade.as_str().into(),
+                    unlocked: r.unlocked,
+                    when: r.when.as_str().into(),
+                    icon,
+                    has_icon,
+                }
+            })
+            .collect::<Vec<_>>(),
+    )));
+}
+
 /// What the window shows over the Continue screen.
 #[allow(clippy::large_enum_variant)]
 enum Shown {
     Continue,
     Saves(SavesVm),
     Settings(SettingsVm),
+    Trophies(TrophiesVm),
 }
 
 /// `page` of the window while About is open (over the Continue screen, whatever `Shown` is).
@@ -609,12 +643,13 @@ const CRASH_PAGE: i32 = 5;
 
 impl Shown {
     /// `page` of the window: 0 the Continue screen, 1 Saves, 2 Settings ([`ABOUT_PAGE`] is 3,
-    /// [`FLEET_PAGE`] 4, [`CRASH_PAGE`] 5).
+    /// [`FLEET_PAGE`] 4, [`CRASH_PAGE`] 5), 6 Trophies.
     fn code(&self) -> i32 {
         match self {
             Shown::Continue => 0,
             Shown::Saves(_) => 1,
             Shown::Settings(_) => 2,
+            Shown::Trophies(_) => 6,
         }
     }
 }
@@ -625,6 +660,7 @@ enum Cmd {
     Screen(Command),
     Saves(SavesCommand),
     Settings(SettingsCommand),
+    Trophies(TrophiesCommand),
 }
 
 /// The screen, the page over it and the window, redrawn after every change.
@@ -670,6 +706,7 @@ impl Ui {
             Shown::Continue => {}
             Shown::Saves(vm) => apply_saves(&window, &vm.view(&clock)),
             Shown::Settings(vm) => apply_settings(&window, &vm.view(), &self.lang.borrow()),
+            Shown::Trophies(vm) => apply_trophies(&window, vm, &mut self.pictures.borrow_mut()),
         }
         let about = self.about.borrow();
         let fleet = self.fleet.borrow();
@@ -914,6 +951,27 @@ impl Ui {
             Shown::Continue => Cmd::Screen(self.screen.borrow_mut().handle(input)),
             Shown::Saves(vm) => Cmd::Saves(vm.handle(input)),
             Shown::Settings(vm) => Cmd::Settings(vm.handle(input)),
+            Shown::Trophies(vm) => match input {
+                Input::Move(nav) => {
+                    vm.on_nav(nav);
+                    Cmd::Trophies(TrophiesCommand::None)
+                }
+                Input::Tab { back } => {
+                    vm.on_nav(if back { Nav::Up } else { Nav::Down });
+                    Cmd::Trophies(TrophiesCommand::None)
+                }
+                Input::PrevGame => {
+                    vm.prev_game();
+                    Cmd::Trophies(TrophiesCommand::None)
+                }
+                Input::NextGame => {
+                    vm.next_game();
+                    Cmd::Trophies(TrophiesCommand::None)
+                }
+                Input::Activate => Cmd::Trophies(vm.activate()),
+                Input::Back => Cmd::Trophies(TrophiesCommand::Back),
+                _ => Cmd::Trophies(TrophiesCommand::None),
+            },
         };
         let command = self.opened(command);
         self.after(&command);
@@ -984,6 +1042,7 @@ impl Ui {
                 Ok(row) => Cmd::Settings(vm.click(row, col)),
                 Err(_) => Cmd::Settings(SettingsCommand::None),
             },
+            Shown::Trophies(vm) => Cmd::Trophies(vm.click(row, col)),
         };
         self.after(&command);
         command
@@ -994,6 +1053,7 @@ impl Ui {
         match command {
             Cmd::Saves(SavesCommand::Back) => self.close(Page::Saves),
             Cmd::Settings(SettingsCommand::Back) => self.close(Page::Settings),
+            Cmd::Trophies(TrophiesCommand::Back) => self.close(Page::Trophies),
             Cmd::Settings(SettingsCommand::SaveButtonPrompts(choice)) => {
                 self.prompt_choice.set(*choice)
             }
@@ -1285,6 +1345,7 @@ fn page_status(page: Page) -> String {
         Page::Saves | Page::Settings => "2.06",
         Page::Fleet => "2.08",
         Page::About => "2.09",
+        Page::Trophies => "after-1.0",
     };
     format!("{} comes in a later build (roadmap {piece}).", page.label())
 }
@@ -1492,6 +1553,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 ui.show(Shown::Settings(vm));
             }
+            Cmd::Screen(Command::Open(Page::Trophies)) => {
+                let current = ui.screen.borrow().current_game();
+                let clock = Clock {
+                    now: (ui.now)(),
+                    offset: &*ui.offset,
+                };
+                let games: Vec<load::GameTrophies> = Game::ALL
+                    .into_iter()
+                    .map(
+                        |game| match places.borrow().iter().find(|p| p.game == game) {
+                            Some(place) => load::trophies_of(game, &place.install, &place.user_dir),
+                            None => load::trophies_of(game, Path::new(""), Path::new("")),
+                        },
+                    )
+                    .collect();
+                ui.show(Shown::Trophies(TrophiesVm::new(games, current, &clock)));
+            }
             Cmd::Screen(Command::Open(page)) => {
                 ui.screen.borrow_mut().set_status(&page_status(page));
                 ui.redraw();
@@ -1644,6 +1722,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = probe.send(pages_io::run_probe());
                 });
             }
+            Cmd::Trophies(_) => {}
         }
     });
     let jobs: Rc<dyn Fn(Job)> = Rc::new({

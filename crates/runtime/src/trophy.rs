@@ -1461,4 +1461,97 @@ mod tests {
             unsafe { trophy_game_info(0, 1, std::ptr::null_mut(), data.as_mut_ptr().cast()) };
         assert_eq!(result, INVALID_CONTEXT);
     }
+
+    #[test]
+    fn quit_and_restart_preserves_unlocks_state_and_info() {
+        let dir = TempDir::new("restart");
+        let host = FakeHost::new(&dir);
+        {
+            let mut trophies = configured(&dir, &host);
+            assert_eq!(trophies.unlock(1, 1, 1, None, &host), 0);
+            assert_eq!(trophies.unlock(1, 1, 3, None, &host), 0);
+        }
+
+        // Fresh Trophies instance simulates quitting and restarting the game.
+        let mut restarted = configured(&dir, &host);
+        let (mut flags, mut count) = ([0; 4], 0);
+        assert_eq!(
+            restarted.unlock_state(1, 1, Some(&mut flags), Some(&mut count)),
+            0
+        );
+        assert_eq!((flags, count), ([0b1010, 0, 0, 0], 4));
+
+        let mut game_data = details(GAME_DATA_SIZE);
+        assert_eq!(restarted.game_info(1, 1, None, Some(&mut game_data)), 0);
+        assert_eq!(u32_at(&game_data, 8), 2);
+        assert_eq!(u32_at(&game_data, 28), 50);
+
+        let mut t1_data = details(TROPHY_DATA_SIZE);
+        assert_eq!(restarted.trophy_info(1, 1, 1, None, Some(&mut t1_data)), 0);
+        assert_eq!(t1_data[12], 1);
+        let tick = u64::from_ne_bytes(t1_data[16..24].try_into().unwrap());
+        assert_eq!(tick, RTC_UNIX_EPOCH_US + 1_700_000_000 * 1_000_000);
+
+        let mut t2_details = details(TROPHY_DETAILS_SIZE);
+        assert_eq!(
+            restarted.trophy_info(1, 1, 2, Some(&mut t2_details), None),
+            0
+        );
+        assert!(t2_details[24..].iter().all(|&b| b == 0));
+
+        assert_eq!(restarted.unlock(1, 1, 1, None, &host), ALREADY_UNLOCKED);
+        assert_eq!(
+            fs::read_to_string(dir.log()).unwrap(),
+            "1 1700000000\n3 1700000000\n"
+        );
+    }
+
+    #[test]
+    fn per_game_isolation_keeps_separate_unlock_logs() {
+        let dir = TempDir::new("isolation");
+        let host = FakeHost::new(&dir);
+        let set_u1 = dir.0.join("set_u1");
+        let set_u2 = dir.0.join("set_u2");
+        fs::create_dir_all(&set_u1).unwrap();
+        fs::create_dir_all(&set_u2).unwrap();
+        fs::write(
+            set_u1.join("trophies.txt"),
+            SET.replace("NPWR00000_00", "NPWR09798_00"),
+        )
+        .unwrap();
+        fs::write(
+            set_u2.join("trophies.txt"),
+            SET.replace("NPWR00000_00", "NPWR09799_00"),
+        )
+        .unwrap();
+
+        let mut trophies = Trophies::new();
+        trophies.configure(set_u1.to_str().unwrap().as_bytes(), &host);
+        assert_eq!(trophies.unlock(1, 1, 1, None, &host), 0);
+
+        trophies.configure(set_u2.to_str().unwrap().as_bytes(), &host);
+        let (mut flags, mut count) = ([0; 4], 0);
+        assert_eq!(
+            trophies.unlock_state(1, 1, Some(&mut flags), Some(&mut count)),
+            0
+        );
+        assert_eq!((flags, count), ([0; 4], 4));
+        assert_eq!(trophies.unlock(1, 1, 2, None, &host), 0);
+
+        assert_eq!(
+            fs::read_to_string(dir.0.join("user/trophy/NPWR09798_00.log")).unwrap(),
+            "1 1700000000\n"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.0.join("user/trophy/NPWR09799_00.log")).unwrap(),
+            "2 1700000000\n"
+        );
+
+        trophies.configure(set_u1.to_str().unwrap().as_bytes(), &host);
+        assert_eq!(
+            trophies.unlock_state(1, 1, Some(&mut flags), Some(&mut count)),
+            0
+        );
+        assert_eq!((flags, count), ([0b10, 0, 0, 0], 4));
+    }
 }

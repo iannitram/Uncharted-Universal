@@ -96,6 +96,17 @@ export struct ChoiceData {
     checked: bool,
 }
 
+// One trophy row of the Trophies page.
+export struct TrophyRowData {
+    name: string,
+    detail: string,
+    grade: string,
+    unlocked: bool,
+    when: string,
+    icon: image,
+    has-icon: bool,
+}
+
 global Theme {
     out property <color> page: #12151c;
     out property <color> panel: #1a1f2a;
@@ -647,6 +658,16 @@ export component AppWindow inherits Window {
     in property <[ChoiceData]> choices;
     in property <[string]> setting-notes;
     in property <bool> tuning;
+
+    // Trophies (page 6).
+    in property <[string]> trophy-games;
+    in property <int> trophy-current;
+    in property <string> trophy-title;
+    in property <string> trophy-summary;
+    in property <[TrophyRowData]> trophy-rows;
+    in property <string> trophy-empty;
+    in property <int> trophy-focus;
+    in property <int> trophy-back-index;
 
     function follow-focus() {
         if (root.page == 1) {
@@ -1787,6 +1808,121 @@ export component AppWindow inherits Window {
             buttons: root.crash-buttons;
             focused-index: root.crash-focus;
             activate(index) => { root.clicked(9, index); }
+        }
+
+        // Trophies (achievements), from the page row.
+        if root.page == 6: VerticalLayout {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            padding: 24px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: space-between;
+                Text {
+                    text: root.trophy-title != "" ? root.trophy-title : @tr("Trophies");
+                    color: white;
+                    font-size: 26px;
+                    vertical-alignment: center;
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    for name[i] in root.trophy-games: LauncherButton {
+                        label: name;
+                        focused: i == root.trophy-current;
+                        activated => { root.page-clicked(-1, i); }
+                    }
+                }
+            }
+
+            if root.trophy-summary != "": Text {
+                text: root.trophy-summary;
+                color: #f2b134;
+                font-size: 16px;
+            }
+
+            trophy-list := FocusList {
+                vertical-stretch: 1;
+                content-height: trophy-items.preferred-height;
+                trophy-items := VerticalLayout {
+                    width: trophy-list.width;
+                    alignment: start;
+                    spacing: 8px;
+                    for row[i] in root.trophy-rows: Rectangle {
+                        height: 68px;
+                        border-radius: 8px;
+                        background: root.trophy-focus == i ? #2d3544 : #1a1f2a;
+                        border-width: root.trophy-focus == i ? 2px : 1px;
+                        border-color: root.trophy-focus == i ? #f2b134 : #3a4252;
+                        opacity: row.unlocked ? 1.0 : 0.7;
+
+                        TouchArea {
+                            clicked => { root.page-clicked(i, 0); }
+                        }
+
+                        HorizontalLayout {
+                            padding: 10px;
+                            spacing: 12px;
+                            Rectangle {
+                                width: 48px;
+                                height: 48px;
+                                border-radius: 6px;
+                                background: #12151c;
+                                clip: true;
+                                if row.has-icon: Image {
+                                    width: 48px;
+                                    height: 48px;
+                                    source: row.icon;
+                                    image-fit: contain;
+                                }
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: row.grade != "" ? row.name + "  ·  " + row.grade : row.name;
+                                    color: row.unlocked ? #ffffff : #c5cbd6;
+                                    font-size: 16px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                if row.detail != "": Text {
+                                    text: row.detail;
+                                    color: #8a93a3;
+                                    font-size: 13px;
+                                    overflow: elide;
+                                }
+                            }
+                            Text {
+                                text: row.when;
+                                color: row.unlocked ? #f2b134 : #8a93a3;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                    if root.trophy-empty != "": Text {
+                        text: root.trophy-empty;
+                        color: #8a93a3;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: start;
+                LauncherButton {
+                    width: 160px;
+                    label: root.prompt-hints.back + "  " + @tr("Back");
+                    focused: root.trophy-focus == root.trophy-back-index;
+                    activated => { root.page-clicked(-3, 0); }
+                }
+            }
         }
     }
 }

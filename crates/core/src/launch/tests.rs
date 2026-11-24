@@ -838,3 +838,33 @@ fn chapter_fix_respects_player_and_settings_overrides_and_selected_slot() {
     assert_eq!(env["BB_COPY64_EOP_GATE"], "0");
     assert!(!env.contains_key("BB_COPY64_EOP_READBACK"));
 }
+
+#[test]
+fn child_runner_passes_trophies_dir_when_cache_exists() {
+    let fx = Fixture::new(&[]);
+    let runner = ChildRunner {
+        program: PathBuf::from("uncharted-run"),
+        game_dirs: BTreeMap::from([(Game::U1, fx._temp.0.join("dump"))]),
+        paths: fx.paths.clone(),
+        timeout: "0".into(),
+        extra_args: Vec::new(),
+    };
+    let without = runner.args(Game::U1, None).unwrap();
+    assert!(!without.iter().any(|arg| arg == "--trophies"));
+
+    let trophy_dir = fx.paths.data_dir.join("trophy");
+    fs::create_dir_all(&trophy_dir).unwrap();
+    fs::write(trophy_dir.join(crate::trophies::CACHE_FILE), "format\t2\n").unwrap();
+    let with_data_dir = runner.args(Game::U1, None).unwrap();
+    assert!(with_data_dir
+        .windows(2)
+        .any(|w| w[0] == "--trophies" && w[1] == trophy_dir.as_os_str()));
+
+    let out_trophy = fx.paths.game_out_dir(Game::U1).join("trophy");
+    fs::create_dir_all(&out_trophy).unwrap();
+    fs::write(out_trophy.join(crate::trophies::CACHE_FILE), "format\t2\n").unwrap();
+    let with_out_dir = runner.args(Game::U1, None).unwrap();
+    assert!(with_out_dir
+        .windows(2)
+        .any(|w| w[0] == "--trophies" && w[1] == out_trophy.as_os_str()));
+}
