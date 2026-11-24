@@ -139,6 +139,8 @@ pub struct AppleHost {
     fd: c_int,
     backing: usize,
     bytes: u64,
+    /// The block [`AppleHost::claim`] reserved: `(base, size)`.
+    claimed: Option<(usize, usize)>,
 }
 
 impl AppleHost {
@@ -154,7 +156,32 @@ impl AppleHost {
             fd: -1,
             backing: 0,
             bytes: 0,
+            claimed: None,
         }
+    }
+
+    /// Reserves, as inaccessible memory, a block for the windows of `template` (a layout at
+    /// base 0, such as [`Layout::IOS`]) at an address the kernel picks, and returns the
+    /// template rebased onto it. Nothing already mapped (the dyld shared cache, the
+    /// executable, the heap) can be inside the block, so the host's `MAP_FIXED` maps within
+    /// it replace only the host's own reservation. Once claimed, `map` refuses addresses
+    /// outside the block. The block is released when the host drops, and a second claim
+    /// returns the first one's layout only when the template is the same.
+    pub fn claim(&mut self, template: Layout) -> Option<Layout> {
+        if !template.is_valid() {
+            return None;
+        }
+        let page = PAGE as usize;
+        let size = template.span() as usize;
+        if let Some((base, held)) = self.claimed {
+            let layout = template.rebased(((base + page - 1) / page * page) as u64);
+            return (held >= size + page).then_some(layout);
+        }
+        // Over-reserve by a guest page so the base can be aligned up to it (the host page
+        // may be smaller than the guest's).
+        let block = reserve(None, size + page).ok()?;
+        self.claimed = Some((block, size + page));
+        Some(template.rebased(((block + page - 1) / page * page) as u64))
     }
 
     /// The host address of backing byte `phys` (0 before the pool exists).
@@ -187,6 +214,10 @@ impl Drop for AppleHost {
         if self.fd >= 0 {
             // SAFETY: the descriptor made in `pool`.
             unsafe { libc::close(self.fd) };
+        }
+        if let Some((base, size)) = self.claimed {
+            // SAFETY: the block made in `claim`, unused once the host is gone.
+            unsafe { libc::munmap(base as *mut c_void, size) };
         }
     }
 }
@@ -240,6 +271,12 @@ impl Host for AppleHost {
         // The guest chose this range of its own address space; replacing what is mapped
         // there is the contract, as on Linux.
         let (at, size) = (Some(address as usize), size as usize);
+        if let Some((base, held)) = self.claimed {
+            // Only the block this host reserved may be replaced.
+            if (address as usize) < base || address as usize + size > base + held {
+                return false;
+            }
+        }
         if reserved {
             reserve(at, size).is_ok()
         } else {
@@ -365,7 +402,11 @@ mod tests {
 
     #[test]
     fn layouts_stay_within_a_budget() {
-        for layout in [Layout::DEFAULT, Layout::IOS] {
+        for layout in [
+            Layout::DEFAULT,
+            Layout::IOS,
+            Layout::IOS.rebased(0x7_0000_0000),
+        ] {
             assert!(layout.is_valid());
         }
         const { assert!(Layout::IOS.footprint() <= IOS_BUDGET) };
@@ -376,33 +417,61 @@ mod tests {
         let ios = Layout::IOS;
         assert_eq!(Layout::for_budget(ios.footprint()), Some(ios));
         assert_eq!(Layout::for_budget(ios.footprint() - 1), None);
-        // Every placed window of the iOS layout is under the budget's reach: the user
-        // range, the low window and the image window are disjoint and ordered.
+        assert_eq!(ios.rebased(0x1000_0000).footprint(), ios.footprint());
         assert!(ios.image_limit <= ios.low_min && ios.low_min < ios.user_min);
         assert_eq!(Layout::DEFAULT.pool_size, RETAIL_POOL);
     }
 
+    extern "C" {
+        fn _dyld_get_image_header(index: u32) -> *const c_void;
+    }
+
+    /// `SHARED_REGION_BASE_ARM64` and `_SIZE_ARM64` (mach/shared_region.h).
+    const SHARED_REGION: std::ops::Range<u64> = 0x1_8000_0000..0x2_8000_0000;
+
+    #[test]
+    fn a_claimed_ios_layout_avoids_the_shared_cache_and_the_running_image() {
+        let mut host = AppleHost::new();
+        let layout = host.claim(Layout::IOS).unwrap();
+        assert!(layout.is_valid());
+        assert_eq!(layout.footprint(), Layout::IOS.footprint());
+        let windows = layout.image_min..layout.user_max;
+        assert_eq!(layout.image_min % PAGE, 0);
+        assert!(windows.start >= SHARED_REGION.end || windows.end <= SHARED_REGION.start);
+        // SAFETY: image 0 is the main executable; its header address is read, not followed.
+        let exe = unsafe { _dyld_get_image_header(0) } as u64;
+        assert!(!windows.contains(&exe));
+        // The block is the host's: a fixed map inside it works, one outside is refused.
+        assert!(host.map(layout.user_min, 1 << 20, 0, true, 0));
+        assert!(!host.map(layout.user_max, 1 << 20, 0, true, 0));
+        assert!(!host.map(layout.image_min - PAGE, PAGE, 0, true, 0));
+    }
+
     #[test]
     fn a_space_on_an_ios_layout_places_inside_its_user_range() {
-        let mut space = Space::with_layout(Layout::IOS, AppleHost::new());
-        assert_eq!(space.pool_size(), Layout::IOS.pool_size);
+        let mut host = AppleHost::new();
+        let layout = host.claim(Layout::IOS).unwrap();
+        let mut space = Space::with_layout(layout, host);
+        assert_eq!(space.pool_size(), layout.pool_size);
         let at = space.reserve(0, 64 << 20, 0, 0).unwrap();
-        assert!(at >= Layout::IOS.user_min && at + (64 << 20) <= Layout::IOS.user_max);
+        assert!(at >= layout.user_min && at + (64 << 20) <= layout.user_max);
         // Past the end of the user range is refused.
         assert!(space
-            .reserve(0, Layout::IOS.user_max - Layout::IOS.user_min, 0, 0)
+            .reserve(0, layout.user_max - layout.user_min, 0, 0)
             .is_err());
     }
 
     #[test]
     fn flexible_memory_round_trips_through_a_real_host() {
+        let mut host = AppleHost::new();
         let layout = Layout {
             pool_size: 64 << 20,
             flex_span: 32 << 20,
             flexible_size: 16 << 20,
             ..Layout::IOS
         };
-        let mut space = Space::with_layout(layout, AppleHost::new());
+        let layout = host.claim(layout).unwrap();
+        let mut space = Space::with_layout(layout, host);
         let at = space.map_flexible(0, 1 << 20, 3, 0).unwrap();
         assert!(at >= layout.user_min);
         // The guest range is a real mapping of the file: it is writable and zero.

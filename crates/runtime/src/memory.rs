@@ -96,23 +96,47 @@ impl Layout {
         flexible_size: FLEXIBLE_SIZE,
     };
 
-    /// An iOS app with no extended addressing: everything above the 4 GiB `__PAGEZERO`, and
-    /// 5888 MiB of address space in all (see [`Layout::footprint`]). The pool is 2560 MiB,
-    /// below the retail 5056 MiB, because the app's memory limit (3.29 GiB measured by the
-    /// peer) is far under it; the backing is a file (`apple::AppleHost`), so clean pages
-    /// can leave memory. The image window cannot sit below 2 GiB there, so titles that
-    /// assume that need the owner-device check before this profile is relied on.
+    /// An iOS app with no extended addressing, as offsets from a base: 5888 MiB of address
+    /// space in all (see [`Layout::footprint`]). The pool is 2560 MiB, below the retail 5056
+    /// MiB, because the app's memory limit (3.29 GiB measured by the peer) is far under it;
+    /// the backing is a file (`apple::AppleHost`), so clean pages can leave memory. The image
+    /// window cannot sit below 2 GiB there, so titles that assume that need the owner-device
+    /// check before this profile is relied on.
+    ///
+    /// This is a template at base 0, not addresses to map: on arm64 the dyld shared cache
+    /// (from 0x1_8000_0000), the host executable (0x1_0000_0000 plus a slide) and early heap
+    /// all sit in the range a fixed layout would pick. `apple::AppleHost::claim` reserves a
+    /// block where the kernel says it is free and returns the template rebased onto it
+    /// ([`Layout::rebased`]).
     pub const IOS: Layout = Layout {
-        low_min: 0x1_1000_0000,
-        image_min: 0x1_0000_0000,
-        image_limit: 0x1_1000_0000,
-        user_min: 0x1_2000_0000,
-        user_max: 0x1_2000_0000 + (2304 << 20),
-        scratch: 0x1_2000_0000 + (2304 << 20) - (256 << 20),
+        low_min: 256 << 20,
+        image_min: 0,
+        image_limit: 256 << 20,
+        user_min: 512 << 20,
+        user_max: (512 << 20) + (2304 << 20),
+        scratch: (512 << 20) + (2304 << 20) - (256 << 20),
         pool_size: 2560 << 20,
         flex_span: 512 << 20,
         flexible_size: 256 << 20,
     };
+
+    /// The contiguous address range the windows span, `[image_min, user_max)`.
+    pub const fn span(&self) -> u64 {
+        self.user_max - self.image_min
+    }
+
+    /// The layout moved up by `base` (every address field; sizes stay).
+    pub const fn rebased(&self, base: u64) -> Layout {
+        Layout {
+            user_min: self.user_min + base,
+            user_max: self.user_max + base,
+            low_min: self.low_min + base,
+            image_min: self.image_min + base,
+            image_limit: self.image_limit + base,
+            scratch: self.scratch + base,
+            ..*self
+        }
+    }
 
     /// Bytes of address space the layout asks for: the backing view (pool and flexible
     /// span), the user range, the host-owned window below it and the image window.
