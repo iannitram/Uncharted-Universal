@@ -1,0 +1,59 @@
+{
+  "schema" : "uu-metal-probe\/1",
+  "device_name" : "Apple M1",
+  "clang" : "Apple clang version 21.0.0 (clang-2100.4.1.1)",
+  "os" : "Version 27.0.1 (Build 26A434)",
+  "target" : "arm64-apple-macos13.0",
+  "unified_memory" : true,
+  "supports_bc" : true,
+  "result" : "pass",
+  "checks" : [
+    {
+      "name" : "setup",
+      "status" : "pass",
+      "detail" : "device, runtime MSL compile, pipeline"
+    },
+    {
+      "status" : "pass",
+      "crc32" : "0x9c3590c2",
+      "detail" : "2x2 RGBA8 sampled to 64x64: got 0x9c3590c2 want 0x9c3590c2",
+      "name" : "triangle_texture_64x64",
+      "expected_crc32" : "0x9c3590c2"
+    },
+    {
+      "status" : "pass",
+      "crc32" : "0xa63d7215",
+      "detail" : "4x4 patch at (2,2) in 8x8, blit readback: got 0xa63d7215 want 0xa63d7215",
+      "name" : "rgba8_subrect_raw",
+      "expected_crc32" : "0xa63d7215"
+    },
+    {
+      "status" : "pass",
+      "crc32" : "0xa63d7215",
+      "detail" : "same texture sampled to 8x8: got 0xa63d7215 want 0xa63d7215",
+      "name" : "rgba8_subrect_sampled",
+      "expected_crc32" : "0xa63d7215"
+    },
+    {
+      "status" : "pass",
+      "crc32" : "0x11dddd28",
+      "detail" : "2x2 block patch at (4,4) in 16x16 BC1, blit readback: got 0x11dddd28 want 0x11dddd28",
+      "name" : "bc1_subrect_raw",
+      "expected_crc32" : "0x11dddd28"
+    },
+    {
+      "status" : "pass",
+      "crc32" : "0xe5dd0b95",
+      "detail" : "BC1 decoded by sampling to 16x16: got 0xe5dd0b95 want 0xe5dd0b95",
+      "name" : "bc1_subrect_decoded",
+      "expected_crc32" : "0xe5dd0b95"
+    },
+    {
+      "name" : "nocopy_buffer",
+      "status" : "pass",
+      "detail" : "4 MiB file-backed no-copy buffer, GPU wrote 1048576 words, 0 mismatches, contents==mapping"
+    }
+  ],
+  "xcode" : "Xcode 27.2 Build version 27B52",
+  "page_size" : 16384
+}

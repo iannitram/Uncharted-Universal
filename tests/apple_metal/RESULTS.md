@@ -10,7 +10,7 @@ compute kernel and checked word by word from the mapping. On iOS it logs `os_pro
 before and after. One JSON record is printed (device name, OS, Xcode and clang versions, per-check
 status, result).
 
-Expected CRCs (Python `zlib.crc32` over the byte layouts in the comments in `probe.m`):
+Expected CRCs (Python `zlib.crc32`; regenerate with `python3 expected_crc.py`, which builds the byte layouts described in `probe.m`):
 triangle 64x64 `0x9c3590c2`, RGBA8 sub-rect `0xa63d7215`, BC1 sub-rect raw `0x11dddd28`, BC1
 decoded by sampling `0xe5dd0b95`.
 

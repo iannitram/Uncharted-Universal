@@ -29,7 +29,7 @@
 #endif
 
 // Expected CRC-32 values, computed outside this program with Python's zlib.crc32 over the byte
-// layout described next to each constant (see RESULTS.md for the generator one-liner).
+// layout described next to each constant (generator: expected_crc.py in this directory).
 // 64x64 RGBA8: quadrants TL red, TR green, BL blue, BR yellow, all alpha 255.
 static const uint32_t kCrcTriangle = 0x9c3590c2u;
 // 8x8 RGBA8, zero except a 4x4 patch at (2,2) with pixel (sx,sy) = {sx*16+1, sy*16+2, 0x80+sx+sy, 255}.
