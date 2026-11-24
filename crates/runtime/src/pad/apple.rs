@@ -2,8 +2,11 @@
 //! category describe, which button prompts that pad gets, and which of the game's pad
 //! elements it can reach.
 //!
-//! On Apple the runtime reads pads through SDL3, which wraps GameController. This table models
-//! that wrapping so it can be tested in CI on every OS; it holds names and numbers only and links
+//! On Apple the runtime reads pads through SDL3. The element map models SDL's GameController
+//! backend (iOS/iPadOS, or macOS with `SDL_HINT_JOYSTICK_HIDAPI` off). On macOS the HIDAPI driver
+//! usually takes Xbox, PS4, PS5, Switch Pro and Joy-Con pads first and sets its own element map and
+//! quirks (SDL_mfijoystick.m skips those devices); the SDL type, so the prompt family, comes out
+//! the same. This table models the wrapping so it can be tested in CI on every OS; it holds names and numbers only and links
 //! nothing from Apple. It is pinned to SDL 3.4.20 (`sdl3-sys 0.7.3`, `src/joystick/apple/
 //! SDL_mfijoystick.m`): an SDL bump must re-check it. It checks our model of SDL. Whether a real
 //! pad reports these categories and elements is checked on the owner's device.
@@ -12,7 +15,7 @@
 //! to the profile class, so a pad whose category SDL does not know can still be placed; that is the
 //! one place the two differ (see the tests).
 
-use super::host::{PROMPTS_NINTENDO, PROMPTS_PLAYSTATION, PROMPTS_XBOX};
+use super::host::{prompts_for_gamepad_type, PROMPTS_NINTENDO, PROMPTS_PLAYSTATION, PROMPTS_XBOX};
 use super::input::ACTION_TABLE;
 
 /// The prompt family a pad gets: which button pictures are drawn.
@@ -78,7 +81,8 @@ pub enum Layout {
     JoyConPair,
     JoyConL,
     JoyConR,
-    /// The original MFi extended profile: face buttons, shoulders, triggers, d-pad, two sticks, Menu.
+    /// The MFi extended profile: face buttons, shoulders, triggers, d-pad, two sticks, Menu; thumbstick
+    /// buttons, Options and Home when the pad has them.
     Mfi,
     /// An extended gamepad of unknown make (the extra buttons may or may not exist).
     GenericExtended,
@@ -178,9 +182,21 @@ pub const SDL_TYPE_JOYCON_LEFT: i32 = 8;
 pub const SDL_TYPE_JOYCON_RIGHT: i32 = 9;
 pub const SDL_TYPE_JOYCON_PAIR: i32 = 10;
 
-/// The prompt family of a pad: PlayStation for DualShock and DualSense, Nintendo for the Switch Pro
-/// and Joy-Cons, Xbox for everything else (Xbox, MFi, generic, unknown).
-pub fn prompt_family(class: GcClass, category: &str) -> PromptFamily {
+/// The prompt family the player sees: what SDL decides from the product category alone, composed
+/// with the host's SDL-type table. PlayStation for DualShock and DualSense, Nintendo for the Switch
+/// Pro and Joy-Cons, Xbox for everything else (Xbox, MFi, generic, unknown categories).
+pub fn prompt_family(category: &str) -> PromptFamily {
+    match prompts_for_gamepad_type(sdl_gamepad_type(category), false) {
+        PROMPTS_PLAYSTATION => PromptFamily::PlayStation,
+        PROMPTS_NINTENDO => PromptFamily::Nintendo,
+        _ => PromptFamily::Xbox,
+    }
+}
+
+/// The family this table would pick if the owner decides the profile class should place a pad
+/// whose category SDL does not know. It is NOT what the player sees today: a DualShock-class pad
+/// with an unknown category gets PlayStation here and Xbox from [`prompt_family`].
+pub fn prompt_family_by_class(class: GcClass, category: &str) -> PromptFamily {
     match layout(class, category) {
         Layout::DualShock | Layout::DualSense => PromptFamily::PlayStation,
         Layout::SwitchPro | Layout::JoyConPair | Layout::JoyConL | Layout::JoyConR => {
@@ -446,7 +462,8 @@ const JOYCON_R: &[Mapping] = &[
     m(RightThumbstick, "rightx"),
 ];
 
-// The original MFi extended profile: no thumbstick buttons, Options or Home.
+// The MFi extended profile. Thumbstick buttons, Options and Home are optional: SDL maps them when
+// the pad's physical input profile has them, and many pads reporting category "MFi" do.
 const MFI: &[Mapping] = &[
     m(ButtonA, "a"),
     m(ButtonB, "b"),
@@ -456,7 +473,11 @@ const MFI: &[Mapping] = &[
     m(RightShoulder, "rightshoulder"),
     m(LeftTrigger, "lefttrigger"),
     m(RightTrigger, "righttrigger"),
+    opt(LeftThumbstickButton, "leftstick"),
+    opt(RightThumbstickButton, "rightstick"),
     m(ButtonMenu, "start"),
+    opt(ButtonOptions, "back"),
+    opt(ButtonHome, "guide"),
 ];
 
 // Unknown make: the MFi set, plus the buttons a newer pad may add.
@@ -476,8 +497,9 @@ const GENERIC: &[Mapping] = &[
     opt(ButtonHome, "guide"),
 ];
 
-/// Every element a layout reports with the SDL input it becomes: buttons, triggers, both sticks
-/// and the d-pad where it has them. A single Joy-Con lists one stick and no triggers or d-pad: the
+/// The elements of a layout that map to the game's buttons, with the SDL input each becomes:
+/// buttons, triggers, both sticks and the d-pad where it has them. Elements the game does not bind
+/// are left out (Share on Series X|S pads, the Elite paddles, the extra DualSense inputs). A single Joy-Con lists one stick and no triggers or d-pad: the
 /// rest is in [`Coverage::missing`].
 pub fn elements(layout: Layout) -> Vec<Mapping> {
     let (base, with_sticks_dpad): (&[Mapping], bool) = match layout {
@@ -610,11 +632,7 @@ mod tests {
                 "{category}"
             );
             assert_eq!(sdl_gamepad_type(category), want_type, "{category}");
-            assert_eq!(
-                prompt_family(GcClass::Extended, category),
-                want_family,
-                "{category}"
-            );
+            assert_eq!(prompt_family(category), want_family, "{category}");
             // Composed with the host's SDL-type table, the family is the same.
             assert_eq!(
                 prompts_for_gamepad_type(sdl_gamepad_type(category), false),
@@ -633,10 +651,7 @@ mod tests {
             GcClass::Other,
         ] {
             assert_eq!(layout(class, CATEGORY_SWITCH_PRO), Layout::SwitchPro);
-            assert_eq!(
-                prompt_family(class, CATEGORY_JOYCON_PAIR),
-                PromptFamily::Nintendo
-            );
+            assert_eq!(prompt_family(CATEGORY_JOYCON_PAIR), PromptFamily::Nintendo);
         }
     }
 
@@ -648,20 +663,26 @@ mod tests {
             assert_eq!(layout(GcClass::DualSense, category), Layout::DualSense);
             assert_eq!(layout(GcClass::Extended, category), Layout::GenericExtended);
             assert_eq!(layout(GcClass::Other, category), Layout::GenericExtended);
-            assert_eq!(prompt_family(GcClass::Xbox, category), PromptFamily::Xbox);
             assert_eq!(
-                prompt_family(GcClass::DualShock, category),
-                PromptFamily::PlayStation
-            );
-            assert_eq!(
-                prompt_family(GcClass::DualSense, category),
-                PromptFamily::PlayStation
-            );
-            assert_eq!(
-                prompt_family(GcClass::Extended, category),
+                prompt_family_by_class(GcClass::Xbox, category),
                 PromptFamily::Xbox
             );
-            assert_eq!(prompt_family(GcClass::Other, category), PromptFamily::Xbox);
+            assert_eq!(
+                prompt_family_by_class(GcClass::DualShock, category),
+                PromptFamily::PlayStation
+            );
+            assert_eq!(
+                prompt_family_by_class(GcClass::DualSense, category),
+                PromptFamily::PlayStation
+            );
+            assert_eq!(
+                prompt_family_by_class(GcClass::Extended, category),
+                PromptFamily::Xbox
+            );
+            assert_eq!(
+                prompt_family_by_class(GcClass::Other, category),
+                PromptFamily::Xbox
+            );
         }
     }
 
@@ -679,14 +700,8 @@ mod tests {
     fn mfi_and_unknown_pads_get_xbox_prompts() {
         assert_eq!(layout(GcClass::Extended, CATEGORY_MFI), Layout::Mfi);
         assert_eq!(sdl_gamepad_type(CATEGORY_MFI), SDL_TYPE_UNKNOWN);
-        assert_eq!(
-            prompt_family(GcClass::Extended, CATEGORY_MFI),
-            PromptFamily::Xbox
-        );
-        assert_eq!(
-            prompt_family(GcClass::Other, "something new"),
-            PromptFamily::Xbox
-        );
+        assert_eq!(prompt_family(CATEGORY_MFI), PromptFamily::Xbox);
+        assert_eq!(prompt_family("something new"), PromptFamily::Xbox);
         // SDL reports unknown (0) or standard (1) for them; both are Xbox.
         for kind in [0, 1] {
             assert_eq!(prompts_for_gamepad_type(kind, false), PROMPTS_XBOX);
@@ -702,9 +717,11 @@ mod tests {
             PROMPTS_XBOX
         );
         assert_eq!(
-            prompt_family(GcClass::DualShock, "HID"),
+            prompt_family_by_class(GcClass::DualShock, "HID"),
             PromptFamily::PlayStation
         );
+        // `prompt_family` follows SDL, so it does not predict the class fallback.
+        assert_eq!(prompt_family("HID"), PromptFamily::Xbox);
     }
 
     #[test]
@@ -854,12 +871,12 @@ mod tests {
     }
 
     #[test]
-    fn mfi_lacks_thumbstick_clicks_and_options() {
+    fn mfi_thumbstick_clicks_and_options_are_optional() {
         let c = coverage(Layout::Mfi);
-        let lacks = [GameElement::L3, GameElement::R3, GameElement::Touchpad];
-        assert_eq!(c.missing, lacks.to_vec());
-        assert_eq!(c.reachable, all_of(&lacks));
-        assert!(c.optional.is_empty());
+        let optional = [GameElement::L3, GameElement::R3, GameElement::Touchpad];
+        assert_eq!(c.optional, optional.to_vec());
+        assert_eq!(c.reachable, all_of(&optional));
+        assert!(c.missing.is_empty());
     }
 
     #[test]
