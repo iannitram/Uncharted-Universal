@@ -7,7 +7,6 @@
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
-#include "bbport_diag.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/types.h"
@@ -21,6 +20,7 @@
 #include "video_core/renderer_vulkan/vk_low_latency.h"
 #include "video_core/renderer_vulkan/vk_vram.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "bbport_diag.h"
 
 #include <vk_mem_alloc.h>
 
