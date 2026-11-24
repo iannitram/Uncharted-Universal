@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include <filesystem>
 
 namespace BbSettings {
 
@@ -175,8 +176,11 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 bool FrameRateNeedsRestart();
 bool StereoNeedsRestart();
-/// Writes the file (menu changes).
-void Save();
+/// Writes the file (menu changes): to `<file>.tmp`, then renamed over it. False when it could
+/// not be written (the old file is kept).
+bool Save();
+/// The settings file: BB_CONFIG (read as UTF-16 on Windows), else `bbport.ini` in the working folder.
+std::filesystem::path ConfigPath();
 
 /// Device profile detection, presets, and per-device constraints (Issue #10).
 int DetectDeviceProfile(const char* gpu_name, const char* dmi_product, const char* cpu_model,

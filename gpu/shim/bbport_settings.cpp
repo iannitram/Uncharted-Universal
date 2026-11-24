@@ -6,8 +6,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <string_view>
+
+#ifdef _WIN32
+#include <cwchar>
+#endif
 
 namespace BbSettings {
 
@@ -15,9 +20,32 @@ namespace {
 
 std::string g_detected_gpu_name;
 
-const char* Path() {
+// The settings file. On Windows BB_CONFIG is read as UTF-16: the launcher sets it from a
+// %LOCALAPPDATA% path, and getenv() would turn a user name outside the ANSI code page into '?'
+// (the file would then be read from and written to the wrong place).
+std::filesystem::path Path() {
+#ifdef _WIN32
+    const wchar_t* env = _wgetenv(L"BB_CONFIG");
+    return env && env[0] ? std::filesystem::path(env) : std::filesystem::path("bbport.ini");
+#else
     const char* env = std::getenv("BB_CONFIG");
-    return env && env[0] ? env : "bbport.ini";
+    return env && env[0] ? std::filesystem::path(env) : std::filesystem::path("bbport.ini");
+#endif
+}
+
+// The path as UTF-8 for the log: path::string() throws on Windows for a name outside the ANSI code page.
+std::string Display(const std::filesystem::path& path) {
+    const auto text = path.u8string();
+    return std::string(text.begin(), text.end());
+}
+
+FILE* OpenFile(const std::filesystem::path& path, const char* mode) {
+#ifdef _WIN32
+    const std::wstring wide_mode(mode, mode + std::strlen(mode));
+    return _wfopen(path.c_str(), wide_mode.c_str());
+#else
+    return std::fopen(path.c_str(), mode);
+#endif
 }
 
 float Clamp(float v, float lo, float hi) {
@@ -56,6 +84,7 @@ bool IsSteamOsRelease(std::string_view os_release) {
     return false;
 }
 
+#ifdef __linux__ // the host files below exist only there; elsewhere they would be unused
 std::string ReadSmallFile(const char* path) {
     FILE* f = std::fopen(path, "r");
     if (!f) return {};
@@ -90,6 +119,8 @@ std::string ReadLinuxCpuModel() {
     }
     return {};
 }
+
+#endif
 
 void UpdateHostDetectedProfile(Values& v, const char* gpu_name) {
 #ifdef __linux__
@@ -207,6 +238,10 @@ Values& Get() {
     return values;
 }
 
+std::filesystem::path ConfigPath() {
+    return Path();
+}
+
 void Load() {
     auto& v = Get();
     v.device_profile = ProfileAuto;
@@ -218,7 +253,7 @@ void Load() {
     for (int e = 0; e < EffectCount; ++e) {
         v.effects[e] = Effects[e].default_on;
     }
-    if (FILE* file = std::fopen(Path(), "r")) {
+    if (FILE* file = OpenFile(Path(), "r")) {
         char line[256];
         while (std::fgets(line, sizeof(line), file)) {
             std::string text{line};
@@ -230,7 +265,7 @@ void Load() {
             Set(v, text.substr(0, eq), text.substr(eq + 1));
         }
         std::fclose(file);
-        std::printf("Settings: %s\n", Path());
+        std::printf("Settings: %s\n", Display(Path()).c_str());
         // Linux fork: sub-pixel jitter off by default. Settings older than version 3 had it
         // switched back on (version 2); distant objects still shimmer and shake with it, so it is
         // turned off once. It can be switched on again in the overlay.
@@ -535,12 +570,21 @@ void ApplyProfile(int profile) {
     EnforceProfileConstraints(effective);
 }
 
-void Save() {
+bool Save() {
     const auto& v = Get();
-    FILE* file = std::fopen(Path(), "w");
+    // Written next to the file and renamed over it: a crash or a full disk while writing leaves
+    // the old settings, not a cut-off file.
+    const std::filesystem::path path = Path();
+    std::filesystem::path temp = path;
+    temp += ".tmp";
+    std::error_code ec;
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), ec);
+    }
+    FILE* file = OpenFile(temp, "w");
     if (!file) {
-        std::printf("Settings: cannot write %s\n", Path());
-        return;
+        std::printf("Settings: cannot write %s\n", Display(temp).c_str());
+        return false;
     }
     std::fprintf(file,
                  "# bbport settings (in-game menu: Insert / L3+R3)\n"
@@ -567,7 +611,20 @@ void Save() {
     // Read by run.sh at start.
     std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
                                                   : v.live_resolution ? "1" : "0");
-    std::fclose(file);
+    const bool wrote = std::fflush(file) == 0 && !std::ferror(file);
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed) {
+        std::filesystem::remove(temp, ec);
+        std::printf("Settings: cannot write %s\n", Display(temp).c_str());
+        return false;
+    }
+    std::filesystem::rename(temp, path, ec);
+    if (ec) {
+        std::filesystem::remove(temp, ec);
+        std::printf("Settings: cannot replace %s\n", Display(path).c_str());
+        return false;
+    }
+    return true;
 }
 
 float PresetScale(int preset) {
