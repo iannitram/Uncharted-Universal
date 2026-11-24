@@ -7,10 +7,12 @@ use crate::display::{DisplayAdaptation, DisplayError, DisplayMetrics, DisplaySta
 use crate::driver::{
     open_validated_driver, DriverLoaderProbe, DriverMode, DriverValidationError, TurnipDriverConfig,
 };
+use crate::game::{local_game_files_complete, DownloadPhase, FirstBootDecision, FirstBootState};
 pub use crate::game::{AndroidGame, FIRST_BOOT_DOWNLOAD_PROMPT};
-use crate::game::{FirstBootDecision, FirstBootState};
 use crate::gamepad::{AndroidAxisEvent, AndroidGamepadAdapter, AndroidKeyEvent};
+use crate::save_relay::GameFilesBackend;
 use std::fmt;
+use std::path::Path;
 
 pub const DEFAULT_PACKAGE_NAME: &str = AndroidGame::U1.application_id();
 pub const MIN_SUPPORTED_ANDROID_API: u32 = 33;
@@ -84,6 +86,12 @@ impl AndroidLaunchConfig {
             app_storage_dir,
             custom_driver_so,
         )
+    }
+
+    /// Updates `game_files_present` by inspecting `u1data`/`u2data`/`u3data` + manifest under `app_storage_dir`.
+    pub fn check_local_game_files(mut self, app_storage_dir: &Path) -> Self {
+        self.game_files_present = local_game_files_complete(app_storage_dir, self.game);
+        self
     }
 }
 
@@ -216,6 +224,39 @@ impl<H> AndroidApkSession<H> {
     pub fn route_first_boot_axis(&mut self, event: AndroidAxisEvent) -> Option<FirstBootDecision> {
         let mapped = self.gamepad.handle_axis_event(event)?;
         Some(self.first_boot.handle_input(mapped.input))
+    }
+
+    /// Runs or resumes the Stage 7.04 per-game Dropbox download via `save-relay#305`, transitioning
+    /// `first_boot.decision` to [`FirstBootDecision::AlreadyInstalled`] once complete.
+    pub fn start_or_resume_download<B: GameFilesBackend + ?Sized>(
+        &mut self,
+        backend: &mut B,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> &DownloadPhase {
+        self.first_boot
+            .download
+            .run_resumable_download(backend, dest_dir, manifest_json);
+        if self.first_boot.download.phase == DownloadPhase::Completed {
+            self.first_boot.decision = FirstBootDecision::AlreadyInstalled { game: self.game };
+        }
+        &self.first_boot.download.phase
+    }
+
+    /// Retries a paused, offline, or re-authenticated Stage 7.04 download from `.part` state.
+    pub fn retry_download<B: GameFilesBackend + ?Sized>(
+        &mut self,
+        backend: &mut B,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> &DownloadPhase {
+        self.first_boot
+            .download
+            .retry_or_resume(backend, dest_dir, manifest_json);
+        if self.first_boot.download.phase == DownloadPhase::Completed {
+            self.first_boot.decision = FirstBootDecision::AlreadyInstalled { game: self.game };
+        }
+        &self.first_boot.download.phase
     }
 }
 

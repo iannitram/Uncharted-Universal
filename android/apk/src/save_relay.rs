@@ -115,6 +115,12 @@ pub struct BbSaveRelayCAbi {
             body_len: usize,
         ) -> c_int,
     >,
+    pub download_game_files: Option<
+        unsafe extern "C" fn(manifest_json: *const c_char, dest_dir: *const c_char) -> *mut c_char,
+    >,
+    pub game_files_status: Option<
+        unsafe extern "C" fn(manifest_json: *const c_char, dest_dir: *const c_char) -> *mut c_char,
+    >,
 }
 
 /// Mirrors `BbSaveRelaySideCard` in `android/save_relay_bridge.h`.
@@ -179,6 +185,35 @@ pub struct BbSaveRelaySignInChallenge {
     pub message: [c_char; 512],
 }
 
+/// Mirrors `BbSaveRelayGameFilesRequest` in `android/save_relay_bridge.h`.
+#[repr(C)]
+pub struct BbSaveRelayGameFilesRequest {
+    pub game: u32,
+    pub dest_dir: *const c_char,
+    pub manifest_path: *const c_char,
+    pub manifest_json_override: *const c_char,
+}
+
+/// Mirrors `BbSaveRelayGameFilesResult` in `android/save_relay_bridge.h`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct BbSaveRelayGameFilesResult {
+    pub outcome: i32,
+    pub game_id: [c_char; 80],
+    pub total_files: u64,
+    pub completed_files: u64,
+    pub downloaded_files: u64,
+    pub skipped_files: u64,
+    pub partial_files: u64,
+    pub bytes_on_disk: u64,
+    pub bytes_downloaded: u64,
+    pub total_bytes: u64,
+    pub complete: c_int,
+    pub reauth_needed: c_int,
+    pub error_code: [c_char; 64],
+    pub message: [c_char; 512],
+}
+
 /// C-ABI entry points exported by `android/save_relay_bridge.cpp`.
 pub mod ffi {
     use super::*;
@@ -230,6 +265,16 @@ pub mod ffi {
             abi: *const BbSaveRelayCAbi,
             err_buf: *mut c_char,
             err_cap: usize,
+        ) -> c_int;
+        pub fn bb_android_save_relay_download_game_files(
+            req: *const BbSaveRelayGameFilesRequest,
+            abi: *const BbSaveRelayCAbi,
+            out_result: *mut BbSaveRelayGameFilesResult,
+        ) -> c_int;
+        pub fn bb_android_save_relay_game_files_status(
+            req: *const BbSaveRelayGameFilesRequest,
+            abi: *const BbSaveRelayCAbi,
+            out_result: *mut BbSaveRelayGameFilesResult,
         ) -> c_int;
     }
 }
@@ -818,6 +863,184 @@ impl<B: SaveRelayBackend> SaveRelayFlow<B> {
                 Err(err)
             }
         }
+    }
+}
+
+/// Result of a Save Relay per-game asset download or status query (`save-relay#305`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GameFilesResult {
+    pub outcome: SaveRelayOutcome,
+    pub game_id: String,
+    pub total_files: u64,
+    pub completed_files: u64,
+    pub downloaded_files: u64,
+    pub skipped_files: u64,
+    pub partial_files: u64,
+    pub bytes_on_disk: u64,
+    pub bytes_downloaded: u64,
+    pub total_bytes: u64,
+    pub complete: bool,
+    pub reauth_needed: bool,
+    pub error_code: String,
+    pub message: String,
+}
+
+impl GameFilesResult {
+    pub fn error(code: impl Into<String>, message: impl Into<String>, reauth_needed: bool) -> Self {
+        Self {
+            outcome: SaveRelayOutcome::Error,
+            game_id: String::new(),
+            total_files: 0,
+            completed_files: 0,
+            downloaded_files: 0,
+            skipped_files: 0,
+            partial_files: 0,
+            bytes_on_disk: 0,
+            bytes_downloaded: 0,
+            total_bytes: 0,
+            complete: false,
+            reauth_needed,
+            error_code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+
+impl Default for BbSaveRelayGameFilesResult {
+    fn default() -> Self {
+        Self {
+            outcome: 0,
+            game_id: [0; 80],
+            total_files: 0,
+            completed_files: 0,
+            downloaded_files: 0,
+            skipped_files: 0,
+            partial_files: 0,
+            bytes_on_disk: 0,
+            bytes_downloaded: 0,
+            total_bytes: 0,
+            complete: 0,
+            reauth_needed: 0,
+            error_code: [0; 64],
+            message: [0; 512],
+        }
+    }
+}
+
+fn c_buf_to_string(buf: &[c_char]) -> String {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+impl From<&BbSaveRelayGameFilesResult> for GameFilesResult {
+    fn from(raw: &BbSaveRelayGameFilesResult) -> Self {
+        Self {
+            outcome: SaveRelayOutcome::from_raw(raw.outcome),
+            game_id: c_buf_to_string(&raw.game_id),
+            total_files: raw.total_files,
+            completed_files: raw.completed_files,
+            downloaded_files: raw.downloaded_files,
+            skipped_files: raw.skipped_files,
+            partial_files: raw.partial_files,
+            bytes_on_disk: raw.bytes_on_disk,
+            bytes_downloaded: raw.bytes_downloaded,
+            total_bytes: raw.total_bytes,
+            complete: raw.complete != 0,
+            reauth_needed: raw.reauth_needed != 0,
+            error_code: c_buf_to_string(&raw.error_code),
+            message: c_buf_to_string(&raw.message),
+        }
+    }
+}
+
+/// Backend abstraction for Stage 7.04 (`#525`) resumable per-game asset downloads via `save-relay#305`.
+pub trait GameFilesBackend {
+    fn game_files_status(
+        &mut self,
+        game: AndroidGame,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> GameFilesResult;
+
+    fn download_game_files(
+        &mut self,
+        game: AndroidGame,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> GameFilesResult;
+}
+
+/// Production [`GameFilesBackend`] calling `android/save_relay_bridge.cpp` (`save-relay#305`).
+pub struct CBridgeGameFilesBackend {
+    abi: *const BbSaveRelayCAbi,
+}
+
+impl CBridgeGameFilesBackend {
+    pub fn linked() -> Self {
+        Self {
+            abi: core::ptr::null(),
+        }
+    }
+
+    /// # Safety
+    /// `abi` must remain valid for the lifetime of this backend.
+    pub unsafe fn with_abi(abi: *const BbSaveRelayCAbi) -> Self {
+        Self { abi }
+    }
+
+    fn call(
+        &self,
+        is_download: bool,
+        game: AndroidGame,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> GameFilesResult {
+        let Ok(c_dest) = std::ffi::CString::new(dest_dir) else {
+            return GameFilesResult::error("invalid_path", "destination path contains NUL", false);
+        };
+        let Ok(c_manifest) = std::ffi::CString::new(manifest_json) else {
+            return GameFilesResult::error("invalid_manifest", "manifest JSON contains NUL", false);
+        };
+        let req = BbSaveRelayGameFilesRequest {
+            game: game_code(game),
+            dest_dir: c_dest.as_ptr(),
+            manifest_path: core::ptr::null(),
+            manifest_json_override: c_manifest.as_ptr(),
+        };
+        let mut out = BbSaveRelayGameFilesResult::default();
+        // SAFETY: `req`, `c_dest`, `c_manifest`, and `out` are valid for the duration of the call.
+        unsafe {
+            if is_download {
+                ffi::bb_android_save_relay_download_game_files(&req, self.abi, &mut out);
+            } else {
+                ffi::bb_android_save_relay_game_files_status(&req, self.abi, &mut out);
+            }
+        }
+        GameFilesResult::from(&out)
+    }
+}
+
+impl GameFilesBackend for CBridgeGameFilesBackend {
+    fn game_files_status(
+        &mut self,
+        game: AndroidGame,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> GameFilesResult {
+        self.call(false, game, dest_dir, manifest_json)
+    }
+
+    fn download_game_files(
+        &mut self,
+        game: AndroidGame,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> GameFilesResult {
+        self.call(true, game, dest_dir, manifest_json)
     }
 }
 

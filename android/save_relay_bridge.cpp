@@ -26,6 +26,8 @@ char* save_relay_sign_in_finish(const char* redirect_url);
 void save_relay_free(char* pointer);
 int save_relay_http_respond(SaveRelayHttpSink* sink, uint16_t status, const char* headers,
                             const uint8_t* body, size_t body_len);
+char* save_relay_download_game_files(const char* manifest_json, const char* dest_dir);
+char* save_relay_game_files_status(const char* manifest_json, const char* dest_dir);
 }
 #endif
 
@@ -146,6 +148,8 @@ const BbSaveRelayCAbi* ResolveAbi(const BbSaveRelayCAbi* abi) {
         save_relay_sign_in_finish,
         save_relay_free,
         save_relay_http_respond,
+        save_relay_download_game_files,
+        save_relay_game_files_status,
     };
     return &kLinkedAbi;
 #else
@@ -207,6 +211,10 @@ struct JsonValue {
 
     bool AsBool(bool fallback = false) const {
         return type == Bool ? bool_val : fallback;
+    }
+
+    uint64_t AsUint64(uint64_t fallback = 0) const {
+        return (type == Number && is_uint) ? uint_val : fallback;
     }
 };
 
@@ -972,6 +980,199 @@ int DecodeSimpleEnvelope(const char* expected_command, const std::string& raw_js
     return -1;
 }
 
+int SetGameFilesError(BbSaveRelayGameFilesResult* out, int32_t outcome, const std::string& code,
+                      const std::string& msg, bool reauth_needed = false) {
+    if (!out) {
+        return BB_SAVE_RELAY_OUTCOME_ERROR;
+    }
+    out->outcome = outcome;
+    out->reauth_needed = reauth_needed ? 1 : 0;
+    CopyCString(out->error_code, sizeof(out->error_code), SanitizeText(code, 63));
+    CopyCString(out->message, sizeof(out->message), SanitizeText(msg, 511));
+    return outcome;
+}
+
+int PrepareGameFilesRequest(const BbSaveRelayGameFilesRequest* req, std::string& out_dest_dir,
+                            std::string& out_manifest_json, std::string& out_expected_game,
+                            BbSaveRelayGameFilesResult* out_result) {
+    if (!req) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_arg",
+                                 "Game files request is null.");
+    }
+    GameMeta meta{};
+    if (!LookupGame(req->game, meta)) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_game",
+                                 "Unknown Uncharted game id.");
+    }
+    if (!NonEmpty(req->dest_dir) || HasPathTraversal(req->dest_dir)) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_path",
+                                 "Invalid game destination directory.");
+    }
+    out_dest_dir = TrimTrailingSlashes(req->dest_dir);
+    out_expected_game = meta.id;
+
+    std::string raw_manifest;
+    if (NonEmpty(req->manifest_json_override)) {
+        raw_manifest = req->manifest_json_override;
+    } else if (NonEmpty(req->manifest_path)) {
+        if (!ReadFileToString(req->manifest_path, raw_manifest)) {
+            return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_manifest",
+                                     "Game files manifest file is missing or unreadable.");
+        }
+    } else {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_manifest",
+                                 "Game files manifest JSON or path is required.");
+    }
+
+    JsonValue root;
+    if (!JsonParser(raw_manifest).Parse(root) || root.type != JsonValue::Object) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_manifest",
+                                 "Game files manifest JSON is invalid.");
+    }
+    const JsonValue* gid = root.Get("game_id");
+    if (!gid || gid->type != JsonValue::String || gid->str_val != meta.id) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_ERROR, "game_mismatch",
+                                 "Game files manifest game_id does not match selected game.");
+    }
+    out_manifest_json = std::move(raw_manifest);
+    return 0;
+}
+
+int DecodeGameFilesEnvelope(const char* expected_command, const std::string& expected_game,
+                            const std::string& raw_json, BbSaveRelayGameFilesResult* out) {
+    if (!out) {
+        return BB_SAVE_RELAY_OUTCOME_ERROR;
+    }
+    if (raw_json.empty()) {
+        return SetGameFilesError(out, BB_SAVE_RELAY_OUTCOME_ERROR, "empty_response",
+                                 "Save Relay returned an empty game-files response.");
+    }
+    JsonValue root;
+    if (!JsonParser(raw_json).Parse(root) || root.type != JsonValue::Object) {
+        return SetGameFilesError(out, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_json",
+                                 "Save Relay returned invalid game-files JSON.");
+    }
+    const JsonValue* cmd = root.Get("command");
+    const JsonValue* ok = root.Get("ok");
+    if (!cmd || cmd->type != JsonValue::String || cmd->str_val != expected_command || !ok ||
+        ok->type != JsonValue::Bool) {
+        return SetGameFilesError(out, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_response",
+                                 "Save Relay returned an unexpected game-files response.");
+    }
+
+    if (!ok->bool_val) {
+        std::string code;
+        std::string raw_msg;
+        if (const JsonValue* err = root.Get("error")) {
+            if (const JsonValue* c = err->Get("code")) {
+                code = c->AsString();
+            }
+            if (const JsonValue* m = err->Get("message")) {
+                raw_msg = SanitizeText(m->AsString(), 511);
+            }
+        }
+        if (code == "not_set_up") {
+            return SetGameFilesError(
+                out, BB_SAVE_RELAY_OUTCOME_LOCAL_ONLY, code,
+                raw_msg.empty() ? "Dropbox sign-in is required to download game files." : raw_msg);
+        }
+        if (code == "server_unreachable") {
+            return SetGameFilesError(
+                out, BB_SAVE_RELAY_OUTCOME_OFFLINE, code,
+                raw_msg.empty() ? "Dropbox is unreachable; retry when online." : raw_msg);
+        }
+        if (code == "reauth_needed" || code == "auth_failed" || code == "credentials" ||
+            code == "sign_in_failed") {
+            return SetGameFilesError(
+                out, BB_SAVE_RELAY_OUTCOME_ERROR, code,
+                raw_msg.empty() ? "Dropbox session expired; please sign in again." : raw_msg,
+                true);
+        }
+        return SetGameFilesError(
+            out, BB_SAVE_RELAY_OUTCOME_ERROR, code.empty() ? "download_failed" : code,
+            raw_msg.empty() ? "Save Relay could not complete game-file download." : raw_msg);
+    }
+
+    const JsonValue* data = root.Get("data");
+    if (!data || data->type != JsonValue::Object) {
+        return SetGameFilesError(out, BB_SAVE_RELAY_OUTCOME_ERROR, "invalid_response",
+                                 "Save Relay game-files response omitted data.");
+    }
+    const JsonValue* gid = data->Get("game_id");
+    if (!gid || gid->type != JsonValue::String || gid->str_val != expected_game) {
+        return SetGameFilesError(out, BB_SAVE_RELAY_OUTCOME_ERROR, "game_mismatch",
+                                 "Save Relay returned game-files data for a different game.");
+    }
+    CopyCString(out->game_id, sizeof(out->game_id), expected_game);
+
+    if (const JsonValue* v = data->Get("total_files")) {
+        out->total_files = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("completed_files")) {
+        out->completed_files = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("downloaded_files")) {
+        out->downloaded_files = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("skipped_files")) {
+        out->skipped_files = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("partial_files")) {
+        out->partial_files = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("bytes_on_disk")) {
+        out->bytes_on_disk = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("bytes_downloaded")) {
+        out->bytes_downloaded = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("total_bytes")) {
+        out->total_bytes = v->AsUint64();
+    }
+    if (const JsonValue* v = data->Get("complete")) {
+        out->complete = v->AsBool(false) ? 1 : 0;
+    }
+    out->outcome = BB_SAVE_RELAY_OUTCOME_DONE;
+    CopyCString(out->message, sizeof(out->message),
+                out->complete ? "game files ready" : "game files incomplete");
+    return out->outcome;
+}
+
+int RunGameFilesPhase(bool is_download, const BbSaveRelayGameFilesRequest* req,
+                      const BbSaveRelayCAbi* abi, BbSaveRelayGameFilesResult* out_result) {
+    if (!out_result) {
+        return BB_SAVE_RELAY_OUTCOME_ERROR;
+    }
+    *out_result = BbSaveRelayGameFilesResult{};
+
+    const BbSaveRelayCAbi* resolved = ResolveAbi(abi);
+    if (!resolved || !resolved->free_str) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_UNAVAILABLE, "unavailable",
+                                 "Save Relay C library is not linked on this target.");
+    }
+    if ((is_download && !resolved->download_game_files) ||
+        (!is_download && !resolved->game_files_status)) {
+        return SetGameFilesError(out_result, BB_SAVE_RELAY_OUTCOME_UNAVAILABLE, "unavailable",
+                                 "Save Relay game-files C entry point is missing.");
+    }
+
+    std::string dest_dir;
+    std::string manifest_json;
+    std::string expected_game;
+    const int prep_rc =
+        PrepareGameFilesRequest(req, dest_dir, manifest_json, expected_game, out_result);
+    if (prep_rc != 0) {
+        return prep_rc;
+    }
+
+    char* raw_ptr = is_download
+                        ? resolved->download_game_files(manifest_json.c_str(), dest_dir.c_str())
+                        : resolved->game_files_status(manifest_json.c_str(), dest_dir.c_str());
+    const std::string raw_json = TakeAndFree(resolved, raw_ptr);
+    return DecodeGameFilesEnvelope(is_download ? "game-files" : "game-files-status", expected_game,
+                                   raw_json, out_result);
+}
+
 } // namespace
 
 int bb_android_save_relay_game_id(uint32_t game, char* out_id, size_t out_cap) {
@@ -1201,4 +1402,16 @@ int bb_android_save_relay_sign_in_finish(const char* redirect_url, const BbSaveR
     const std::string raw = TakeAndFree(resolved, resolved->sign_in_finish(redirect_url));
     return DecodeSimpleEnvelope("setup", raw, "Save Relay could not finish browser sign-in.",
                                 err_buf, err_cap);
+}
+
+int bb_android_save_relay_download_game_files(const BbSaveRelayGameFilesRequest* req,
+                                              const BbSaveRelayCAbi* abi,
+                                              BbSaveRelayGameFilesResult* out_result) {
+    return RunGameFilesPhase(true, req, abi, out_result);
+}
+
+int bb_android_save_relay_game_files_status(const BbSaveRelayGameFilesRequest* req,
+                                            const BbSaveRelayCAbi* abi,
+                                            BbSaveRelayGameFilesResult* out_result) {
+    return RunGameFilesPhase(false, req, abi, out_result);
 }
