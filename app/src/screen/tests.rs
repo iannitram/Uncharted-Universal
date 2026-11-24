@@ -103,7 +103,10 @@ fn state_1_no_save_for_each_game() {
                 picture_label: game.name().into(),
             }
         );
-        assert_eq!(view.pages, ["Saves", "Settings", "Fleet", "About"]);
+        assert_eq!(
+            view.pages,
+            ["Saves", "Settings", "Fleet", "About", "Trophies"]
+        );
         assert_eq!(view.overlay, OverlayView::None);
     }
 }

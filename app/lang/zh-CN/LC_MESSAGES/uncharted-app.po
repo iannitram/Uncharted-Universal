@@ -289,3 +289,6 @@ msgstr "稍后决定"
 
 msgid "Play anyway"
 msgstr "仍然游玩"
+
+msgid "Trophies"
+msgstr "奖杯"

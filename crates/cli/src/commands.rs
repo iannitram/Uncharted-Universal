@@ -167,6 +167,15 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
         ..PrepareOptions::default()
     };
     let manifest = core("prepare", prepare::prepare(&dump, &install, game, &options))?;
+    if let Ok(key) = uncharted_core::trophies::TrophyKey::from_env(|name| ctx.var(name)) {
+        let trophy_dir = install.join("trophy");
+        if let Err(err) =
+            uncharted_core::trophies::prepare(&dump, game, &trophy_dir, 1, false, &key)
+        {
+            // Trophies are optional: warn and continue.
+            eprintln!("uncharted-universal prepare: trophies skipped ({err})");
+        }
+    }
     let mut out = Outcome::default();
     out.line(format!(
         "prepared {} ({} {}) into {}: {} files",

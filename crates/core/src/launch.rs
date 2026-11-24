@@ -395,6 +395,13 @@ impl ChildRunner {
             "--timeout".into(),
             self.timeout.clone().into(),
         ];
+        if let Some(dir) = [out.join("trophy"), self.paths.data_dir.join("trophy")]
+            .into_iter()
+            .find(|dir| dir.join(crate::trophies::CACHE_FILE).is_file())
+        {
+            args.push("--trophies".into());
+            args.push(dir.into());
+        }
         if let Some(file) = guest_argv {
             args.push("--guest-argv".into());
             args.push(file.into());

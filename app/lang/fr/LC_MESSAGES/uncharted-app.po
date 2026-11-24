@@ -289,3 +289,6 @@ msgstr "Décider plus tard"
 
 msgid "Play anyway"
 msgstr "Jouer quand même"
+
+msgid "Trophies"
+msgstr "Trophées"

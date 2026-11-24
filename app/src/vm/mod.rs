@@ -7,7 +7,9 @@ pub mod after_crash;
 pub mod fleet;
 pub mod saves;
 pub mod settings;
+pub mod trophies;
 
 pub use fleet::FleetVm;
 pub use saves::SavesVm;
 pub use settings::SettingsVm;
+pub use trophies::TrophiesVm;

@@ -4,12 +4,14 @@
 //! writes a save; the only file written is the launcher's own `last_game` note.
 
 use crate::screen::{GameData, SaveEntry};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use uncharted_core::fleet::{self, DeviceRecord};
 use uncharted_core::games::Game;
 use uncharted_core::savecard::{self, SaveCard};
 use uncharted_core::saves;
+use uncharted_core::trophies::{self, Progress, TrophySet};
 
 /// The note of the game last started, in the launcher's config folder.
 pub const LAST_GAME: &str = "last_game";
@@ -58,9 +60,94 @@ pub fn collection_icon(dump: Option<&Path>) -> Option<Vec<u8>> {
     fs::read(dump?.join("sce_sys").join("icon0.png")).ok()
 }
 
+/// Cached trophy set and persisted unlocks for one game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameTrophies {
+    pub game: Game,
+    pub title: String,
+    pub set: Option<TrophySet>,
+    pub unlocked: BTreeMap<u32, u64>,
+    pub progress: Progress,
+    pub trophy_dir: Option<PathBuf>,
+}
+
+/// Find `<install>/trophy` or `<install>/out/<stem>/trophy` if it holds `trophies.txt`, read the
+/// cached set, and load unlocks from `<user_dir>/trophy/<npcommid>.log`.
+pub fn trophies_of(game: Game, install: &Path, user_dir: &Path) -> GameTrophies {
+    let exe = game.executable();
+    let stem = exe
+        .split('.')
+        .next()
+        .unwrap_or(exe)
+        .split('-')
+        .next()
+        .unwrap_or(exe);
+    let trophy_dir = [
+        install.join("trophy"),
+        install.join("out").join(stem).join("trophy"),
+    ]
+    .into_iter()
+    .find(|dir| dir.join(trophies::CACHE_FILE).is_file());
+
+    if let Some(dir) = &trophy_dir {
+        if let Some(set) = trophies::read_cache(dir) {
+            let npcommid = if set.npcommid.is_empty() {
+                trophies::trp_file(game).1
+            } else {
+                set.npcommid.as_str()
+            };
+            let unlocked = trophies::read_unlocks(user_dir, npcommid);
+            let progress = trophies::progress(&set, &unlocked);
+            let title = if set.title.is_empty() {
+                game.name().to_owned()
+            } else {
+                set.title.clone()
+            };
+            return GameTrophies {
+                game,
+                title,
+                set: Some(set),
+                unlocked,
+                progress,
+                trophy_dir,
+            };
+        }
+    }
+
+    let unlocked = trophies::read_unlocks(user_dir, trophies::trp_file(game).1);
+    let progress = Progress {
+        unlocked: unlocked.len() as u32,
+        ..Progress::default()
+    };
+    GameTrophies {
+        game,
+        title: game.name().to_owned(),
+        set: None,
+        unlocked,
+        progress,
+        trophy_dir: None,
+    }
+}
+
+/// One-line trophy summary for the Continue screen's card, or `None` when no set is cached and
+/// nothing has been unlocked yet.
+pub fn trophy_summary(game: &GameTrophies) -> Option<String> {
+    if game.set.is_some() {
+        Some(format!(
+            "Trophies: {} / {} ({}%)",
+            game.progress.unlocked, game.progress.total, game.progress.percent
+        ))
+    } else if !game.unlocked.is_empty() {
+        Some(format!("Trophies: {} unlocked", game.unlocked.len()))
+    } else {
+        None
+    }
+}
+
 /// What the screen knows of `game`: its saves, its selected slot, whether its install folder
-/// exists, and the fallback picture.
+/// exists, the fallback picture, and its trophy summary.
 pub fn game_data(game: Game, install: &Path, user_dir: &Path, dump: Option<&Path>) -> GameData {
+    let trophy_summary = trophy_summary(&trophies_of(game, install, user_dir));
     GameData {
         game,
         saves: saves_of(user_dir, game),
@@ -68,6 +155,7 @@ pub fn game_data(game: Game, install: &Path, user_dir: &Path, dump: Option<&Path
         set_up: install.is_dir(),
         fallback_picture: collection_icon(dump),
         warning: None,
+        trophy_summary,
     }
 }
 
@@ -295,5 +383,54 @@ pub(crate) mod tests {
         // No record of this device yet: no warning, and the fleet is not asked.
         card.device = Some("AMD handheld".into());
         assert_eq!(warning_for(None, &records, &card), None);
+    }
+
+    #[test]
+    fn trophies_of_reads_cache_and_isolates_unlocks_per_game() {
+        let temp = Temp::new();
+        let user = temp.0.join("user");
+        let u1_install = temp.0.join("u1");
+        let u2_install = temp.0.join("u2");
+        fs::create_dir_all(u1_install.join("trophy")).unwrap();
+        fs::create_dir_all(u2_install.join("trophy")).unwrap();
+        fs::write(
+            u1_install.join("trophy").join(trophies::CACHE_FILE),
+            "format\t2\nnpcommid\tNPWR09798_00\ntitle\tDrake's Fortune\n\
+             trophy\t1\tB\t0\tFirst\tDesc 1\ntrophy\t2\tS\t0\tSecond\tDesc 2\n",
+        )
+        .unwrap();
+        fs::write(
+            u2_install.join("trophy").join(trophies::CACHE_FILE),
+            "format\t2\nnpcommid\tNPWR09799_00\ntitle\tAmong Thieves\n\
+             trophy\t1\tB\t0\tOther\tDesc\n",
+        )
+        .unwrap();
+        fs::create_dir_all(user.join("trophy")).unwrap();
+        fs::write(
+            user.join("trophy").join("NPWR09798_00.log"),
+            "1 1700000000\n",
+        )
+        .unwrap();
+
+        let u1 = trophies_of(Game::U1, &u1_install, &user);
+        assert_eq!(u1.title, "Drake's Fortune");
+        assert_eq!(u1.progress.unlocked, 1);
+        assert_eq!(u1.progress.total, 2);
+        assert_eq!(u1.progress.percent, 50);
+        assert_eq!(
+            trophy_summary(&u1).as_deref(),
+            Some("Trophies: 1 / 2 (50%)")
+        );
+
+        let u2 = trophies_of(Game::U2, &u2_install, &user);
+        assert_eq!(u2.progress.unlocked, 0);
+        assert_eq!(u2.progress.total, 1);
+        assert_eq!(trophy_summary(&u2).as_deref(), Some("Trophies: 0 / 1 (0%)"));
+
+        let data = game_data(Game::U1, &u1_install, &user, None);
+        assert_eq!(
+            data.trophy_summary.as_deref(),
+            Some("Trophies: 1 / 2 (50%)")
+        );
     }
 }

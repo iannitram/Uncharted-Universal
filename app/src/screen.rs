@@ -81,10 +81,17 @@ pub enum Page {
     Settings,
     Fleet,
     About,
+    Trophies,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [Page::Saves, Page::Settings, Page::Fleet, Page::About];
+    pub const ALL: [Page; 5] = [
+        Page::Saves,
+        Page::Settings,
+        Page::Fleet,
+        Page::About,
+        Page::Trophies,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -92,6 +99,7 @@ impl Page {
             Page::Settings => "Settings",
             Page::Fleet => "Fleet",
             Page::About => "About",
+            Page::Trophies => "Trophies",
         }
     }
 }
@@ -119,6 +127,8 @@ pub struct GameData {
     /// The fleet warning for the newest save (`fleet::warning`), when its build differs from
     /// this device's.
     pub warning: Option<String>,
+    /// One-line trophy progress summary for this game, when known.
+    pub trophy_summary: Option<String>,
 }
 
 impl GameData {
@@ -131,6 +141,7 @@ impl GameData {
             set_up: true,
             fallback_picture: None,
             warning: None,
+            trophy_summary: None,
         }
     }
 
@@ -631,9 +642,11 @@ impl Screen {
         let data = self.data();
         let name = data.game.name();
         let Some(newest) = data.newest() else {
+            let mut lines = vec![texts.tr("No save yet")];
+            lines.extend(data.trophy_summary.clone());
             return CardView {
                 title: name.to_owned(),
-                lines: vec![texts.tr("No save yet")],
+                lines,
                 picture: data.fallback_picture.clone(),
                 picture_label: name.to_owned(),
             };
@@ -647,6 +660,7 @@ impl Screen {
         lines.push(card::saved_line(save.saved_unix, clock));
         lines.extend(save.device.as_deref().map(card::device_line));
         lines.extend(save.play_time_secs.map(card::play_time_line));
+        lines.extend(data.trophy_summary.clone());
         let (picture, picture_label) = match &save.picture {
             Some(bytes) => (Some(bytes.clone()), String::new()),
             None => (data.fallback_picture.clone(), name.to_owned()),
