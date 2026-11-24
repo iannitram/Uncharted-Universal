@@ -5,10 +5,15 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "ffx_vk_fsr4_v07.h"
 #include "ffx_vk_fsr4_v07_assets.h"
@@ -21,9 +26,41 @@ namespace Vulkan {
 
 namespace {
 
+std::filesystem::path ExecutableDirectory() {
+    std::error_code error;
+#ifdef _WIN32
+    std::wstring path(32768, L'\0');
+    const DWORD length = GetModuleFileNameW(nullptr, path.data(), DWORD(path.size()));
+    if (length == 0 || length >= path.size()) {
+        return std::filesystem::current_path(error);
+    }
+    path.resize(length);
+    return std::filesystem::path{path}.parent_path();
+#else
+    const auto exe = std::filesystem::read_symlink("/proc/self/exe", error);
+    return error ? std::filesystem::current_path(error) : exe.parent_path();
+#endif
+}
+
+std::string ResolveAssetDir(const char* env_var, const char* folder_name) {
+    if (const char* dir = std::getenv(env_var); dir && dir[0]) {
+        return dir;
+    }
+    std::error_code error;
+    if (std::filesystem::is_directory(folder_name, error)) {
+        return folder_name;
+    }
+    const auto exe_dir = ExecutableDirectory();
+    for (const auto& candidate : {exe_dir / folder_name, exe_dir.parent_path() / folder_name}) {
+        if (std::filesystem::is_directory(candidate, error)) {
+            return candidate.string();
+        }
+    }
+    return folder_name;
+}
+
 std::string AssetDir() {
-    const char* dir = std::getenv("BB_FSR4_DIR");
-    return dir && dir[0] ? dir : "fsr4_shaders";
+    return ResolveAssetDir("BB_FSR4_DIR", "fsr4_shaders");
 }
 
 bool ReadFile(const std::string& path, std::vector<u8>& data) {
@@ -37,8 +74,8 @@ bool ReadFile(const std::string& path, std::vector<u8>& data) {
 }
 
 bool FileExists(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    return bool(file);
+    std::error_code error;
+    return std::filesystem::is_regular_file(path, error);
 }
 
 FfxFsr4ModelPreset ModelPreset(int preset) {
@@ -59,11 +96,19 @@ FfxFsr4ModelPreset ModelPreset(int preset) {
 } // namespace
 
 bool Fsr4Upscaler::AssetsPresent() {
-    // The native model's manifest and the shared post passes: fetch_fsr4_assets.sh writes every
-    // model; a partial set still falls back per preset in Record.
+    // Shared post/auto-exposure passes and the native model's manifest + weights: a partial set
+    // for a specific preset or tier still falls back cleanly in Record.
     const std::string dir = AssetDir() + "/";
+    std::error_code error;
     return FileExists(dir + "fsr4_model_v07_i8_native_shader_manifest.json") &&
-           FileExists(dir + "rcas.spv");
+           FileExists(dir + "rcas.spv") &&
+           FileExists(dir + "spd_auto_exposure.spv") &&
+           std::filesystem::file_size(dir + "fsr4_model_v07_i8_native_initializers.bin", error) ==
+               FFX_FSR4_V07_INITIALIZER_BYTES &&
+           !error &&
+           std::filesystem::file_size(dir + "fsr4_model_v07_i8_native_pre_weights.bin", error) ==
+               FFX_FSR4_V07_PRE_PASS_WEIGHTS_BYTES &&
+           !error;
 }
 
 struct Fsr4Upscaler::Impl {
@@ -250,9 +295,9 @@ struct Fsr4Upscaler::Impl {
             return false;
         }
         if (!fsr411) {
-            const char* env = std::getenv("BB_FSR411_DIR");
-            fsr411 = std::make_unique<Fsr411::Upscaler>(instance.GetPhysicalDevice(), instance.GetDevice(),
-                                                        env && env[0] ? env : "fsr4_411");
+            fsr411 = std::make_unique<Fsr411::Upscaler>(instance.GetPhysicalDevice(),
+                                                        instance.GetDevice(),
+                                                        ResolveAssetDir("BB_FSR411_DIR", "fsr4_411"));
         }
         // Its constant ring holds kFramesInFlight frames: the oldest must be done.
         while (fsr411_ticks.size() >= Fsr411::kFramesInFlight) {
