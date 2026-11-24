@@ -6,8 +6,6 @@
 
 use std::cell::Cell;
 use std::ffi::{c_char, c_int, c_void, CStr};
-#[cfg(unix)]
-use std::mem;
 use std::ptr::{self, null_mut};
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -982,20 +980,6 @@ unsafe extern "sysv64" fn posix_join(t: *mut c_void, r: *mut *mut c_void) -> i32
     posix(unsafe { thread_join(t, r) })
 }
 
-#[cfg(windows)]
-struct SpawnArgs {
-    entry: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    argument: *mut c_void,
-}
-
-#[cfg(windows)]
-unsafe extern "sysv64" fn spawn_trampoline(pack: *mut c_void) -> *mut c_void {
-    // SAFETY: `pack` was allocated via `Box::into_raw(Box::new(SpawnArgs { .. }))` in
-    // `runtime_thread_spawn` and is consumed once here.
-    let boxed = unsafe { Box::from_raw(pack.cast::<SpawnArgs>()) };
-    unsafe { (boxed.entry)(boxed.argument) }
-}
-
 /// Co-op: guest threads started by host libraries (NP matching/signaling threads).
 ///
 /// # Safety
@@ -1003,28 +987,11 @@ unsafe extern "sysv64" fn spawn_trampoline(pack: *mut c_void) -> *mut c_void {
 #[no_mangle]
 pub unsafe extern "C" fn runtime_thread_spawn(
     out: *mut *mut c_void,
-    entry: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    entry: Option<GuestEntry>,
     argument: *mut c_void,
     stack: u64,
     name: *const c_char,
 ) -> i32 {
-    #[cfg(windows)]
-    let (guest_entry, guest_arg, boxed_raw): (Option<GuestEntry>, *mut c_void, *mut SpawnArgs) =
-        match entry {
-            Some(f) => {
-                let raw = Box::into_raw(Box::new(SpawnArgs { entry: f, argument }));
-                (Some(spawn_trampoline), raw.cast::<c_void>(), raw)
-            }
-            None => (None, argument, null_mut()),
-        };
-    #[cfg(not(windows))]
-    let (guest_entry, guest_arg): (Option<GuestEntry>, *mut c_void) = (
-        entry.map(|f| unsafe {
-            mem::transmute::<unsafe extern "C" fn(*mut c_void) -> *mut c_void, GuestEntry>(f)
-        }),
-        argument,
-    );
-
     let mut attr: *mut ThreadAttr = null_mut();
     let mut r = unsafe { attr_init(&mut attr) };
     if r == 0 && stack != 0 {
@@ -1035,16 +1002,11 @@ pub unsafe extern "C" fn runtime_thread_spawn(
             create(
                 out.cast::<*mut GuestThread>(),
                 &mut attr,
-                guest_entry,
-                guest_arg,
+                entry,
+                argument,
                 name,
             )
         };
-    }
-    #[cfg(windows)]
-    if r != 0 && !boxed_raw.is_null() {
-        // SAFETY: thread was never started, so reclaim `boxed_raw` here.
-        drop(unsafe { Box::from_raw(boxed_raw) });
     }
     if !attr.is_null() {
         unsafe { attr_destroy(&mut attr) };
@@ -1193,7 +1155,7 @@ mod tests {
         }
     }
 
-    unsafe extern "C" fn worker_return_c(arg: *mut c_void) -> *mut c_void {
+    unsafe extern "sysv64" fn worker_return_c(arg: *mut c_void) -> *mut c_void {
         let mut mxcsr: u32 = 0;
         let mut fpucw: u16 = 0;
         core::arch::asm!(
