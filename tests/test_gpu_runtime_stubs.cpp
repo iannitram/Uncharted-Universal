@@ -5,8 +5,8 @@
 #include <cstddef>
 #include "bbport_toggles.h"
 // Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
+// runtime_fault_recover is defined in gpu/shim/common/assert.cpp (linked via libbbgpu).
 extern "C" {
-__thread sigjmp_buf* runtime_fault_recover = nullptr;
 std::uint64_t runtime_disabled_optimizations = 0;
 std::uint64_t runtime_disabled_optimizations2 = 0;
 void* runtime_map_guest_memory(std::uint64_t) { std::abort(); }

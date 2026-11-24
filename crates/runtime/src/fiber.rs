@@ -863,7 +863,10 @@ mod tests {
     fn fiber_resolve_and_validation() {
         unsafe {
             assert_ne!(runtime_fiber_resolve(c"sceFiberRun".as_ptr()), 0);
-            assert_ne!(runtime_fiber_resolve(c"hVYD7Ou2pCQ#libSceFiber".as_ptr()), 0);
+            assert_ne!(
+                runtime_fiber_resolve(c"hVYD7Ou2pCQ#libSceFiber".as_ptr()),
+                0
+            );
             assert_eq!(runtime_fiber_resolve(c"unknownFiber".as_ptr()), 0);
             assert_eq!(fiber_run(null_mut(), 0, null_mut()), FIBER_ERROR_NULL);
             assert_eq!(
