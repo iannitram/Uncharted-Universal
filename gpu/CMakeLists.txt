@@ -477,6 +477,7 @@ target_link_libraries(signal-flip-gate-test PRIVATE Vulkan::Headers Boost::heade
 
 add_executable(u2-stall-guards-test EXCLUDE_FROM_ALL
     ../tests/test_u2_stall_guards.cpp
+    ../tests/test_gpu_runtime_stubs.cpp
     shim/common/assert.cpp
     shim/common/logging/log.cpp)
 target_include_directories(u2-stall-guards-test PRIVATE shim shadps4)
