@@ -193,6 +193,10 @@ jobs:
           cargo test --manifest-path android/apk/Cargo.toml
           cargo check --manifest-path android/apk/Cargo.toml --target aarch64-linux-android
           cargo build --manifest-path android/apk/Cargo.toml --lib --target aarch64-linux-android
+      - name: Validate Android component lock and patch series
+        run: bash android/scripts/build_dependencies.sh --check-lock
+      - name: Run Android preflight and NDK/SDK setup script self-tests
+        run: bash android/scripts/test_preflight_and_setup.sh
       - name: Run synthetic FEX guest smoke harness (host + NDK cross-check if NDK installed)
         run: bash android/scripts/verify_fex_smoke.sh
 
