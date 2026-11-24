@@ -16,6 +16,18 @@ pub extern "C" fn runtime_restart() -> ! {
 }
 
 #[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
+#[no_mangle]
+pub extern "C" fn runtime_benchmark_active() -> std::ffi::c_int {
+    uncharted_runtime::benchmark_run::uncharted_benchmark_active()
+}
+
+#[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
+#[no_mangle]
+pub extern "C" fn runtime_benchmark_frame(vram_mib: u64) -> std::ffi::c_int {
+    uncharted_runtime::benchmark_run::uncharted_benchmark_frame(vram_mib)
+}
+
+#[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
 fn configure_gpu_and_fault_hooks() {
     use std::ffi::{c_char, c_int, c_void};
     use uncharted_runtime::loader::{entry::BbGpuConfig, fault};
@@ -54,7 +66,7 @@ fn configure_gpu_and_fault_hooks() {
     fault::configure_fault_hooks(fault::FaultHooks {
         gpu_handle_fault: Some(bbgpu_handle_fault),
         gpu_dump_writes: Some(bbgpu_dump_guest_writes),
-        benchmark_crash: None,
+        benchmark_crash: Some(uncharted_runtime::benchmark_run::uncharted_benchmark_crash),
         fault_recover: Some(bbgpu_fault_recover),
     });
 }
