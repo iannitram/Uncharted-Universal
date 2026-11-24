@@ -390,8 +390,25 @@ pub mod linux {
             .map(|(f, off, s)| (f.as_str(), *off, s.as_deref()));
         let line =
             crash::format_linux_fault(sig, rip, image_base, fault_addr as usize as u64, host_ref);
+        let (mxcsr, fpucw) = if !uc.uc_mcontext.fpregs.is_null() {
+            // SAFETY: kernel-provided `fpregs` in `ucontext_t`.
+            let fp = unsafe { &*uc.uc_mcontext.fpregs };
+            (fp.mxcsr, fp.cwd)
+        } else {
+            let mut m: u32 = 0;
+            let mut c: u16 = 0;
+            // SAFETY: reads current thread's MXCSR and x87 control word.
+            unsafe {
+                core::arch::asm!("stmxcsr [{}]", in(reg) &mut m, options(nostack));
+                core::arch::asm!("fnstcw [{}]", in(reg) &mut c, options(nostack));
+            }
+            (m, c)
+        };
+        let mut fpu_buf = [0u8; 128];
+        let fpu_len = crash::format_fpu_state_line(&mut fpu_buf, mxcsr, fpucw);
         unsafe {
             libc::write(2, line.as_ptr() as *const c_void, line.len());
+            libc::write(2, fpu_buf.as_ptr() as *const c_void, fpu_len);
             crash::report_linux_fault_signal_safe(
                 sig,
                 rip,
@@ -778,6 +795,11 @@ pub mod windows {
                 access,
                 None,
             );
+            let mut fpu_buf = [0u8; 128];
+            let fpu_len = crash::format_fpu_state_line(&mut fpu_buf, ctx.MxCsr, unsafe {
+                ctx.Anonymous.FltSave.ControlWord
+            });
+            let _ = std::io::Write::write_all(&mut std::io::stderr(), &fpu_buf[..fpu_len]);
             if gpu_enabled {
                 let fn_ptr = GPU_DUMP_WRITES_FN.load(Ordering::Acquire);
                 if fn_ptr != 0 {

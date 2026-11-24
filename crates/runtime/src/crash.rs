@@ -419,6 +419,21 @@ fn write_windows_fault_crash_fields(
     }
 }
 
+/// Formats an async-signal-safe FPU/MXCSR diagnostic line into `out`, returning bytes written.
+pub fn format_fpu_state_line(out: &mut [u8], mxcsr: u32, fpucw: u16) -> usize {
+    let ftz = (mxcsr >> 15) & 1;
+    let daz = (mxcsr >> 6) & 1;
+    let exc = mxcsr & 0x3f;
+    let mut buf = StackBuf::new(out);
+    let _ = FmtWrite::write_fmt(
+        &mut buf,
+        format_args!(
+            "Fault FPU: mxcsr={mxcsr:#010x} fpucw={fpucw:#06x} ftz={ftz} daz={daz} exc={exc:#04x}\n"
+        ),
+    );
+    buf.pos
+}
+
 /// Emits one `Crash: kind=fault ...` line for a Windows exception fault (#168).
 pub fn report_windows_fault_signal_safe(
     code: u32,
@@ -556,5 +571,20 @@ mod tests {
         let (loc, text) = linux_fault_crash_fields(4, 0x7fff_0100, 0, 0x20, None);
         assert_eq!(loc, "0x7fff0100");
         assert_eq!(text, "signal 4 at RIP 0x7fff0100, address 0x20");
+    }
+
+    #[test]
+    fn fpu_state_line_formats_ftz_daz_and_exception_flags() {
+        let mut buf = [0u8; 128];
+        let n = super::format_fpu_state_line(&mut buf, 0x9fc0, 0x037f);
+        assert_eq!(
+            std::str::from_utf8(&buf[..n]).unwrap(),
+            "Fault FPU: mxcsr=0x00009fc0 fpucw=0x037f ftz=1 daz=1 exc=0x00\n"
+        );
+        let n = super::format_fpu_state_line(&mut buf, 0x1f85, 0x037f);
+        assert_eq!(
+            std::str::from_utf8(&buf[..n]).unwrap(),
+            "Fault FPU: mxcsr=0x00001f85 fpucw=0x037f ftz=0 daz=0 exc=0x05\n"
+        );
     }
 }

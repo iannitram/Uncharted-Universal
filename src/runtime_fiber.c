@@ -139,7 +139,11 @@ static uint64_t context_of(GuestFiber *fiber,uint64_t below) {
     top&=~UINT64_C(15);
     uint64_t *frame=(uint64_t *)(top-64);
     uint32_t mxcsr=0x9fc0; uint16_t fpucw=0x037f;
-    if (!(fiber->flags&FLAG_SET_FPU)) {
+    if (fiber->flags&FLAG_SET_FPU) {
+        uint32_t configured=runtime_guest_mxcsr();
+        if (configured) mxcsr=configured;
+        else __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
+    } else {
         __asm__ volatile("stmxcsr %0" : "=m"(mxcsr));
         __asm__ volatile("fnstcw %0" : "=m"(fpucw));
     }

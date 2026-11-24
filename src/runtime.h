@@ -47,6 +47,7 @@ void runtime_thread_attach_main(void);
 int32_t *runtime_errno(void);
 #define RUNTIME_LOOKUP(table, nid) runtime_lookup(table, sizeof(table)/sizeof(*(table)), nid)
 /* The PS4's floating-point state for guest code on this thread (MXCSR, x87 control word). */
+uint32_t runtime_guest_mxcsr(void);
 void runtime_set_guest_fpu(void);
 /* Guest-visible errno values are FreeBSD's; runtime_guest_errno is Rust (kernel.rs). */
 void *runtime_low_map(size_t size, int prot);

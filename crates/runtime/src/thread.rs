@@ -620,10 +620,22 @@ fn set_host_name(name: &[u8; 32]) {
 #[cfg(windows)]
 fn set_host_name(_name: &[u8; 32]) {}
 
-fn guest_mxcsr_value() -> u32 {
+pub(crate) fn parse_guest_mxcsr(raw: &str) -> u32 {
+    let trimmed = raw.trim();
+    let hex = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .unwrap_or(trimmed);
+    if hex.is_empty() {
+        return 0;
+    }
+    u32::from_str_radix(hex, 16).unwrap_or(0)
+}
+
+pub(crate) fn guest_mxcsr_value() -> u32 {
     static VALUE: OnceLock<u32> = OnceLock::new();
     *VALUE.get_or_init(|| match std::env::var("BB_GUEST_MXCSR") {
-        Ok(env) => u32::from_str_radix(env.trim_start_matches("0x"), 16).unwrap_or(0),
+        Ok(env) => parse_guest_mxcsr(&env),
         Err(_) => 0x9fc0,
     })
 }
@@ -1230,5 +1242,15 @@ mod tests {
             assert_ne!(runtime_thread_resolve(c"6UgtwV+0zb4#p#J".as_ptr()), 0);
             assert_eq!(runtime_thread_resolve(c"missing".as_ptr()), 0);
         }
+    }
+
+    #[test]
+    fn guest_mxcsr_parser_matches_c_hex_rules() {
+        assert_eq!(parse_guest_mxcsr("0x9fc0"), 0x9fc0);
+        assert_eq!(parse_guest_mxcsr("0X1f80"), 0x1f80);
+        assert_eq!(parse_guest_mxcsr(" 1f80 "), 0x1f80);
+        assert_eq!(parse_guest_mxcsr("0"), 0);
+        assert_eq!(parse_guest_mxcsr(""), 0);
+        assert_eq!(parse_guest_mxcsr("not-hex"), 0);
     }
 }
