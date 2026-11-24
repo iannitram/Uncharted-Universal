@@ -288,13 +288,14 @@ void Scheduler::WaitDeferredSignals() {
     }
     BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
     KickRecording(true);
+    BbThreads::WaitBackoff backoff;
     while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
         if (VideoCore::LandingGate::Stopped()) {
             break; // shutdown: the labels waiting on the landing thread were dropped
         }
         // Helps the copy threads the signals wait for.
         BbCopy::WaitAsync();
-        std::this_thread::yield();
+        backoff.WaitOnce();
     }
 }
 
@@ -303,8 +304,9 @@ void Scheduler::WaitHostCopies() {
         BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
         BbStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
         KickRecording(true);
+        BbThreads::WaitBackoff backoff;
         while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-            std::this_thread::yield();
+            backoff.WaitOnce();
         }
     }
     BbStats::WaitTimer timer{BbStats::copy_threads_wait_ns};
@@ -367,10 +369,10 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
         // and a sleeping recorder costs the GPU thread a wake-up syscall per kick. With few
         // hardware threads (Steam Deck: 8) the spin would take time from guest threads.
         static const auto spin_time = std::chrono::microseconds(
-            BbThreads::Available() >= 12 ? 200 : 20);
+            BbThreads::EnvSpinMicros("BB_RECORDER_SPIN_US", 200, 20));
         const auto spin_until = std::chrono::steady_clock::now() + spin_time;
         for (u32 spins = 1; queued_chunks.load(std::memory_order_acquire) == 0; ++spins) {
-            __builtin_ia32_pause();
+            BbThreads::SpinPause();
             // The clock is read every 256 pauses, not per iteration.
             if (!(spins & 255) &&
                 (stoken.stop_requested() || std::chrono::steady_clock::now() >= spin_until)) {

@@ -239,4 +239,6 @@ if [[ ${1:-} == --test ]]; then
     # tests/test_cpu_patch.c is a Rust test now (crates/runtime/src/cpu_patch/tests.rs).
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -I. tests/test_equeue_request_gate.cpp -o out/equeue-request-gate-test
     out/equeue-request-gate-test
+    "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -pthread -Igpu/shim tests/test_wait_backoff.cpp -o out/wait-backoff-test
+    out/wait-backoff-test
 fi

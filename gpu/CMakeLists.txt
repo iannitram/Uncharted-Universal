@@ -505,6 +505,11 @@ target_include_directories(u2-stall-guards-test PRIVATE shim "${BB_SHADPS4_CORE_
 target_compile_options(u2-stall-guards-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
 target_link_libraries(u2-stall-guards-test PRIVATE Vulkan::Headers Boost::headers fmt::fmt)
 
+add_executable(wait-backoff-test EXCLUDE_FROM_ALL
+    ../tests/test_wait_backoff.cpp)
+target_include_directories(wait-backoff-test PRIVATE shim)
+target_compile_options(wait-backoff-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(movie-scaling-test EXCLUDE_FROM_ALL ../tests/test_movie_scaling.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(movie-scaling-test PRIVATE shim "${BB_SHADPS4_CORE_DIR}")
 target_compile_options(movie-scaling-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
