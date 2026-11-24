@@ -188,6 +188,11 @@ pub fn build_env(
         env.remove("BB_READBACK_SMALL_GATE");
     }
 
+    // Stereoscopic 3D is only supported in Uncharted 3 (#19); U1 and U2 have no stereo path.
+    if game != Game::U3 && !player_env.contains_key("BB_STEREO_MODE") {
+        env.remove("BB_STEREO_MODE");
+    }
+
     // U1 opens its own menu, not the collection's, unless the player (or the direct start of
     // `BB_U1_DIRECT=1`) says otherwise.
     if game == Game::U1

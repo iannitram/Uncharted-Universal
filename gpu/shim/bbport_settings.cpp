@@ -184,9 +184,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "fps_limit") {
         v.fps_limit = i < 0 ? -1 : (i == 0 ? 0 : std::clamp(i, 15, 240));
     } else if (key == "stereo_mode") {
-        if (const int m = ParseStereoMode(value); m >= 0) {
-            v.stereo_mode = m;
-        }
+        v.stereo_mode = ParseStereoMode(value.c_str());
     } else if (key == "output_res") {
         for (int r = 0; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
@@ -604,14 +602,42 @@ const char* ProfileLabel(int profile) {
     return labels[std::clamp(profile, 0, ProfileCount - 1)];
 }
 
-const char* StereoModeName(int mode) {
-    static constexpr const char* names[StereoModeCount] = {"off", "sbs", "tb", "anaglyph"};
-    return names[std::clamp(mode, 0, StereoModeCount - 1)];
+int ParseStereoMode(const char* value) {
+    if (!value || !value[0]) {
+        return StereoOff;
+    }
+    std::string lower;
+    for (const char* p = value; *p; ++p) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(*p))));
+    }
+    if (lower == "passthrough" || lower == "sequential" || lower == "frame-sequential" ||
+        lower == "alternate" || lower == "1") {
+        return StereoPassthrough;
+    }
+    if (lower == "side-by-side" || lower == "sbs" || lower == "left-right" || lower == "lr" ||
+        lower == "2") {
+        return StereoSideBySide;
+    }
+    if (lower == "top-bottom" || lower == "tb" || lower == "over-under" || lower == "ou" ||
+        lower == "3") {
+        return StereoTopBottom;
+    }
+    if (lower == "anaglyph" || lower == "red-cyan" || lower == "4") {
+        return StereoAnaglyph;
+    }
+    return StereoOff;
+}
+
+const char* StereoModeName(int stereo_mode) {
+    static constexpr const char* names[StereoModeCount] = {"off", "passthrough", "side-by-side",
+                                                           "top-bottom", "anaglyph"};
+    return names[std::clamp(stereo_mode, 0, StereoModeCount - 1)];
 }
 
 const char* StereoModeLabel(int mode) {
     static constexpr const char* labels[StereoModeCount] = {
-        "Off", "Side-by-Side (SBS)", "Top-Bottom (TB)", "Anaglyph (Red/Cyan)"};
+        "Off", "Passthrough (Sequential)", "Side-by-Side (SBS)", "Top-Bottom (TB)",
+        "Anaglyph (Red/Cyan)"};
     return labels[std::clamp(mode, 0, StereoModeCount - 1)];
 }
 

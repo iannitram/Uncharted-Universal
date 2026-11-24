@@ -13,6 +13,7 @@ pub struct Display {
     pub anti_aliasing: String,
     pub upscale_preset: String,
     pub frame_generation: String,
+    pub stereo_mode: String,
 }
 
 impl Display {
@@ -31,6 +32,7 @@ impl Display {
             anti_aliasing: get("anti_aliasing"),
             upscale_preset: get("upscale_preset"),
             frame_generation: get("frame_generation"),
+            stereo_mode: get("stereo_mode"),
         }
     }
 
@@ -111,6 +113,9 @@ pub fn run_settings(stored: &Display, profile: &DeviceProfile) -> run_env::Setti
         "BB_FRAME_GEN".into(),
         or_off("frame_generation", &stored.frame_generation),
     );
+    if !stored.stereo_mode.is_empty() && stored.stereo_mode != "off" {
+        extra.insert("BB_STEREO_MODE".into(), stored.stereo_mode.clone());
+    }
     settings
 }
 

@@ -347,3 +347,27 @@ fn ultrawide_5k2k_settings_and_game_res_env() {
     assert_eq!(with_game_res["BB_DMEM_MB"], "7104");
     assert_eq!(with_game_res["BB_DMEM_MB_USER"], "7104");
 }
+
+#[test]
+fn stereo_mode_setting_is_restricted_to_u3() {
+    let settings = Settings {
+        extra: map(&[("BB_STEREO_MODE", "side-by-side")]),
+        ..Settings::default()
+    };
+    let u3: BTreeMap<_, _> = build_env(Game::U3, &settings, &PROFILE, &BTreeMap::new())
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        u3.get("BB_STEREO_MODE").map(String::as_str),
+        Some("side-by-side")
+    );
+
+    for other in [Game::U1, Game::U2] {
+        let built: BTreeMap<_, _> = build_env(other, &settings, &PROFILE, &BTreeMap::new())
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert!(!built.contains_key("BB_STEREO_MODE"));
+    }
+}

@@ -300,15 +300,15 @@ fn raw_mouse_settings_survive_display_changes_and_obey_the_limits() {
     vm.click(0, 1); // A display card must keep the input values.
     vm.click(2, 1); // So must a device profile change.
     assert_eq!(vm.stored().mouse, stored.mouse);
-    vm.click(8, 0);
+    vm.click(9, 0);
     assert!(!vm.stored().mouse.raw);
     vm.handle(Input::Activate);
     assert!(vm.stored().mouse.raw);
     for _ in 0..300 {
-        vm.click(9, 0);
+        vm.click(10, 0);
     }
     assert_eq!(vm.stored().mouse.sensitivity(), "0.10");
-    assert_eq!(vm.click(9, 0), SettingsCommand::None);
+    assert_eq!(vm.click(10, 0), SettingsCommand::None);
     for _ in 0..300 {
         vm.handle(Input::Move(Nav::Right));
     }
@@ -484,4 +484,52 @@ fn notes_document_supported_aspects_and_bar_fallback() {
         "expected aspect-ratio support note in {:?}",
         view.notes
     );
+}
+
+#[test]
+fn stereo_mode_defaults_off_cycles_and_maps_to_bb_stereo_mode_for_u3_only() {
+    let mut vm = SettingsVm::new(Stored::default(), desktop(), None);
+    assert_eq!(vm.stored().stereo_mode, "off");
+    assert!(!run_settings(vm.stored(), desktop())
+        .extra
+        .contains_key("BB_STEREO_MODE"));
+
+    let row = FIRST_CHOICE
+        + Choice::ALL
+            .iter()
+            .position(|c| *c == Choice::StereoMode)
+            .unwrap();
+    vm.focus = Grid::at(row, 0);
+
+    for expected in ["passthrough", "side-by-side", "top-bottom"] {
+        let SettingsCommand::Save(saved) = vm.handle(Input::Move(Nav::Right)) else {
+            panic!("expected Save for stereo mode change");
+        };
+        assert_eq!(saved.stereo_mode, expected);
+        let run = run_settings(&saved, desktop());
+        assert_eq!(
+            run.extra.get("BB_STEREO_MODE").map(String::as_str),
+            Some(expected)
+        );
+        let u3: std::collections::BTreeMap<_, _> = run_env::build_env(
+            Game::U3,
+            &run,
+            desktop(),
+            &std::collections::BTreeMap::new(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+        assert_eq!(u3.get("BB_STEREO_MODE").map(String::as_str), Some(expected));
+        let u2: std::collections::BTreeMap<_, _> = run_env::build_env(
+            Game::U2,
+            &run,
+            desktop(),
+            &std::collections::BTreeMap::new(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+        assert!(!u2.contains_key("BB_STEREO_MODE"));
+    }
 }

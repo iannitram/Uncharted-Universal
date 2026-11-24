@@ -13,6 +13,7 @@
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "bbport_overlay.h"
+#include "bbport_stereo.h"
 #include "bbgpu.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -182,6 +183,60 @@ Presenter::~Presenter() {
         vmaDestroyImage(instance.GetAllocator(), hudless_frame.image, hudless_frame.allocation);
         device.destroyImageView(hudless_frame.image_view);
     }
+    DestroyStereoPrev();
+}
+
+void Presenter::DestroyStereoPrev() {
+    if (stereo_prev.image) {
+        vmaDestroyImage(instance.GetAllocator(), stereo_prev.image, stereo_prev.allocation);
+    }
+    stereo_prev = {};
+}
+
+void Presenter::EnsureStereoPrev(u32 width, u32 height, vk::CommandBuffer cmdbuf) {
+    if (stereo_prev.image && stereo_prev.width == width && stereo_prev.height == height) {
+        return;
+    }
+    DestroyStereoPrev();
+    if (width == 0 || height == 0) {
+        return;
+    }
+    const VkImageCreateInfo image_info = static_cast<VkImageCreateInfo>(vk::ImageCreateInfo{
+        .imageType = vk::ImageType::e2D,
+        .format = FrameGenerator::ColorFormat,
+        .extent = {width, height, 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = vk::SampleCountFlagBits::e1,
+        .usage = vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
+    });
+    const VmaAllocationCreateInfo alloc_info = {
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
+    };
+    VkImage img{};
+    if (vmaCreateImage(instance.GetAllocator(), &image_info, &alloc_info, &img,
+                       &stereo_prev.allocation, nullptr) != VK_SUCCESS) {
+        LOG_ERROR(Render_Vulkan, "Stereo: no memory for previous eye image");
+        stereo_prev = {};
+        return;
+    }
+    stereo_prev.image = vk::Image{img};
+    stereo_prev.width = width;
+    stereo_prev.height = height;
+    stereo_prev.valid = false;
+    const vk::ImageMemoryBarrier init_barrier{
+        .srcAccessMask = vk::AccessFlagBits::eNone,
+        .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+        .oldLayout = vk::ImageLayout::eUndefined,
+        .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = stereo_prev.image,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    };
+    cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                           vk::PipelineStageFlagBits::eTransfer,
+                           vk::DependencyFlagBits::eByRegion, {}, {}, init_barrier);
 }
 
 void Presenter::DestroyGenerated(Frame* frame) {
@@ -916,10 +971,80 @@ bool Presenter::PresentImage(Frame* frame, vk::Image image, bool last, u64 laten
         };
         cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
                                vk::DependencyFlagBits::eByRegion, clear_done, {}, {});
-        cmdbuf.blitImage(image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
-                         vk::ImageLayout::eTransferDstOptimal,
-                         MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height),
-                         vk::Filter::eLinear);
+        const int stereo_mode = BbSettings::Get().stereo_mode.load(std::memory_order_relaxed);
+        if (BbStereo::IsComposed(stereo_mode) && last) {
+            const vk::Rect2D fit =
+                FitImage(frame->width, frame->height, extent.width, extent.height);
+            const BbStereo::Rect cur_rect =
+                BbStereo::EyeRect(stereo_mode, stereo_eye, fit.offset.x, fit.offset.y,
+                                  s32(fit.extent.width), s32(fit.extent.height));
+            const BbStereo::Rect prev_rect =
+                BbStereo::EyeRect(stereo_mode, stereo_eye ^ 1, fit.offset.x, fit.offset.y,
+                                  s32(fit.extent.width), s32(fit.extent.height));
+            EnsureStereoPrev(frame->width, frame->height, cmdbuf);
+            if (stereo_prev.image && stereo_prev.valid) {
+                cmdbuf.blitImage(
+                    stereo_prev.image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
+                    vk::ImageLayout::eTransferDstOptimal,
+                    MakeImageBlit(frame->width, frame->height, prev_rect.width, prev_rect.height,
+                                  prev_rect.x, prev_rect.y),
+                    vk::Filter::eLinear);
+            }
+            cmdbuf.blitImage(
+                image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
+                vk::ImageLayout::eTransferDstOptimal,
+                MakeImageBlit(frame->width, frame->height, cur_rect.width, cur_rect.height,
+                              cur_rect.x, cur_rect.y),
+                vk::Filter::eLinear);
+            if (stereo_prev.image) {
+                const vk::ImageMemoryBarrier to_dst{
+                    .srcAccessMask = vk::AccessFlagBits::eTransferRead,
+                    .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .oldLayout = vk::ImageLayout::eTransferSrcOptimal,
+                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = stereo_prev.image,
+                    .subresourceRange = color_range,
+                };
+                cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                       vk::PipelineStageFlagBits::eTransfer,
+                                       vk::DependencyFlagBits::eByRegion, {}, {}, to_dst);
+                const vk::ImageCopy copy_region{
+                    .srcSubresource = MakeImageSubresourceLayers(),
+                    .srcOffset = {0, 0, 0},
+                    .dstSubresource = MakeImageSubresourceLayers(),
+                    .dstOffset = {0, 0, 0},
+                    .extent = {frame->width, frame->height, 1},
+                };
+                cmdbuf.copyImage(image, vk::ImageLayout::eTransferSrcOptimal, stereo_prev.image,
+                                 vk::ImageLayout::eTransferDstOptimal, copy_region);
+                const vk::ImageMemoryBarrier to_src{
+                    .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .dstAccessMask = vk::AccessFlagBits::eTransferRead,
+                    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .newLayout = vk::ImageLayout::eTransferSrcOptimal,
+                    .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                    .image = stereo_prev.image,
+                    .subresourceRange = color_range,
+                };
+                cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                       vk::PipelineStageFlagBits::eTransfer,
+                                       vk::DependencyFlagBits::eByRegion, {}, {}, to_src);
+                stereo_prev.valid = true;
+            }
+            stereo_eye ^= 1;
+        } else {
+            cmdbuf.blitImage(
+                image, vk::ImageLayout::eTransferSrcOptimal, swapchain_image,
+                vk::ImageLayout::eTransferDstOptimal,
+                MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height),
+                vk::Filter::eLinear);
+            if (stereo_mode == BbSettings::StereoPassthrough && last) {
+                stereo_eye ^= 1;
+            }
+        }
         // bbport: the settings menu / FPS counter over the frame, at display resolution.
         BbOverlay::NotePresent();
         const bool overlay = BbOverlay::Visible();
