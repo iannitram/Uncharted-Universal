@@ -2,8 +2,8 @@
 # Windows zip, and the macOS app bundle. Each carries the Rust launcher (uncharted-app, with
 # uncharted-universal and uncharted-run beside it; packaging/rust_faces.sh). Every build of main is published as a release
 # (v<upstream version>-linux.<run>, the tag the Linux launcher's update check looks for) with
-# the Linux and Windows packages, one manifest.json and one SHA256SUMS over them. The macOS
-# bundle is built and kept as a CI artifact only: the Mac app that ships is roadmap 1.x.
+# the Linux, Windows and macOS (arm64, ad-hoc signed: docs/apple/signing.md) packages, one
+# manifest.json and one SHA256SUMS over them.
 name: Build release packages
 
 on:
@@ -271,7 +271,8 @@ jobs:
           path: dist/uncharted-windows.zip
 
   macos:
-    # The macOS app bundle, kept as an artifact: it is not released (the Mac app is 1.x).
+    # The macOS app bundle (Apple silicon only), with the pinned Save Relay helper; the release
+    # job publishes the zip.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -287,7 +288,18 @@ jobs:
           "$app/Contents/MacOS/uncharted-universal" --help | grep -q "uncharted-universal"
           { "$app/Contents/MacOS/uncharted-run" --help 2>&1 || true; } | grep -q "usage: uncharted-run"
           plutil -lint "$app/Contents/Info.plist"
-          codesign --verify --deep "$app"
+          codesign --verify --deep --strict "$app"
+          for exe in uncharted-app uncharted-universal uncharted-run save-relay; do
+            test "$(lipo -archs "$app/Contents/MacOS/$exe")" = arm64
+          done
+          test -x "$app/Contents/MacOS/save-relay"
+          test -f "$app/Contents/Resources/components.lock.json"
+          test -f "$app/Contents/Resources/licenses/save-relay-LICENSE.txt"
+          for n in 1 2 3; do test -f "$app/Contents/Resources/save-relay-manifests/uncharted-$n.json"; test -f "$app/Contents/MacOS/save-relay-manifests/uncharted-$n.json"; done
+          python3 -c "import hashlib, json, pathlib; app = pathlib.Path('out/stage/Uncharted Universal.app/Contents'); lock = json.loads((app / 'Resources/components.lock.json').read_text())['save-relay']; assert hashlib.sha256((app / 'MacOS/save-relay').read_bytes()).hexdigest() == lock['sha256']"
+          bash tools/check_no_game_data.sh dist/uncharted-macos.zip
+      - name: Verify Save Relay in the Mac zip and exercise Play
+        run: python3 tests/macos_relay.py dist/uncharted-macos.zip
       - uses: actions/upload-artifact@v4
         continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
         with:
@@ -296,9 +308,10 @@ jobs:
           path: dist/uncharted-macos.zip
 
   release:
-    # main only: the Linux and Windows packages in one release, with one manifest.json and one
-    # SHA256SUMS over both (the Linux job's software Vulkan smoke result stands for the build).
-    needs: [build, windows]
+    # main only: the Linux, Windows and macOS packages in one release, with one manifest.json and
+    # one SHA256SUMS over all of them (the Linux job's software Vulkan smoke result stands for
+    # the build).
+    needs: [build, windows, macos]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && !inputs.ref
     runs-on: ubuntu-24.04
     steps:
@@ -313,12 +326,16 @@ jobs:
           path: release
       - uses: actions/download-artifact@v4
         with:
+          name: uncharted-macos
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
           name: linux-dependencies
           path: ${{ runner.temp }}/dependencies
       - name: Manifest and checksums over every package
         run: |
           rm -f release/manifest.json release/SHA256SUMS
-          python3 tools/write_ci_manifest.py --directory release --platform linux,windows --revision "$GITHUB_SHA" \
+          python3 tools/write_ci_manifest.py --directory release --platform linux,windows,macos --revision "$GITHUB_SHA" \
             --smoke-result release/vulkan-smoke.txt --dependencies "$RUNNER_TEMP/dependencies/ci-dependencies.json"
           (cd release && sha256sum -c SHA256SUMS)
       - name: Release
@@ -327,6 +344,6 @@ jobs:
           TAG: ${{ needs.build.outputs.tag }}
         run: |
           gh release create "$TAG" release/Uncharted-x86_64.AppImage release/uncharted-linux.tar.gz \
-            release/uncharted-windows.zip release/manifest.json release/SHA256SUMS release/vulkan-smoke.txt \
-            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Uncharted $TAG (Linux, Steam Deck, Windows)" \
+            release/uncharted-windows.zip release/uncharted-macos.zip release/manifest.json release/SHA256SUMS release/vulkan-smoke.txt \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Uncharted $TAG (Linux, Steam Deck, Windows, Mac)" \
             --notes "Built from $(git log -1 --format='%h %s'). Install steps: see the README."
