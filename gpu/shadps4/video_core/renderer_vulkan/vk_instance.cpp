@@ -228,6 +228,11 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 }
 
 Instance::~Instance() {
+    // NGX is released while the device it was given still exists: the process-exit hook would
+    // otherwise call the NVIDIA driver with a destroyed device (#155).
+    if (Dlss* dlss = Dlss::Get()) {
+        dlss->Shutdown();
+    }
     ImGui::Core::Shutdown(GetDevice());
     vmaDestroyAllocator(allocator);
 }
