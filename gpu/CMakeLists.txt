@@ -461,6 +461,12 @@ target_include_directories(bind-state-cache-test PRIVATE shim shadps4)
 target_compile_options(bind-state-cache-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
 target_link_libraries(bind-state-cache-test PRIVATE Vulkan::Headers Boost::headers)
 
+add_executable(nv-perf-diag-test EXCLUDE_FROM_ALL
+    ../tests/test_nv_perf_diag.cpp)
+target_include_directories(nv-perf-diag-test PRIVATE shim shadps4)
+target_compile_options(nv-perf-diag-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas)
+target_link_libraries(nv-perf-diag-test PRIVATE Vulkan::Headers)
+
 add_executable(signal-flip-gate-test EXCLUDE_FROM_ALL
     ../tests/test_signal_flip_gate.cpp
     ../tests/test_gpu_runtime_stubs.cpp

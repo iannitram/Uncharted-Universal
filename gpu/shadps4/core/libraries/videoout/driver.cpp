@@ -30,6 +30,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_vram.h"
 
 extern "C" int runtime_benchmark_active(void);
 extern "C" void runtime_benchmark_frame(std::uint64_t vram_mib);
@@ -439,6 +440,9 @@ void VideoOutDriver::Flip(const Request& req) {
         if (window >= 5.0) {
             const u32 compiles = Vulkan::g_bb_compiles.exchange(0);
             const u64 compile_ns = Vulkan::g_bb_compile_ns.exchange(0);
+            const u64 w_compiles = BbStats::worker_compiles.exchange(0);
+            const u64 w_compile_ns = BbStats::worker_compile_ns.exchange(0);
+            const u64 present_ns = BbStats::present_wait_ns.exchange(0);
             const u64 direct = Vulkan::Scheduler::direct_recordings.exchange(0);
             const u64 faults = BbStats::tracker_faults.exchange(0);
             // GPU command thread CPU time per draw: comparable between builds even when the scene
@@ -482,6 +486,39 @@ void VideoOutDriver::Flip(const Request& req) {
                         BbStats::tick_wait_ns.exchange(0) / (window * 1e7),
                         frames ? double(BbStats::reduced_draws.exchange(0)) / frames : 0.0,
                         frames ? double(BbStats::scene_draws.exchange(0)) / frames : 0.0);
+            if (w_compiles || present_ns) {
+                std::printf("Worker/Present: %llu worker compiles (%.1f thread-ms), "
+                            "swapchain acquire+present %.1f%%\n",
+                            static_cast<unsigned long long>(w_compiles), w_compile_ns / 1e6,
+                            present_ns / (window * 1e7));
+            }
+            static u64 last_host_fallbacks = 0, last_failed_allocs = 0, last_reclaim_passes = 0;
+            const u64 host_fallbacks = Vulkan::Vram::host_fallbacks.load(std::memory_order_relaxed);
+            const u64 failed_allocs = Vulkan::Vram::failed_allocs.load(std::memory_order_relaxed);
+            const u64 reclaim_passes = Vulkan::Vram::reclaim_passes.load(std::memory_order_relaxed);
+            const u64 arena_host_bytes =
+                Vulkan::Vram::arena_host_bytes.load(std::memory_order_relaxed);
+            if (host_fallbacks || arena_host_bytes || failed_allocs || reclaim_passes) {
+                std::printf(
+                    "VRAM stats: images %llu MiB, arenas %llu MiB (%llu MiB host), buffers %llu MiB; "
+                    "host fallbacks %llu (+%llu), alloc fails %llu (+%llu), reclaims %llu (+%llu)\n",
+                    static_cast<unsigned long long>(
+                        Vulkan::Vram::image_bytes.load(std::memory_order_relaxed) >> 20),
+                    static_cast<unsigned long long>(
+                        Vulkan::Vram::arena_bytes.load(std::memory_order_relaxed) >> 20),
+                    static_cast<unsigned long long>(arena_host_bytes >> 20),
+                    static_cast<unsigned long long>(
+                        Vulkan::Vram::buffer_bytes.load(std::memory_order_relaxed) >> 20),
+                    static_cast<unsigned long long>(host_fallbacks),
+                    static_cast<unsigned long long>(host_fallbacks - last_host_fallbacks),
+                    static_cast<unsigned long long>(failed_allocs),
+                    static_cast<unsigned long long>(failed_allocs - last_failed_allocs),
+                    static_cast<unsigned long long>(reclaim_passes),
+                    static_cast<unsigned long long>(reclaim_passes - last_reclaim_passes));
+                last_host_fallbacks = host_fallbacks;
+                last_failed_allocs = failed_allocs;
+                last_reclaim_passes = reclaim_passes;
+            }
             // Command queues waiting on memory, as a share of the window (GPU command thread).
             const u64 gfx_waits = BbStats::gfx_waits.exchange(0);
             const u64 asc_waits = BbStats::asc_waits.exchange(0);

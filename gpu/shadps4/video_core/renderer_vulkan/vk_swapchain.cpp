@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <limits>
 #include "bbport_settings.h"
+#include "bbport_toggles.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
@@ -119,6 +120,7 @@ void Swapchain::SetHDR(bool hdr) {
 }
 
 bool Swapchain::AcquireNextImage() {
+    BbStats::Timer present_timer{BbStats::present_wait_ns};
     vk::Device device = instance.GetDevice();
     vk::Result result =
         device.acquireNextImageKHR(swapchain, std::numeric_limits<u64>::max(),
@@ -144,6 +146,7 @@ bool Swapchain::AcquireNextImage() {
 }
 
 bool Swapchain::Present(u64 latency_id) {
+    BbStats::Timer present_timer{BbStats::present_wait_ns};
     // bbport: low latency mode (vk_low_latency.h): the game's frame carries its frame id.
     const vk::PresentIdKHR present_id{
         .swapchainCount = 1,
@@ -244,6 +247,8 @@ void Swapchain::FindPresentMode() {
                     vk::to_string(present_mode), vk::to_string(fallback));
         present_mode = fallback;
     }
+    std::printf("Swapchain: present mode %s (requested %s)\n", vk::to_string(present_mode).c_str(),
+                requested_mode.c_str());
 }
 
 void Swapchain::SetSurfaceProperties() {
