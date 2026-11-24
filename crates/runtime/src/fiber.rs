@@ -230,6 +230,29 @@ unsafe fn use_stack(fiber: *const GuestFiber, t: *mut FiberThread) {
 #[cfg(not(windows))]
 unsafe fn use_stack(_fiber: *const GuestFiber, _t: *mut FiberThread) {}
 
+fn initial_fiber_fpu(flags: u32) -> (u32, u16) {
+    let mut mxcsr: u32 = 0;
+    let mut fpucw: u16 = 0x037f;
+    if (flags & FLAG_SET_FPU) != 0 {
+        let configured = crate::thread::guest_mxcsr_value();
+        if configured != 0 {
+            return (configured, fpucw);
+        }
+        // BB_GUEST_MXCSR=0 disables forcing MXCSR: inherit the calling thread's MXCSR.
+        // SAFETY: reads the current thread's MXCSR.
+        unsafe {
+            core::arch::asm!("stmxcsr [{}]", in(reg) &mut mxcsr, options(nostack));
+        }
+        return (mxcsr, fpucw);
+    }
+    // SAFETY: reads the current thread's MXCSR and x87 control word.
+    unsafe {
+        core::arch::asm!("stmxcsr [{}]", in(reg) &mut mxcsr, options(nostack));
+        core::arch::asm!("fnstcw [{}]", in(reg) &mut fpucw, options(nostack));
+    }
+    (mxcsr, fpucw)
+}
+
 unsafe fn context_of(fiber: *mut GuestFiber, below: u64) -> u64 {
     // SAFETY: caller validated `fiber` and claimed `STATE_RUN`.
     let rsp = unsafe { (*fiber).saved_rsp };
@@ -245,15 +268,7 @@ unsafe fn context_of(fiber: *mut GuestFiber, below: u64) -> u64 {
         below.wrapping_sub(512)
     } & !15u64;
     let frame = (top - 64) as *mut u64;
-    let mut mxcsr: u32 = 0x9fc0;
-    let mut fpucw: u16 = 0x037f;
-    if (unsafe { (*fiber).flags } & FLAG_SET_FPU) == 0 {
-        // SAFETY: reads the current thread's MXCSR and x87 control word.
-        unsafe {
-            core::arch::asm!("stmxcsr [{}]", in(reg) &mut mxcsr, options(nostack));
-            core::arch::asm!("fnstcw [{}]", in(reg) &mut fpucw, options(nostack));
-        }
-    }
+    let (mxcsr, fpucw) = initial_fiber_fpu(unsafe { (*fiber).flags });
     // SAFETY: `frame` points to 64 bytes below the aligned stack top.
     unsafe {
         *frame.add(0) = (mxcsr as u64) | ((fpucw as u64) << 32);
@@ -883,5 +898,18 @@ mod tests {
                 FIBER_ERROR_ALIGNMENT
             );
         }
+    }
+
+    #[test]
+    fn initial_fiber_fpu_respects_flag_and_inherits_when_unset() {
+        assert_eq!(initial_fiber_fpu(FLAG_SET_FPU), (0x9fc0, 0x037f));
+        let mut expected_mxcsr: u32 = 0;
+        let mut expected_fpucw: u16 = 0;
+        // SAFETY: reads the current test thread's MXCSR and x87 control word.
+        unsafe {
+            core::arch::asm!("stmxcsr [{}]", in(reg) &mut expected_mxcsr, options(nostack));
+            core::arch::asm!("fnstcw [{}]", in(reg) &mut expected_fpucw, options(nostack));
+        }
+        assert_eq!(initial_fiber_fpu(0), (expected_mxcsr, expected_fpucw));
     }
 }

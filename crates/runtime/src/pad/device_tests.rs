@@ -1197,6 +1197,48 @@ fn guest_callback_table_and_exports_are_complete() {
     );
 }
 
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn u2_leg_ik_nan_delta_patches_zero_delta_and_skip_vmovaps() {
+    let entries: Vec<_> = super::hooks::table()
+        .iter()
+        .filter(|entry| {
+            let (name, _, skip, moved, callback, patch) = entry.parts();
+            if name == "U2 leg IK NaN delta" {
+                assert!(!callback && patch);
+                assert_eq!(skip, 0);
+                assert!(moved == 51 || moved == 53);
+                true
+            } else {
+                false
+            }
+        })
+        .collect();
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        let (_, pattern, _, moved, _, _) = entry.parts();
+        let bytes: Vec<&str> = pattern.split(' ').collect();
+        // Pattern ends with `cd 41` (int 0x41), `vmovaps xmm0, [r15]`, `vpermilps xmm0, xmm0, 1`.
+        assert_eq!(bytes[moved - 2], "cd");
+        assert_eq!(bytes[moved - 1], "41");
+        assert_eq!(&bytes[moved..moved + 5], &["c4", "c1", "78", "28", "07"]);
+        assert_eq!(
+            &bytes[moved + 5..moved + 11],
+            &["c4", "e3", "79", "04", "c0", "01"]
+        );
+        // SAFETY: `entry.patch` is a static patch slice of `moved` bytes.
+        let patch = unsafe { std::slice::from_raw_parts(entry.patch, moved) };
+        // `vxorps xmm0, xmm0, xmm0` + `vmovaps [r15], xmm0` + `jmp rel8`
+        assert_eq!(
+            &patch[..9],
+            &[0xc5, 0xf8, 0x57, 0xc0, 0xc4, 0xc1, 0x78, 0x29, 0x07]
+        );
+        assert_eq!(patch[9], 0xeb);
+        let jump_target = 11usize + usize::from(patch[10]);
+        assert_eq!(jump_target, moved + 5);
+    }
+}
+
 #[derive(Default)]
 struct PolledSdlState {
     hints_set: bool,

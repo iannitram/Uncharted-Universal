@@ -267,7 +267,7 @@ static void set_host_name(const char *name) {
  * fibers already ran with it while its threads used the host's 0x1f80, so the same physics job
  * could compute differently depending on where it ran (U2's floating NPCs, issue #33).
  * BB_GUEST_MXCSR=<hex> picks another value; BB_GUEST_MXCSR=1f80 is the old host default. */
-void runtime_set_guest_fpu(void) {
+uint32_t runtime_guest_mxcsr(void) {
     static unsigned value=0x9fc0;
     static int once;
     if (!once) {
@@ -275,6 +275,10 @@ void runtime_set_guest_fpu(void) {
         if (env) value=(unsigned)strtoul(env,NULL,16);
         once=1;
     }
+    return value;
+}
+void runtime_set_guest_fpu(void) {
+    uint32_t value=runtime_guest_mxcsr();
     if (!value) return;
     uint32_t mxcsr=value;
     uint16_t fpucw=0x037f;
