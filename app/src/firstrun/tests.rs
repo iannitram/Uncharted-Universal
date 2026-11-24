@@ -654,11 +654,13 @@ fn save_sync_setup_walks_all_services_by_controller_and_never_leaks_credentials(
     page.handle(DOWN);
     let job = page.handle(A);
     assert_eq!(job, Job::RelayStartOAuth(CloudService::GoogleDrive));
-    page.event(Event::RelayChallenge(Ok(RelayChallenge {
+    let job = page.event(Event::RelayChallenge(Ok(RelayChallenge {
         service: CloudService::GoogleDrive,
         verification_url: "https://example.invalid/device".into(),
         user_code: Some("ABCD-1234".into()),
+        qr: None,
     })));
+    assert_eq!(job, Job::OpenUrl("https://example.invalid/device".into()));
     assert_eq!(page.view().title, "Google Drive sign-in");
     assert!(page.view().lines.iter().any(|l| l.contains("ABCD-1234")));
     page.handle(DOWN);
@@ -673,6 +675,7 @@ fn save_sync_setup_walks_all_services_by_controller_and_never_leaks_credentials(
         service: CloudService::Dropbox,
         verification_url: "https://dropbox.invalid/qr".into(),
         user_code: None,
+        qr: None,
     })));
     assert_eq!(page.view().title, "Dropbox sign-in");
     page.handle(B); // Back -> SaveSync
@@ -851,4 +854,48 @@ fn nextcloud_rejects_empty_or_control_characters_and_oauth_error_returns_to_save
     press(&mut page, BACK);
     press(&mut page, SKIP_SYNC);
     assert_eq!(page.view().title, "All set");
+}
+
+#[test]
+fn game_mode_shows_qr_without_browser_and_standalone_save_sync_finishes_cleanly() {
+    use uncharted_core::relay::{CloudService, RelayAccountStatus, RelayChallenge};
+
+    // Standalone save sync in Game Mode: Skip returns straight to the launcher.
+    let mut page = FirstRun::save_sync(true);
+    assert_eq!(page.view().step, "Save sync");
+    assert_eq!(page.view().title, "Save sync");
+    assert_eq!(
+        press(&mut page, SKIP_SYNC),
+        Job::Finish { start_steam: false }
+    );
+
+    // OAuth in Game Mode does not open a browser and displays the QR code lines.
+    press(&mut page, SYNC_GDRIVE);
+    let job = page.event(Event::RelayChallenge(Ok(RelayChallenge {
+        service: CloudService::GoogleDrive,
+        verification_url: "https://example.invalid/qr".into(),
+        user_code: Some("QR-9999".into()),
+        qr: Some("██ ██\n  █  \n██ ██".into()),
+    })));
+    assert_eq!(job, Job::None);
+    let view = page.view();
+    assert!(view.lines.iter().any(|l| l.contains("QR code")));
+    assert!(view.lines.iter().any(|l| l == "██ ██"));
+    assert!(view.lines.iter().any(|l| l.contains("QR-9999")));
+
+    // Continue checks status and lands on Done with "Done" button.
+    assert_eq!(press(&mut page, CONTINUE), Job::RelayCheckStatus);
+    page.event(Event::RelayStatus(Ok(RelayAccountStatus {
+        service: Some(CloudService::GoogleDrive),
+        account: Some("elena@example.invalid".into()),
+        configured: true,
+    })));
+    let view = page.view();
+    assert_eq!(view.title, "All set");
+    assert!(view
+        .lines
+        .iter()
+        .any(|l| l.contains("Save sync ready (Google Drive: elena@example.invalid)")));
+    assert_eq!(view.options, ["Done"]);
+    assert_eq!(page.handle(A), Job::Finish { start_steam: false });
 }

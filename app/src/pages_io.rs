@@ -121,7 +121,10 @@ pub fn run(
 ) -> Result<String, String> {
     let err = |e: uncharted_core::error::Error| e.to_string();
     match command {
-        SavesCommand::None | SavesCommand::Back => Ok(String::new()),
+        SavesCommand::None
+        | SavesCommand::Back
+        | SavesCommand::RelaySignIn
+        | SavesCommand::RelaySignOut => Ok(String::new()),
         SavesCommand::Select { game, slot } => {
             core_saves::select(user_dir, *game, *slot).map_err(err)?;
             Ok(format!(

@@ -41,10 +41,20 @@ impl Context {
     }
 }
 
+/// True when running inside Steam Game Mode (Gamescope / GamepadUI), where no browser is at hand.
+pub fn is_game_mode(env: fn(&str) -> Option<String>) -> bool {
+    env("GAMESCOPE_WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty())
+        || env("SteamGamepadUI").as_deref() == Some("1")
+        || env("STEAM_GAMEPADUI").as_deref() == Some("1")
+}
+
 /// Run `job` on a new thread; its events go to `tx`. Jobs the UI does itself (`EditField`,
-/// `Finish`) and `None` start nothing.
+/// `Finish`, `OpenUrl`) and `None` start nothing.
 pub fn start(job: Job, cx: &Context, tx: Sender<Event>) {
-    if matches!(job, Job::None | Job::EditField | Job::Finish { .. }) {
+    if matches!(
+        job,
+        Job::None | Job::EditField | Job::Finish { .. } | Job::OpenUrl(_)
+    ) {
         return;
     }
     let cx = cx.clone();
@@ -66,7 +76,7 @@ pub(crate) fn run_with_relay(
         let _ = tx.send(event);
     };
     match job {
-        Job::None | Job::EditField | Job::Finish { .. } => {}
+        Job::None | Job::EditField | Job::Finish { .. } | Job::OpenUrl(_) => {}
         Job::Scan => {
             let roots = setup::search_roots(&cx.vars, cx.env, Some(&cx.dirs));
             send(Event::Candidates(setup::dump_candidates(&roots)));
@@ -140,6 +150,10 @@ pub(crate) fn run_with_relay(
         Job::RelayStartOAuth(service) => {
             let res = relay.start_oauth(service).map_err(|e| message(&e));
             send(Event::RelayChallenge(res));
+        }
+        Job::RelayCheckStatus => {
+            let res = relay.status().map_err(|e| message(&e));
+            send(Event::RelayStatus(res));
         }
     }
 }
@@ -441,6 +455,7 @@ mod tests {
                 service: CloudService::GoogleDrive,
                 verification_url: "https://example.invalid/device".into(),
                 user_code: Some("ABCD-1234".into()),
+                qr: None,
             }),
         };
 
@@ -476,6 +491,7 @@ mod tests {
                 service: CloudService::GoogleDrive,
                 verification_url: "https://example.invalid/device".into(),
                 user_code: Some("ABCD-1234".into()),
+                qr: None,
             }))
         );
 

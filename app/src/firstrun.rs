@@ -79,6 +79,10 @@ pub enum Job {
     },
     /// Start OAuth / QR sign-in via Save Relay for Google Drive or Dropbox.
     RelayStartOAuth(CloudService),
+    /// Check Save Relay account status after browser/QR OAuth sign-in.
+    RelayCheckStatus,
+    /// Open a verification URL in the system browser (when not in Game Mode).
+    OpenUrl(String),
     /// Give the text field the keyboard.
     EditField,
     /// Back to the Continue screen, which loads again; `start_steam` starts Steam first.
@@ -107,6 +111,7 @@ pub enum Event {
     Added(Result<String, String>),
     RelaySignedIn(Result<RelayAccountStatus, String>),
     RelayChallenge(Result<RelayChallenge, String>),
+    RelayStatus(Result<RelayAccountStatus, String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,6 +231,10 @@ pub struct FirstRun {
     steam: bool,
     /// Steam was closed for the shortcut and is not started again yet.
     steam_closed: bool,
+    /// Running inside Steam Game Mode (no browser at hand; show QR code instead).
+    game_mode: bool,
+    /// Opened directly for Save sync from the Saves page, not full first-run setup.
+    standalone_save_sync: bool,
     /// The games prepared on this page so far.
     ready: Vec<Game>,
 }
@@ -243,6 +252,7 @@ const CLOSE_AND_ADD: &str = "Close Steam and add";
 const BACK: &str = "Back";
 const START_STEAM: &str = "Start Steam again";
 const OPEN: &str = "Open the launcher";
+const DONE_LABEL: &str = "Done";
 const SYNC_NEXTCLOUD: &str = "Nextcloud";
 const SYNC_GDRIVE: &str = "Google Drive";
 const SYNC_DROPBOX: &str = "Dropbox";
@@ -267,8 +277,34 @@ impl FirstRun {
             only,
             steam,
             steam_closed: false,
+            game_mode: false,
+            standalone_save_sync: false,
             ready: Vec::new(),
         }
+    }
+
+    /// Open directly on the Save sync step (e.g. from the Saves page).
+    pub fn save_sync(game_mode: bool) -> FirstRun {
+        FirstRun {
+            step: Step::SaveSync {
+                after_lines: Vec::new(),
+            },
+            editor: None,
+            dump_draft: None,
+            hub_draft: None,
+            focus: 0,
+            error: String::new(),
+            only: None,
+            steam: false,
+            steam_closed: false,
+            game_mode,
+            standalone_save_sync: true,
+            ready: Vec::new(),
+        }
+    }
+
+    pub fn set_game_mode(&mut self, game_mode: bool) {
+        self.game_mode = game_mode;
     }
 
     fn go(&mut self, step: Step) {
@@ -314,6 +350,7 @@ impl FirstRun {
             Step::Nextcloud { .. } => own(&[NC_URL, NC_ACCOUNT, NC_PASSWORD, SIGN_IN, BACK]),
             Step::OAuthChallenge { .. } => own(&[CONTINUE, BACK]),
             Step::Done { .. } if self.steam_closed => own(&[START_STEAM, OPEN]),
+            Step::Done { .. } if self.standalone_save_sync => own(&[DONE_LABEL]),
             Step::Done { .. } => own(&[OPEN]),
             Step::Checking(_)
             | Step::Preparing { .. }
@@ -605,6 +642,9 @@ impl FirstRun {
                 Job::RelayStartOAuth(CloudService::Dropbox)
             }
             (Step::SaveSync { after_lines }, _) => {
+                if self.standalone_save_sync {
+                    return Job::Finish { start_steam: false };
+                }
                 let lines = after_lines.clone();
                 self.go(Step::Done { lines });
                 Job::None
@@ -670,11 +710,21 @@ impl FirstRun {
                 self.go(Step::SaveSync { after_lines });
                 Job::None
             }
-            (Step::OAuthChallenge { after_lines, .. }, CONTINUE) => {
-                let mut lines = after_lines.clone();
-                lines.push("Save sync setup started; finish signing in to sync saves.".into());
-                self.go(Step::Done { lines });
-                Job::None
+            (
+                Step::OAuthChallenge {
+                    challenge,
+                    after_lines,
+                },
+                CONTINUE,
+            ) => {
+                let service = challenge.service;
+                let after_lines = after_lines.clone();
+                self.go(Step::SaveSyncBusy {
+                    service,
+                    after_lines,
+                    nextcloud: None,
+                });
+                Job::RelayCheckStatus
             }
             (Step::OAuthChallenge { after_lines, .. }, _) => {
                 let after_lines = after_lines.clone();
@@ -740,6 +790,9 @@ impl FirstRun {
             }
             Step::Steam => self.choose(1),
             Step::SaveSync { after_lines } => {
+                if self.standalone_save_sync {
+                    return Job::Finish { start_steam: false };
+                }
                 let lines = after_lines.clone();
                 self.go(Step::Done { lines });
                 Job::None
@@ -896,16 +949,40 @@ impl FirstRun {
                 let after_lines = std::mem::take(after_lines);
                 match result {
                     Ok(challenge) => {
+                        let url = challenge.verification_url.clone();
                         self.go(Step::OAuthChallenge {
                             challenge,
                             after_lines,
                         });
+                        if !self.game_mode {
+                            return Job::OpenUrl(url);
+                        }
                     }
                     Err(err) => {
                         self.go(Step::SaveSync { after_lines });
                         self.error = sentence(&err);
                     }
                 }
+            }
+            (Event::RelayStatus(result), Step::SaveSyncBusy { after_lines, .. }) => {
+                let mut lines = std::mem::take(after_lines);
+                match result {
+                    Ok(status) if status.configured => {
+                        let who = status
+                            .account
+                            .as_deref()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("signed in");
+                        let svc = status.service.map(|s| s.name()).unwrap_or("Save sync");
+                        lines.push(format!("Save sync ready ({svc}: {who})."));
+                    }
+                    Ok(_) | Err(_) => {
+                        lines.push(
+                            "Save sync setup started; finish signing in to sync saves.".into(),
+                        );
+                    }
+                }
+                self.go(Step::Done { lines });
             }
             _ => {}
         }
@@ -1089,10 +1166,22 @@ impl FirstRun {
                 vec!["Storing credentials in your system credential store...".to_owned()],
             ),
             Step::OAuthChallenge { challenge, .. } => {
-                let mut lines = vec![format!(
-                    "Open or scan this address to sign in to {}:",
-                    challenge.service.name()
-                )];
+                let mut lines = vec![if self.game_mode {
+                    format!(
+                        "Scan this QR code or open the address to sign in to {}:",
+                        challenge.service.name()
+                    )
+                } else {
+                    format!(
+                        "Open this address in your browser to sign in to {}:",
+                        challenge.service.name()
+                    )
+                }];
+                if self.game_mode {
+                    if let Some(qr) = &challenge.qr {
+                        lines.extend(qr.lines().map(str::to_owned));
+                    }
+                }
                 lines.push(challenge.verification_url.clone());
                 if let Some(code) = &challenge.user_code {
                     lines.push(format!("Code: {code}"));
@@ -1155,7 +1244,11 @@ impl FirstRun {
             lines.push(String::new());
         }
         FirstRunView {
-            step: format!("Step {number} of {STEPS}"),
+            step: if self.standalone_save_sync {
+                "Save sync".to_owned()
+            } else {
+                format!("Step {number} of {STEPS}")
+            },
             title,
             lines,
             focus: self.focus.min(options.len().saturating_sub(1)),

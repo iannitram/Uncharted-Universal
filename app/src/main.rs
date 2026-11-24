@@ -538,6 +538,16 @@ fn apply_saves(window: &AppWindow, view: &SavesView) {
     };
     window.set_save_slots(rows(&view.slots));
     window.set_save_backups(rows(&view.backups));
+    let save_sync = match &view.save_sync {
+        Some(row) => SlotRowData {
+            title: row.title.as_str().into(),
+            detail: row.detail.as_str().into(),
+            mark: row.mark.as_str().into(),
+            buttons: strings(&row.buttons),
+        },
+        None => SlotRowData::default(),
+    };
+    window.set_save_sync(save_sync);
     window.set_saves_relay(view.relay.as_str().into());
     window.set_saves_confirm(view.confirm.as_deref().unwrap_or("").into());
     window.set_page_row(view.focus.row as i32);
@@ -707,7 +717,19 @@ impl Ui {
 
     /// Open the first-run page; `only` is the game whose Set up button opened it.
     fn open_first(&self, only: Option<Game>, steam: bool) {
-        *self.first.borrow_mut() = Some(FirstRun::new(only, steam));
+        let mut first = FirstRun::new(only, steam);
+        first.set_game_mode(work::is_game_mode(|k| std::env::var(k).ok()));
+        *self.first.borrow_mut() = Some(first);
+        if let Some(window) = self.window.upgrade() {
+            window.set_fr_field_text(SharedString::new());
+        }
+        self.redraw();
+    }
+
+    /// Open the Save sync setup/sign-in page from the Saves page.
+    fn open_save_sync(&self) {
+        let game_mode = work::is_game_mode(|k| std::env::var(k).ok());
+        *self.first.borrow_mut() = Some(FirstRun::save_sync(game_mode));
         if let Some(window) = self.window.upgrade() {
             window.set_fr_field_text(SharedString::new());
         }
@@ -1400,7 +1422,10 @@ fn main() -> Result<(), slint::PlatformError> {
     )>();
     let (probe_tx, probe_rx) = mpsc::channel::<Result<String, String>>();
     let (event_tx, event_rx) = mpsc::channel::<firstrun::Event>();
-    let (relay_tx, relay_rx) = mpsc::channel::<String>();
+    let relay_available = work::desktop_relay().program.is_file();
+    let relay_configured = Rc::new(Cell::new(false));
+    let (relay_tx, relay_rx) = mpsc::channel::<(bool, String)>();
+    let (sign_out_tx, sign_out_rx) = mpsc::channel::<Result<(), String>>();
     let (keep_tx, keep_rx) =
         mpsc::channel::<(Game, Keep, Result<uncharted_core::launch::Sync, String>)>();
     let refresh_relay = {
@@ -1411,9 +1436,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 let tx = relay_tx.clone();
                 std::thread::spawn(move || {
                     use uncharted_core::relay::RelaySetup;
-                    let line =
-                        relay_status_line(true, relay.status().map_err(|e| firstrun::message(&e)));
-                    let _ = tx.send(line);
+                    let status = relay.status().map_err(|e| firstrun::message(&e));
+                    let configured = status.as_ref().is_ok_and(|s| s.configured);
+                    let line = relay_status_line(true, status);
+                    let _ = tx.send((configured, line));
                 });
             }
         }
@@ -1422,14 +1448,26 @@ fn main() -> Result<(), slint::PlatformError> {
     let run_args = args.run_args;
 
     let run: Rc<dyn Fn(Cmd)> = Rc::new({
-        let (ui, places, config, cx, relay_status, conflict_phases, keep_tx) = (
+        let (
+            ui,
+            places,
+            config,
+            cx,
+            relay_status,
+            relay_configured,
+            conflict_phases,
+            keep_tx,
+            sign_out_tx,
+        ) = (
             ui.clone(),
             places.clone(),
             config.clone(),
             cx.clone(),
             relay_status.clone(),
+            relay_configured.clone(),
             conflict_phases.clone(),
             keep_tx.clone(),
+            sign_out_tx.clone(),
         );
         move |command| match command {
             Cmd::Screen(Command::None)
@@ -1443,11 +1481,12 @@ fn main() -> Result<(), slint::PlatformError> {
             Cmd::Screen(Command::Open(Page::Saves)) => match &backups {
                 Some(backups) if !places.borrow().is_empty() => {
                     let game = ui.screen.borrow().current_game();
-                    let vm = SavesVm::new(
+                    let mut vm = SavesVm::new(
                         saves_data(&places.borrow(), backups),
                         game,
                         &relay_status.borrow(),
                     );
+                    vm.set_relay_account(relay_available, relay_configured.get());
                     ui.show(Shown::Saves(vm));
                 }
                 _ => {
@@ -1582,6 +1621,23 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = done.send((start.game, status, conflict));
                 });
             }
+            Cmd::Saves(SavesCommand::RelaySignIn) => {
+                ui.open_save_sync();
+            }
+            Cmd::Saves(SavesCommand::RelaySignOut) => {
+                if let Shown::Saves(vm) = &mut *ui.shown.borrow_mut() {
+                    vm.set_status("Signing out of Save Relay...");
+                }
+                ui.redraw();
+                let tx = sign_out_tx.clone();
+                std::thread::spawn(move || {
+                    use uncharted_core::relay::RelaySetup;
+                    let res = work::desktop_relay()
+                        .sign_out()
+                        .map_err(|e| firstrun::message(&e));
+                    let _ = tx.send(res);
+                });
+            }
             Cmd::Saves(command) => {
                 let places = places.borrow();
                 let Some(backups) = &backups else {
@@ -1647,12 +1703,22 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
     let jobs: Rc<dyn Fn(Job)> = Rc::new({
-        let (ui, places, cx) = (ui.clone(), places.clone(), cx.clone());
+        let (ui, places, cx, refresh_relay) = (
+            ui.clone(),
+            places.clone(),
+            cx.clone(),
+            refresh_relay.clone(),
+        );
         move |job| match job {
             Job::None => {}
             Job::EditField => {
                 if let Some(window) = ui.window.upgrade() {
                     window.invoke_focus_field();
+                }
+            }
+            Job::OpenUrl(url) => {
+                if let Err(err) = play::open_url(&url) {
+                    eprintln!("could not open {url}: {err}");
                 }
             }
             Job::Finish { start_steam } => {
@@ -1730,11 +1796,31 @@ fn main() -> Result<(), slint::PlatformError> {
                 drop(screen);
                 ui.redraw();
             }
-            if let Ok(line) = relay_rx.try_recv() {
+            if let Ok((configured, line)) = relay_rx.try_recv() {
+                relay_configured.set(configured);
                 *relay_status.borrow_mut() = line.clone();
                 ui.screen.borrow_mut().set_status(&line);
                 if let Shown::Saves(vm) = &mut *ui.shown.borrow_mut() {
                     vm.set_relay(&line);
+                    vm.set_relay_account(relay_available, configured);
+                }
+                ui.redraw();
+            }
+            if let Ok(res) = sign_out_rx.try_recv() {
+                match res {
+                    Ok(()) => {
+                        relay_configured.set(false);
+                        if let Shown::Saves(vm) = &mut *ui.shown.borrow_mut() {
+                            vm.set_relay_account(relay_available, false);
+                            vm.set_status("Signed out of Save Relay.");
+                        }
+                        refresh_relay();
+                    }
+                    Err(err) => {
+                        if let Shown::Saves(vm) = &mut *ui.shown.borrow_mut() {
+                            vm.set_status(&err);
+                        }
+                    }
                 }
                 ui.redraw();
             }

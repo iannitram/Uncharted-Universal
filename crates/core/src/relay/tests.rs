@@ -277,7 +277,8 @@ fn decode_setup_and_sign_out_responses() {
         "ok": true,
         "data": {
             "verification_url": "https://example.invalid/device",
-            "user_code": "WXYZ-1234"
+            "user_code": "WXYZ-1234",
+            "qr": "██ ██\n  █  \r\n██ ██"
         }
     });
     assert_eq!(
@@ -292,6 +293,7 @@ fn decode_setup_and_sign_out_responses() {
             service: CloudService::GoogleDrive,
             verification_url: "https://example.invalid/device".into(),
             user_code: Some("WXYZ-1234".into()),
+            qr: Some("██ ██\n  █  \n██ ██".into()),
         }
     );
     let oauth_empty_url = json!({"ok": true, "data": {"verification_url": "   "}});
