@@ -487,3 +487,287 @@ fn windows_save_layout_and_relay_dir_follow_selected_mode() {
     );
     assert_eq!(mapping_for_layout(user, SaveLayout::SameAsWindows), None);
 }
+
+// ---- fake save-relay CLI --json (issue #163) ----
+
+struct FakeRunner {
+    starts: std::cell::RefCell<Vec<Game>>,
+}
+
+impl FakeRunner {
+    fn new() -> Self {
+        Self {
+            starts: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+}
+
+impl crate::launch::Runner for FakeRunner {
+    fn run(
+        &self,
+        game: Game,
+        _env: &[(String, String)],
+        _guest_argv: Option<&Path>,
+    ) -> Result<i32> {
+        self.starts.borrow_mut().push(game);
+        Ok(0)
+    }
+}
+
+fn write_fake_relay(dir: &Path, steps: &[(i32, Value)]) -> crate::relay::DesktopRelay {
+    let manifests = dir.join("save-relay-manifests");
+    fs::create_dir_all(&manifests).unwrap();
+    for (game, id) in [
+        (Game::U1, "uncharted-1"),
+        (Game::U2, "uncharted-2"),
+        (Game::U3, "uncharted-3"),
+    ] {
+        fs::write(manifests.join(format!("{id}.json")), relay_manifest(game)).unwrap();
+    }
+    for (index, (code, payload)) in steps.iter().enumerate() {
+        fs::write(dir.join(format!("{index}.json")), payload.to_string()).unwrap();
+        fs::write(dir.join(format!("{index}.code")), code.to_string()).unwrap();
+    }
+    #[cfg(unix)]
+    let program = {
+        use std::os::unix::fs::PermissionsExt;
+        let script = dir.join("save-relay");
+        let dir_str = dir.to_string_lossy().replace('\'', "'\\''");
+        let body = format!(
+            "#!/bin/sh\nset -eu\ndir='{dir_str}'\ncalls=\"$dir/calls.txt\"\nstep=0\nif [ -f \"$calls\" ]; then step=$(wc -l < \"$calls\" | tr -d ' '); fi\nprintf '%s\\n' \"$*\" >> \"$calls\"\ncat \"$dir/$step.json\"\ncode=$(cat \"$dir/$step.code\")\nexit \"$code\"\n"
+        );
+        fs::write(&script, body).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        script
+    };
+    #[cfg(windows)]
+    let program = {
+        let script = dir.join("save-relay.cmd");
+        let dir_str = dir.to_string_lossy();
+        let body = format!(
+            "@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"dir={dir_str}\"\r\nset \"calls=%dir%\\calls.txt\"\r\nset /a step=0\r\nif exist \"%calls%\" (\r\n    for /f %%A in ('type \"%calls%\" ^| find /c /v \"\"') do set \"step=%%A\"\r\n)\r\necho %*>>\"%calls%\"\r\ntype \"%dir%\\!step!.json\"\r\nset /p code=<\"%dir%\\!step!.code\"\r\nexit /b %code%\r\n"
+        );
+        fs::write(&script, body).unwrap();
+        script
+    };
+    crate::relay::DesktopRelay { program, manifests }
+}
+
+fn run_fake_play(
+    relay: &crate::relay::DesktopRelay,
+    runner: &FakeRunner,
+    paths: &crate::launch::Paths,
+    game: Game,
+    choose: &dyn Fn(&str, &crate::savecard::SideBySide) -> Result<crate::launch::Keep>,
+) -> Result<crate::launch::Played> {
+    let settings = crate::run_env::Settings::default();
+    let profile = crate::profile::by_id("desktop").unwrap();
+    let player_env = std::collections::BTreeMap::new();
+    let session = crate::launch::Session {
+        settings: &settings,
+        profile,
+        player_env: &player_env,
+        paths,
+        os: Os::Linux,
+    };
+    crate::launch::play(relay, runner, game, &session, choose)
+}
+
+fn relay_calls(dir: &Path) -> Vec<String> {
+    fs::read_to_string(dir.join("calls.txt"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn fake_cli_json_pull_and_push_sync_selected_slot() {
+    let temp = Temp::new();
+    let paths = crate::launch::Paths::in_data_dir(&temp.0.join("data"));
+    select(&paths.user_dir, Game::U2, 3).unwrap();
+    let relay = write_fake_relay(
+        &temp.0,
+        &[
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "pull",
+                    "data": {"game": "uncharted-2-slot-3", "action": "pulled"}
+                }),
+            ),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "push",
+                    "data": {"game": "uncharted-2-slot-3", "action": "pushed"}
+                }),
+            ),
+        ],
+    );
+    let runner = FakeRunner::new();
+
+    let played = run_fake_play(&relay, &runner, &paths, Game::U2, &|_, _| {
+        panic!("unexpected conflict")
+    })
+    .unwrap();
+
+    assert_eq!(
+        played.pulled,
+        crate::launch::Sync::Done("downloaded saves".into())
+    );
+    assert_eq!(played.exit_code, 0);
+    assert_eq!(
+        played.pushed,
+        crate::launch::Sync::Done("uploaded saves".into())
+    );
+    assert_eq!(runner.starts.borrow().len(), 1);
+    let expected_slot = slot_dir(&paths.user_dir, Game::U2, 3);
+    let calls = relay_calls(&temp.0);
+    assert_eq!(calls.len(), 2);
+    assert!(calls[0].starts_with("pull uncharted-2 --manifest "));
+    assert!(calls[0].contains(&expected_slot.to_string_lossy().to_string()));
+    assert!(calls[0].contains("--slot 3 --json"));
+    assert!(calls[1].starts_with("push uncharted-2 --manifest "));
+    assert!(calls[1].contains("--slot 3 --json"));
+}
+
+#[test]
+fn fake_cli_json_conflict_on_pull_and_push_resolves_with_chosen_side() {
+    let temp = Temp::new();
+    let paths = crate::launch::Paths::in_data_dir(&temp.0.join("data"));
+    let conflict_json = |phase: &str| {
+        serde_json::json!({
+            "ok": true,
+            "command": phase,
+            "data": {
+                "game": "uncharted-2-slot-1",
+                "action": "conflict",
+                "server": {"device": "tablet", "time": "2026-11-17T00:00:00Z", "revision": 7},
+                "local": {"device": "desktop", "time": "2026-11-16T00:00:00Z", "revision": null},
+                "server_card": {"place": "Chapter 5", "playtime_secs": 120},
+                "local_card": {"place": "Chapter 4", "playtime_secs": 95}
+            }
+        })
+    };
+    let relay = write_fake_relay(
+        &temp.0,
+        &[
+            (3, conflict_json("pull")),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "pull",
+                    "data": {"game": "uncharted-2-slot-1", "action": "pulled"}
+                }),
+            ),
+            (3, conflict_json("push")),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "push",
+                    "data": {"game": "uncharted-2-slot-1", "action": "pushed"}
+                }),
+            ),
+        ],
+    );
+    let runner = FakeRunner::new();
+
+    let prompts = std::cell::RefCell::new(Vec::new());
+    let played = run_fake_play(&relay, &runner, &paths, Game::U2, &|phase, cards| {
+        assert!(cards.server_is_newer);
+        assert_eq!(cards.server.detail.as_deref(), Some("Chapter 5"));
+        assert_eq!(cards.local.detail.as_deref(), Some("Chapter 4"));
+        prompts.borrow_mut().push(phase.to_owned());
+        if phase == "pull" {
+            Ok(crate::launch::Keep::Server)
+        } else {
+            Ok(crate::launch::Keep::Local)
+        }
+    })
+    .unwrap();
+
+    assert_eq!(*prompts.borrow(), vec!["pull", "push"]);
+    assert_eq!(
+        played.pulled,
+        crate::launch::Sync::Done("downloaded saves".into())
+    );
+    assert_eq!(
+        played.pushed,
+        crate::launch::Sync::Done("uploaded saves".into())
+    );
+    let calls = relay_calls(&temp.0);
+    assert_eq!(calls.len(), 4);
+    assert!(calls[1].ends_with("--resolve keep-server"));
+    assert!(calls[3].ends_with("--resolve keep-local"));
+}
+
+#[test]
+fn fake_cli_json_offline_plays_locally_and_uploads_on_next_play() {
+    let temp = Temp::new();
+    let paths = crate::launch::Paths::in_data_dir(&temp.0.join("data"));
+    let relay = write_fake_relay(
+        &temp.0,
+        &[
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "pull",
+                    "data": {"game": "uncharted-1-slot-1", "action": "offline"}
+                }),
+            ),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "push",
+                    "data": {"game": "uncharted-1-slot-1", "action": "deferred"}
+                }),
+            ),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "pull",
+                    "data": {"game": "uncharted-1-slot-1", "action": "pushed"}
+                }),
+            ),
+            (
+                0,
+                serde_json::json!({
+                    "ok": true,
+                    "command": "push",
+                    "data": {"game": "uncharted-1-slot-1", "action": "noop"}
+                }),
+            ),
+        ],
+    );
+    let runner = FakeRunner::new();
+
+    let offline_play = run_fake_play(&relay, &runner, &paths, Game::U1, &|_, _| {
+        panic!("offline cannot conflict")
+    })
+    .unwrap();
+    assert_eq!(offline_play.pulled, crate::launch::Sync::Offline);
+    assert_eq!(offline_play.exit_code, 0);
+    assert_eq!(offline_play.pushed, crate::launch::Sync::Offline);
+
+    let next_play = run_fake_play(&relay, &runner, &paths, Game::U1, &|_, _| {
+        panic!("reconnect upload cannot conflict")
+    })
+    .unwrap();
+    assert_eq!(
+        next_play.pulled,
+        crate::launch::Sync::Done("uploaded saves".into())
+    );
+    assert_eq!(
+        next_play.pushed,
+        crate::launch::Sync::Done("already in sync".into())
+    );
+    assert_eq!(runner.starts.borrow().len(), 2);
+}
