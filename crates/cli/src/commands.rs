@@ -44,6 +44,7 @@ pub fn dispatch(command: &str, args: &[String], ctx: &Ctx) -> Outcome {
         "fleet" => fleet(args, ctx),
         "generate-art" => generate_art(args),
         "setup" => Ok(crate::setup::main(args)),
+        "playtest" => playtest(args),
         other => unreachable!("dispatch is only called with a listed command, not {other}"),
     };
     done.unwrap_or_else(|early| early)
@@ -1031,6 +1032,77 @@ fn generate_art(args: &[String]) -> Done {
     )?;
     let mut out = Outcome::default();
     out.line(format!("wrote launcher artwork to {}", folder.display()));
+    Ok(out)
+}
+
+// ---- playtest ----
+
+fn playtest(args: &[String]) -> Done {
+    let p = parsed("playtest", args, &["format"], 2)?;
+    let sub = p
+        .positional
+        .first()
+        .map(String::as_str)
+        .ok_or_else(|| Outcome::usage("playtest", "choose 'validate' or 'report'"))?;
+    let path = p
+        .positional
+        .get(1)
+        .ok_or_else(|| Outcome::usage("playtest", "give the JSON file path"))?;
+    let mut out = Outcome::default();
+    match sub {
+        "validate" => {
+            if p.flag("format").is_some() {
+                return Err(Outcome::usage(
+                    "playtest",
+                    "--format is only used with 'report'",
+                ));
+            }
+            let text = fs::read_to_string(path)
+                .map_err(|e| Outcome::error("playtest", &Error::Io(e.to_string())))?;
+            let route = core(
+                "playtest",
+                uncharted_core::playtest::Route::from_json(&text),
+            )?;
+            out.line(format!(
+                "{} '{}': {} sections",
+                route.game.key(),
+                route.name,
+                route.sections.len()
+            ));
+        }
+        "report" => {
+            let format = p.flag("format").unwrap_or("md");
+            if format != "md" && format != "json" {
+                return Err(Outcome::usage(
+                    "playtest",
+                    &format!("unknown format '{format}' (use md or json)"),
+                ));
+            }
+            let text = fs::read_to_string(path)
+                .map_err(|e| Outcome::error("playtest", &Error::Io(e.to_string())))?;
+            let report = core(
+                "playtest",
+                uncharted_core::playtest::BuildReport::from_json(&text),
+            )?;
+            match format {
+                "md" => out.stdout.push_str(&report.to_markdown()),
+                "json" => {
+                    out.stdout.push_str(&report.to_json());
+                    out.stdout.push('\n');
+                }
+                _ => unreachable!(),
+            }
+            if !report.overall_pass() {
+                out.code = FAILED;
+            }
+        }
+        other => {
+            return Err(Outcome::usage(
+                "playtest",
+                &format!("unknown subcommand '{other}' (use validate or report)"),
+            ));
+        }
+    }
     Ok(out)
 }
 
