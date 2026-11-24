@@ -127,6 +127,38 @@ struct Reader {
         return TryRead(&value, sizeof(value));
     }
 
+    [[nodiscard]] bool TryRead(Container auto& v) {
+        size_t num_elements{};
+        if (!TryRead(num_elements)) {
+            return false;
+        }
+        using ValueType = typename std::remove_reference_t<decltype(v)>::value_type;
+        if constexpr (!Container<ValueType>) {
+            if (num_elements > ar.Remaining() / (sizeof(ValueType) ? sizeof(ValueType) : 1)) {
+                return false;
+            }
+        } else if (num_elements > ar.Remaining()) {
+            return false;
+        }
+        v.clear();
+        for (size_t i = 0; i < num_elements; ++i) {
+            v.emplace_back();
+            if (!TryRead(v.back())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] bool TryRead(std::string& s) {
+        size_t length{};
+        if (!TryRead(length) || !CanRead(length)) {
+            return false;
+        }
+        s.resize(length);
+        return TryRead(s.data(), length);
+    }
+
     template <typename T>
     void Read(T* ptr, size_t size) {
         ASSERT_MSG(ar.offset + size <= ar.container.size(),
