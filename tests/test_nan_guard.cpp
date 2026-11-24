@@ -116,7 +116,11 @@ std::vector<u32> EmitFragmentMrtWrite() {
 
 int main() {
     // Default BB_NAN_GUARD mode (1: NaN -> 0 on float outputs).
+#ifdef _WIN32
+    if (_putenv_s("BB_NAN_GUARD", "") != 0) std::abort();
+#else
     unsetenv("BB_NAN_GUARD");
+#endif
     assert(BbNanGuard::NanGuardMode() == 1);
     assert(BbNanGuard::ExportNanGuard());
     assert(std::strcmp(BbNanGuard::ShaderCacheSuffix(), "-nan1") == 0);

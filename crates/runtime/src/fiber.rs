@@ -102,9 +102,13 @@ static CONTEXT_SIZE_CHECK: AtomicU32 = AtomicU32::new(0);
 static SWITCHES: AtomicU64 = AtomicU64::new(0);
 static FIBERS_STARTED: AtomicU64 = AtomicU64::new(0);
 
-/// Not inlined: a resumed fiber may be on another thread, so the TLS address is fetched again.
+/// Not inlined and opaque to LLVM CSE: a resumed fiber may be on another thread,
+/// so the TLS address must be fetched fresh after every `fiber_swap`.
 #[inline(never)]
 fn this_thread() -> *mut FiberThread {
+    // SAFETY: empty barrier without `nomem`/`readonly` prevents LLVM from inferring
+    // `memory(none)` and hoisting/caching the TLS pointer across `fiber_swap`.
+    unsafe { core::arch::asm!("", options(nostack)) };
     FIBER_THREAD.with(|cell| cell.get())
 }
 
@@ -677,7 +681,9 @@ extern "sysv64" fn fiber_stop_size_check() -> i32 {
 }
 
 pub(crate) fn resolve(name: &CStr) -> Option<usize> {
-    let addr = match name.to_str().ok()? {
+    let raw = name.to_str().ok()?;
+    let symbol = crate::abi::nid_name(raw).unwrap_or(raw);
+    let addr = match symbol {
         "_sceFiberInitializeImpl" => fiber_initialize as *const () as usize,
         "sceFiberOptParamInitialize" => fiber_opt_initialize as *const () as usize,
         "sceFiberFinalize" => fiber_finalize as *const () as usize,
@@ -857,6 +863,7 @@ mod tests {
     fn fiber_resolve_and_validation() {
         unsafe {
             assert_ne!(runtime_fiber_resolve(c"sceFiberRun".as_ptr()), 0);
+            assert_ne!(runtime_fiber_resolve(c"hVYD7Ou2pCQ#libSceFiber".as_ptr()), 0);
             assert_eq!(runtime_fiber_resolve(c"unknownFiber".as_ptr()), 0);
             assert_eq!(fiber_run(null_mut(), 0, null_mut()), FIBER_ERROR_NULL);
             assert_eq!(

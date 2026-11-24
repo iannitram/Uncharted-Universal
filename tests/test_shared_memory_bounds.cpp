@@ -11,6 +11,22 @@
 #include "shader_recompiler/ir/program.h"
 #include "shader_recompiler/runtime_info.h"
 
+static void SetEnv(const char* key, const char* value) {
+#ifdef _WIN32
+    if (_putenv_s(key, value) != 0) std::abort();
+#else
+    if (setenv(key, value, 1) != 0) std::abort();
+#endif
+}
+
+static void UnsetEnv(const char* key) {
+#ifdef _WIN32
+    if (_putenv_s(key, "") != 0) std::abort();
+#else
+    if (unsetenv(key) != 0) std::abort();
+#endif
+}
+
 int main() {
     using namespace Shader;
 
@@ -26,7 +42,7 @@ int main() {
     // 2. Static in-bounds immediates stay untouched; boundary-straddling and dynamic accesses
     //    are guarded, redirected to AlignUp(size, 8), and masked to typed zero without SSA cycles.
     {
-        unsetenv("BB_LDS_BOUNDS");
+        UnsetEnv("BB_LDS_BOUNDS");
         Info info{};
         info.hw_stage = HwStage::Compute;
         IR::Program program{info};
@@ -101,7 +117,7 @@ int main() {
 
     // 3. BB_LDS_BOUNDS=0 disables the pass completely.
     {
-        setenv("BB_LDS_BOUNDS", "0", 1);
+        SetEnv("BB_LDS_BOUNDS", "0");
         Info info{};
         info.hw_stage = HwStage::Compute;
         IR::Program program{info};
@@ -123,7 +139,7 @@ int main() {
         assert(program.info.shared_memory_scratch_size == 0u);
         assert(oob_load.Inst()->Arg(0).IsImmediate());
         assert(oob_load.Inst()->Arg(0).U32() == 1024u);
-        unsetenv("BB_LDS_BOUNDS");
+        UnsetEnv("BB_LDS_BOUNDS");
     }
 
     std::cout << "All SharedMemoryBoundsPass unit tests passed successfully!\n";

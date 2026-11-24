@@ -14,6 +14,14 @@
 
 namespace {
 
+void SetEnv(const char* key, const char* value) {
+#ifdef _WIN32
+    if (_putenv_s(key, value) != 0) std::abort();
+#else
+    if (setenv(key, value, 1) != 0) std::abort();
+#endif
+}
+
 constexpr std::uint32_t Align64(std::uint32_t v) {
     return (v + 63) & ~63u;
 }
@@ -148,7 +156,7 @@ void TestDecoder1620pNativePath() {
 
 int main() {
     // Set BB_MOVIE_SIZE=2880x1620 before any BbMovie call caches Display().
-    setenv("BB_MOVIE_SIZE", "2880x1620", 1);
+    SetEnv("BB_MOVIE_SIZE", "2880x1620");
 
     std::uint32_t disp_w = 0, disp_h = 0;
     assert(BbMovie::DisplaySize(disp_w, disp_h));
