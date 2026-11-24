@@ -1,6 +1,8 @@
 //! `aspect` on real screen sizes (issue #305): render size, HUD safe area, FOV mode, fit rectangle.
 
-use uncharted_core::aspect::{fit_rect, fov, render_size, safe_area, FovMode, Rect};
+use uncharted_core::aspect::{
+    evaluate_resize, fit_rect, fov, render_size, safe_area, FovMode, Rect,
+};
 use uncharted_core::error::Error;
 use uncharted_core::games::Game;
 use uncharted_core::render_size::{automatic_size, render_target_growth};
@@ -227,4 +229,33 @@ fn automatic_size_limits_render_targets_for_each_game() {
     let (heap, second) = render_target_growth((width, height));
     assert!(heap + second <= 256);
     assert!(width.abs_diff((height * 8) / 5) <= 8);
+}
+
+#[test]
+fn evaluate_resize_covers_all_target_aspects() {
+    // Minor window jitter within 16 px keeps presenter aligned without prompting restart.
+    let minor = evaluate_resize(Z13, (2568, 1608)).unwrap();
+    assert!(!minor.needs_restart);
+    assert_eq!(minor.fov.mode, FovMode::VertPlus);
+    assert_eq!(minor.safe_area, rect(0, 82, 2568, 1444));
+
+    // Larger transitions across 6:5, 3:2, 16:9, 16:10, 21:9/5K2K, and cover screen prompt restart
+    // and never stretch the presenter rectangle or HUD safe area.
+    for (startup, current, expected_mode) in [
+        (FHD, Z13, FovMode::VertPlus),
+        (Z13, IPAD_MINI, FovMode::VertPlus),
+        (IPAD_MINI, FOLD_UNFOLDED, FovMode::VertPlus),
+        (FOLD_UNFOLDED, FOLD_COVER, FovMode::HorPlus),
+        (FHD, ULTRAWIDE, FovMode::HorPlus),
+        (ULTRAWIDE, ULTRAWIDE_5K2K, FovMode::HorPlus),
+        (ULTRAWIDE_5K2K, FHD, FovMode::Native),
+    ] {
+        let decision = evaluate_resize(startup, current).unwrap();
+        assert!(decision.needs_restart, "{startup:?} -> {current:?}");
+        assert_eq!(decision.fov.mode, expected_mode);
+        assert!(decision.presenter_rect.x + decision.presenter_rect.width <= current.0);
+        assert!(decision.presenter_rect.y + decision.presenter_rect.height <= current.1);
+        assert!(decision.safe_area.x + decision.safe_area.width <= current.0);
+        assert!(decision.safe_area.y + decision.safe_area.height <= current.1);
+    }
 }
