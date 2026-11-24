@@ -4,10 +4,10 @@ How the port renders above 1080p, how the games' size and aspect ratio are chang
 the speaker layout reaches the games. The Windows native loader can choose a render size at
 startup. The variables below also support explicit settings.
 
-## Automatic sizing on Windows (M21a)
+## Automatic sizing (M21a)
 
-The native `bb-probe.exe` loader asks SDL for the game's initial window size in pixels before
-constructing the Vulkan presenter. Fullscreen uses the display's pixels. An explicit
+The native loader (`uncharted-run` and `bb-probe`) asks SDL for the game's initial window size in
+pixels before constructing the Vulkan presenter. Fullscreen uses the display's pixels. An explicit
 `BB_WINDOW_SIZE` sets the initial windowed size. The default window follows the primary display's
 aspect and fits inside its usable area and the previous 1920x1080 initial size.
 

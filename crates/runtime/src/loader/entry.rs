@@ -58,6 +58,28 @@ pub struct GpuHooks {
         Option<unsafe extern "C" fn(c_int, *const c_char, *const c_char, *const c_void, u64)>,
 }
 
+/// Whether automatic startup render sizing should be wired into `BbGpuConfig::prepare_render`.
+/// External boot patches and explicit/legacy resolution overrides keep their existing launch paths.
+#[cfg(any(
+    test,
+    all(
+        target_arch = "x86_64",
+        any(target_os = "linux", target_os = "windows")
+    )
+))]
+fn should_auto_render_size(has_patch_files: bool, var: &dyn Fn(&str) -> Option<String>) -> bool {
+    if has_patch_files {
+        return false;
+    }
+    let non_empty = |name: &str| var(name).is_some_and(|v| !v.is_empty());
+    if non_empty("BB_GAME_RES") || non_empty("BB_RENDER_RES") {
+        return false;
+    }
+    var("BB_RENDER_720P")
+        .as_deref()
+        .is_none_or(|v| !v.starts_with('1'))
+}
+
 /// Registers optional GPU library hooks used during guest startup and shutdown.
 pub fn configure_gpu_hooks(hooks: GpuHooks) {
     BBGPU_REGISTER_KERNEL_FN.store(
@@ -649,6 +671,44 @@ mod runtime_boot {
         }
     }
 
+    struct AutoRenderContext {
+        image: *mut u8,
+        image_size: u64,
+        error: Option<String>,
+    }
+
+    unsafe extern "C" fn prepare_window_render(
+        width: u32,
+        height: u32,
+        context: *mut c_void,
+    ) -> BbRenderSize {
+        if context.is_null() {
+            return BbRenderSize::default();
+        }
+        // SAFETY: `context` points to a live `AutoRenderContext` for the duration of `bbgpu_init`.
+        let ctx = unsafe { &mut *(context as *mut AutoRenderContext) };
+        // SAFETY: `ctx.image` points to `ctx.image_size` writable bytes of the mapped guest image.
+        let render = unsafe {
+            crate::display::ffi::runtime_display_auto(ctx.image, ctx.image_size, width, height)
+        };
+        if render.direct_memory_mib != 0
+            && crate::memory::abi::runtime_memory_set_dmem(render.direct_memory_mib) != 0
+        {
+            ctx.error = Some("cannot configure automatic render direct memory".into());
+            return BbRenderSize::default();
+        }
+        if render.width != 0 {
+            println!(
+                "Display: window {width}x{height}, startup render {}x{}",
+                render.width, render.height
+            );
+        }
+        BbRenderSize {
+            width: render.width,
+            height: render.height,
+        }
+    }
+
     fn host_page_size() -> usize {
         #[cfg(target_os = "linux")]
         {
@@ -822,6 +882,13 @@ mod runtime_boot {
             );
         }
 
+        let image_end = boot
+            .segments
+            .iter()
+            .map(|s| s.address + s.size)
+            .max()
+            .unwrap_or(0);
+
         if !opts.cpu_only {
             let sfo_path = Path::new(opts.app0.as_deref().unwrap_or(".")).join("sce_sys/param.sfo");
             let title = match sfo_lookup_file(&sfo_path, "TITLE") {
@@ -848,6 +915,14 @@ mod runtime_boot {
             std::env::set_var("BB_GUEST_IMAGE_BASE", format!("{image_base:#x}"));
             let title_c = CString::new(title).unwrap_or_else(|_| CString::from(c"Bloodborne"));
             let serial_c = CString::new(serial).unwrap_or_else(|_| CString::from(c"UNKNOWN"));
+            let mut auto_ctx = AutoRenderContext {
+                image: image_base as usize as *mut u8,
+                image_size: image_end,
+                error: None,
+            };
+            let auto_render = should_auto_render_size(!opts.patch_files.is_empty(), &|name| {
+                std::env::var_os(name).map(|v| v.to_string_lossy().into_owned())
+            });
             let gpu = BbGpuConfig {
                 title: title_c.as_ptr(),
                 serial: serial_c.as_ptr(),
@@ -856,10 +931,17 @@ mod runtime_boot {
                 psf_attributes: attributes,
                 width: 1920,
                 height: 1080,
-                prepare_render: None,
-                render_context: std::ptr::null_mut(),
+                prepare_render: auto_render.then_some(prepare_window_render as _),
+                render_context: if auto_render {
+                    (&raw mut auto_ctx).cast()
+                } else {
+                    std::ptr::null_mut()
+                },
             };
             bbgpu_init(&gpu).map_err(|e| (1, e))?;
+            if let Some(err) = auto_ctx.error {
+                return Err((1, err));
+            }
             println!(
                 "GPU: window and Vulkan presenter ready; SDK {sdk_version:#010x}, {} HLE symbols",
                 bbgpu_symbol_count()
@@ -882,12 +964,6 @@ mod runtime_boot {
             );
         }
 
-        let image_end = boot
-            .segments
-            .iter()
-            .map(|s| s.address + s.size)
-            .max()
-            .unwrap_or(0);
         // SAFETY: image segments are mapped and writable.
         unsafe {
             hooks::install_game_callbacks(image_base, image_end, &boot.segments);
@@ -1382,5 +1458,31 @@ mod tests {
         assert!(libc::WIFEXITED(status));
         assert_eq!(libc::WEXITSTATUS(status), 20);
         assert_eq!(String::from_utf8_lossy(&out), "GPU_PREPARED_EXIT\n");
+    }
+
+    #[test]
+    fn should_auto_render_size_respects_overrides_and_patches() {
+        let none = |_: &str| None;
+        assert!(should_auto_render_size(false, &none));
+        assert!(!should_auto_render_size(true, &none));
+
+        let empty_overrides = |name: &str| match name {
+            "BB_GAME_RES" | "BB_RENDER_RES" | "BB_RENDER_720P" => Some(String::new()),
+            _ => None,
+        };
+        assert!(should_auto_render_size(false, &empty_overrides));
+
+        for (key, val) in [
+            ("BB_GAME_RES", "2560x1440"),
+            ("BB_GAME_RES", "1920x1080"),
+            ("BB_RENDER_RES", "1600x900"),
+            ("BB_RENDER_720P", "1"),
+        ] {
+            let env = |name: &str| (name == key).then(|| val.to_owned());
+            assert!(!should_auto_render_size(false, &env), "{key}={val}");
+        }
+
+        let deck_off = |name: &str| (name == "BB_RENDER_720P").then(|| "0".to_owned());
+        assert!(should_auto_render_size(false, &deck_off));
     }
 }

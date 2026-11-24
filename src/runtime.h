@@ -31,9 +31,7 @@ void runtime_restart(void);
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
 uintptr_t runtime_memory_resolve(const char *name);
-#ifdef _WIN32
 int runtime_memory_set_dmem(uint32_t mb);
-#endif
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 /* Ends the process: log flushed, shader cache saved, no destructors and (Windows) no DLL detach

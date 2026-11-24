@@ -40,26 +40,6 @@ struct ProtRun {
 }
 
 static LOW_NEXT: AtomicU64 = AtomicU64::new(super::LOW_MIN);
-static DMEM_OVERRIDE_MB: AtomicU64 = AtomicU64::new(0);
-
-/// Sets `BB_DMEM_MB` programmatically before the direct-memory pool is created.
-pub fn set_dmem(mb: u32) -> i32 {
-    if !(5056..=16384).contains(&mb) {
-        return -1;
-    }
-    if DMEM_OVERRIDE_MB
-        .compare_exchange(0, u64::from(mb), Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return -1;
-    }
-    0
-}
-
-pub fn dmem_override() -> Option<u64> {
-    let mb = DMEM_OVERRIDE_MB.load(Ordering::Acquire);
-    (mb != 0).then_some(mb << 20)
-}
 
 fn win_prot(prot: i32) -> u32 {
     const PROT_READ: i32 = 1;
