@@ -323,6 +323,8 @@ static void StartProfileWriter() {
 
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
+    EmulatorSettings.SetFrameTiming(BbSettings::Get().vblank_hz.load(),
+                                    BbSettings::Get().fps_limit.load());
 #ifdef BB_PGO_GENERATE
     StartProfileWriter();
 #endif

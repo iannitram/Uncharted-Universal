@@ -19,6 +19,33 @@ enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerforman
 /// Frame generation (vk_frame_generation.h): frames generated between two of the game's.
 enum FrameGen : int { FrameGenOff = 0, FrameGenFsr3 = 1, FrameGenDlss = 2, FrameGenCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
+/// Per-device graphics profile (Issue #10).
+enum DeviceProfile : int {
+    ProfileAuto = 0,
+    ProfileHandheld = 1,
+    ProfileLaptop = 2,
+    ProfileDesktop = 3,
+    ProfileStereo3D = 4,
+    ProfileCount
+};
+/// Uncharted 3 stereoscopic 3D output mode (Issue #10, #19).
+enum StereoMode : int {
+    StereoOff = 0,
+    StereoSideBySide = 1,
+    StereoTopBottom = 2,
+    StereoAnaglyph = 3,
+    StereoModeCount
+};
+
+struct ProfilePreset {
+    int vblank_hz;
+    int fps_limit;
+    int output_res;
+    int upscaler;
+    int preset;
+    int frame_gen;
+    int stereo_mode;
+};
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -95,6 +122,12 @@ struct Values {
     std::atomic<int> frame_gen_multiplier{2};
     std::atomic<int> dlssg_max_multiplier{1};
     std::atomic<const char*> frame_gen_problem{nullptr};
+    /// Per-device profile, frame rate, and Uncharted 3 stereo mode (Issue #10).
+    std::atomic<int> device_profile{ProfileAuto};
+    std::atomic<int> detected_profile{ProfileDesktop};
+    std::atomic<int> vblank_hz{60};   ///< 30, 45, 60, 120, or 0 (uncapped)
+    std::atomic<int> fps_limit{-1};   ///< -1 auto, 0 no limit, or 30/45/60/90/120
+    std::atomic<int> stereo_mode{StereoOff};
 
     /// The player's ini or BB_UPSCALER named the upscaler (else the default may change with the
     /// driver: ConfigureDriverDefault).
@@ -112,6 +145,9 @@ struct Values {
     int startup_model_lod = 0;
     int startup_output_res = OutputDefault;
     int startup_live_resolution = 0;
+    int startup_vblank_hz = 60;
+    int startup_fps_limit = -1;
+    int startup_stereo_mode = StereoOff;
 };
 
 Values& Get();
@@ -136,14 +172,33 @@ void ConfigureXessSupport(bool available, const char* problem);
 bool FixedRenderSession();
 int RenderPreset();
 bool ResolutionNeedsRestart();
+bool FrameRateNeedsRestart();
+bool StereoNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+
+/// Device profile detection, presets, and per-device constraints (Issue #10).
+int DetectDeviceProfile(const char* gpu_name, const char* dmi_product, const char* cpu_model,
+                        const char* os_release);
+int EffectiveProfile();
+ProfilePreset PresetForProfile(int effective_profile, bool fsr3_validated, bool fsr4_supported,
+                               bool dlss_supported);
+void ApplyProfile(int profile);
+void EnforceProfileConstraints(int effective_profile);
+bool ProfileAllowsUpscaler(int effective_profile, int upscaler);
+bool ProfileAllowsFrameGen(int effective_profile, int frame_gen);
+bool ProfileAllowsFrameRate(int effective_profile, int vblank_hz);
+bool ProfileAllowsStereo(int effective_profile, int stereo_mode);
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);
 const char* PresetName(int preset);
 const char* UpscalerName(int upscaler);
 const char* FrameGenName(int frame_gen);
+const char* ProfileName(int profile);
+const char* ProfileLabel(int profile);
+const char* StereoModeName(int mode);
+const char* StereoModeLabel(int mode);
 
 /// Whether FSR 3.1 has been seen rendering correctly on this driver (a VkDriverId value).
 /// By driver id: nothing is on this list (RADV is one id for every AMD GPU); see

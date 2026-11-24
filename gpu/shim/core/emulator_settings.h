@@ -30,24 +30,31 @@ public:
     // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
     // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
     u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Relaxed)); return value; }
+    void SetFrameTiming(long vblank_hz, long fps_limit) {
+        configured_vblank_hz.store(vblank_hz);
+        configured_fps_limit.store(fps_limit);
+    }
     // bbport: BB_VBLANK_HZ=0 (uncapped presets): vblank runs at 480 Hz so a finished frame is
     // shown within ~2 ms instead of waiting for the next display-rate vblank (below the display
     // rate frames alternated 10/20 ms at 100 Hz: judder), and GetFrameLimit() caps the rate at
     // the display refresh, at most 120 (above ~120 FPS movement timing breaks: running slows).
     // An explicit BB_VBLANK_HZ is used as given, without a limit (measurements).
     u32 GetVblankFrequency() {
-        static const u32 value = [] {
-            const long hz = Number("BB_VBLANK_HZ", 60);
+        static const u32 value = [this] {
+            const long fallback = configured_vblank_hz.load() >= 0 ? configured_vblank_hz.load() : 60;
+            const long hz = Number("BB_VBLANK_HZ", fallback);
             return hz > 0 ? u32(hz) : 480u;
         }();
         return value;
     }
     /// Frames per second the present thread lets through; 0 = no limit. BB_FPS_LIMIT overrides.
     u32 GetFrameLimit() {
-        static const u32 value = [] {
-            const long limit = Number("BB_FPS_LIMIT", -1);
+        static const u32 value = [this] {
+            const long limit_fallback = configured_fps_limit.load() >= -1 ? configured_fps_limit.load() : -1;
+            const long limit = Number("BB_FPS_LIMIT", limit_fallback);
             if (limit >= 0) return u32(limit);
-            return Number("BB_VBLANK_HZ", 60) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120);
+            const long vblank_fallback = configured_vblank_hz.load() >= 0 ? configured_vblank_hz.load() : 60;
+            return Number("BB_VBLANK_HZ", vblank_fallback) > 0 ? 0u : std::min<u32>(BbDisplayRefreshHz(), 120);
         }();
         return value;
     }
@@ -86,5 +93,7 @@ public:
 
 private:
     std::atomic<bool> shadnet_session_disabled{false};
+    std::atomic<long> configured_vblank_hz{-1};
+    std::atomic<long> configured_fps_limit{-2};
 };
 #define EmulatorSettings (*EmulatorSettingsImpl::GetInstance())
