@@ -36,6 +36,8 @@ bool g_gpu_checkpoints = false;
 // Linux fork: BB_GPU_CHECKPOINTS=1 on AMD (the Steam Deck) uses VK_AMD_buffer_marker instead.
 bool g_gpu_markers_amd = false;
 VkQueue g_crash_queue = VK_NULL_HANDLE;
+// bbport: the device a Check() that sees ErrorDeviceLost reports on (DeviceLostAnywhere).
+VkDevice g_crash_device = VK_NULL_HANDLE;
 
 namespace {
 
@@ -861,6 +863,7 @@ bool Instance::CreateDevice() {
     graphics_queue = device->getQueue(queue_family_index, 0);
     present_queue = device->getQueue(queue_family_index, 0);
     g_crash_queue = graphics_queue;
+    g_crash_device = *device;
     sparse_queue = graphics_queue;
     if (sparse_on_side) {
         sparse_queue = device->getQueue(sparse_queue_family_index, side_queues - 1);
