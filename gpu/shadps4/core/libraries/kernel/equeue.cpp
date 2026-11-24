@@ -8,6 +8,7 @@
 #include <thread>
 #include <magic_enum/magic_enum.hpp>
 
+#include "bbport_threads.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/logging/log.h"
@@ -312,8 +313,10 @@ int EqueueInternal::WaitForSmallTimer(OrbisKernelEvent* ev, int num, u32 micros)
     const auto wait_end_us = (micros == 0) ? std::chrono::steady_clock::time_point::max()
                                            : curr_clock + std::chrono::microseconds{micros};
     int count = 0;
+    BbThreads::WaitBackoff backoff{0, 16, 4, std::chrono::microseconds{50}};
     do {
         curr_clock = std::chrono::steady_clock::now();
+        auto next_deadline = wait_end_us;
         {
             std::scoped_lock lock{m_mutex};
             for (auto it = m_small_timers.begin(); it != m_small_timers.end() && count < num;) {
@@ -323,6 +326,7 @@ int EqueueInternal::WaitForSmallTimer(OrbisKernelEvent* ev, int num, u32 micros)
                     ev[count++] = st.event;
                     it = m_small_timers.erase(it);
                 } else {
+                    next_deadline = std::min(next_deadline, st.added + st.interval);
                     ++it;
                 }
             }
@@ -330,7 +334,12 @@ int EqueueInternal::WaitForSmallTimer(OrbisKernelEvent* ev, int num, u32 micros)
             if (count > 0)
                 return count;
         }
-        std::this_thread::yield();
+        const auto sleep_cap = std::min(wait_end_us, next_deadline);
+        if (sleep_cap > curr_clock + std::chrono::microseconds{100}) {
+            std::this_thread::sleep_until(sleep_cap - std::chrono::microseconds{50});
+        } else {
+            backoff.WaitOnce();
+        }
     } while (curr_clock < wait_end_us);
 
     return 0;

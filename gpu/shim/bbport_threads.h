@@ -6,7 +6,13 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <cstdlib>
 #include <thread>
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 #ifdef _WIN32
 #include <bit>
 #include <windows.h>
@@ -93,5 +99,55 @@ struct ScopedNormalPriority {
     ~ScopedNormalPriority() {}
 };
 #endif
+
+/// Emits a CPU spin-loop hint without burning full ALU power.
+inline void SpinPause() noexcept {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#ifdef _MSC_VER
+    _mm_pause();
+#else
+    __builtin_ia32_pause();
+#endif
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    __asm__ __volatile__("yield" ::: "memory");
+#endif
+}
+
+/// Returns the spin budget in microseconds for a worker/wait loop, overridden by `env_name`
+/// if set (clamped to >= 0). Defaults to `default_gte12_us` when >= 12 hardware threads are
+/// available, or `default_lt12_us` on smaller CPUs.
+inline int EnvSpinMicros(const char* env_name, int default_gte12_us, int default_lt12_us) {
+    if (env_name) {
+        if (const char* env = std::getenv(env_name); env && env[0]) {
+            return std::max(0, std::atoi(env));
+        }
+    }
+    return Available() >= 12 ? default_gte12_us : default_lt12_us;
+}
+
+/// Bounded spin-then-yield-then-sleep backoff for polling wait loops without a condvar.
+/// Starts with `pause_limit` CPU pause hints, then `yield_limit` thread yields, then sleeps
+/// for `sleep_duration` per step so stalled waits do not burn package power.
+struct WaitBackoff {
+    std::uint32_t step = 0;
+    std::uint32_t pause_limit = 64;
+    std::uint32_t yield_limit = 8;
+    std::chrono::microseconds sleep_duration{50};
+
+    void WaitOnce() {
+        if (step < pause_limit) {
+            SpinPause();
+        } else if (step < pause_limit + yield_limit) {
+            std::this_thread::yield();
+        } else {
+            std::this_thread::sleep_for(sleep_duration);
+        }
+        ++step;
+    }
+
+    void Reset() noexcept {
+        step = 0;
+    }
+};
 
 } // namespace BbThreads

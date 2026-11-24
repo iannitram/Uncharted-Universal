@@ -8,6 +8,7 @@
 #endif
 #include <time.h>
 #include "bbport_copy.h"
+#include "bbport_threads.h"
 #include "bbport_toggles.h"
 #include <cstdio>
 #include <cstdlib>
@@ -180,6 +181,9 @@ void Liverpool::Process(std::stop_token stoken) {
         // Queue visits since a task last finished: once past every queue, all are waiting.
         u32 waiting_visits = 0;
         std::chrono::steady_clock::time_point spin_start{};
+        static const auto gpu_spin_time =
+            std::chrono::microseconds(BbThreads::EnvSpinMicros("BB_GPU_SPIN_US", 50, 20));
+        BbThreads::WaitBackoff wait_backoff{0, 0, 4, std::chrono::microseconds{50}};
         const auto end_spin = [&] {
             if (waiting_visits > num_mapped_queues) {
                 BbStats::queue_spin_ns.fetch_add(
@@ -188,14 +192,24 @@ void Liverpool::Process(std::stop_token stoken) {
                     std::memory_order_relaxed);
             }
             waiting_visits = 0;
+            wait_backoff.Reset();
         };
 
         while (num_submits || num_commands) {
+            if (num_commands) {
+                end_spin();
+            }
             ProcessCommands();
 
             curr_qid = (curr_qid + 1) % num_mapped_queues;
             if (++waiting_visits == num_mapped_queues + 1) {
                 spin_start = std::chrono::steady_clock::now();
+            } else if (waiting_visits > num_mapped_queues &&
+                       (waiting_visits - 1) % num_mapped_queues == 0 &&
+                       std::chrono::steady_clock::now() - spin_start >= gpu_spin_time) {
+                // All queues have been polled past the spin budget without progress; yield briefly
+                // then sleep so an idle/fence-waiting GPU thread does not burn CPU package power.
+                wait_backoff.WaitOnce();
             }
 
             auto& queue = mapped_queues[curr_qid];

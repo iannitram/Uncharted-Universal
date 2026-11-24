@@ -160,8 +160,9 @@ private:
     }
 
     void WaitForSpace(u64 at, u64 size) {
+        BbThreads::WaitBackoff backoff{0, 4096, 32, std::chrono::microseconds{50}};
         while (at + size - consumed.load(std::memory_order_acquire) > Capacity) {
-            __builtin_ia32_pause();
+            backoff.WaitOnce();
         }
     }
 
@@ -177,18 +178,14 @@ private:
             if (available == at) {
                 // With few hardware threads (Steam Deck: 8) a long spin takes time from the
                 // game's own threads. BB_PIPE_SPIN_US overrides.
-                static const auto spin_time = std::chrono::microseconds([] {
-                    if (const char* env = std::getenv("BB_PIPE_SPIN_US")) {
-                        return std::max(0, std::atoi(env));
-                    }
-                    return BbThreads::Available() >= 12 ? 200 : 50;
-                }());
+                static const auto spin_time = std::chrono::microseconds(
+                    BbThreads::EnvSpinMicros("BB_PIPE_SPIN_US", 200, 50));
                 const auto spin_until = std::chrono::steady_clock::now() + spin_time;
                 for (u32 spins = 1; available == at; ++spins) {
                     if (stop.stop_requested()) {
                         return;
                     }
-                    __builtin_ia32_pause();
+                    BbThreads::SpinPause();
                     if (!(spins & 255) && std::chrono::steady_clock::now() >= spin_until) {
                         const u32 seen = wake.load(std::memory_order_seq_cst);
                         sleeping.store(true, std::memory_order_seq_cst);

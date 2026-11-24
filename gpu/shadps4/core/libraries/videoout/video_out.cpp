@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <thread>
+#include "bbport_threads.h"
 #include "common/assert.h"
 #include "common/thread.h"
 #include "common/elf_info.h"
@@ -431,9 +432,10 @@ s32 sceVideoOutSubmitEopFlip(s32 handle, u32 buf_id, u32 mode, s64 flip_arg, voi
                 // twice, and the game still gets its flip event. From Awaken's port.
                 if (port->buffer_labels[buf_id] != 1) {
                     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(20);
+                    BbThreads::WaitBackoff backoff;
                     while (reinterpret_cast<volatile u64&>(port->buffer_labels[buf_id]) != 1 &&
                            std::chrono::steady_clock::now() < deadline) {
-                        std::this_thread::yield();
+                        backoff.WaitOnce();
                     }
                     if (port->buffer_labels[buf_id] != 1) {
                         static std::atomic<u32> reported{0};

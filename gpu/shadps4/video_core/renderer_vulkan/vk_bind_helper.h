@@ -11,6 +11,7 @@
 #include <thread>
 #include <x86intrin.h>
 
+#include "bbport_threads.h"
 #include "common/thread.h"
 #include "common/types.h"
 
@@ -71,8 +72,9 @@ public:
         const u64 target = posted.load(std::memory_order_relaxed);
         if (done.load(std::memory_order_acquire) != target) {
             const u64 start = __rdtsc();
+            BbThreads::WaitBackoff backoff{0, 4096, 16, std::chrono::microseconds{50}};
             while (done.load(std::memory_order_acquire) != target) {
-                __builtin_ia32_pause();
+                backoff.WaitOnce();
             }
             wait_cycles += __rdtsc() - start;
         }
@@ -88,13 +90,15 @@ private:
         Common::SetCurrentThreadName("bb:TexBind");
         on_helper = true;
         u64 seen = 0;
+        static const auto spin_time = std::chrono::microseconds(
+            BbThreads::EnvSpinMicros("BB_BIND_SPIN_US", 100, 20));
         while (!stop.stop_requested()) {
             // Draws arrive every few microseconds while a frame is recorded: spin, and sleep
             // only after a pause longer than that (between frames).
-            const auto spin_until = std::chrono::steady_clock::now() + std::chrono::microseconds(100);
+            const auto spin_until = std::chrono::steady_clock::now() + spin_time;
             u64 now = posted.load(std::memory_order_acquire);
             for (u32 spins = 1; now == seen; ++spins) {
-                __builtin_ia32_pause();
+                BbThreads::SpinPause();
                 if (!(spins & 255) && std::chrono::steady_clock::now() >= spin_until) {
                     sleeping.store(true, std::memory_order_seq_cst);
                     posted.wait(seen, std::memory_order_seq_cst);
