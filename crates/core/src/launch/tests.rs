@@ -868,3 +868,21 @@ fn child_runner_passes_trophies_dir_when_cache_exists() {
         .windows(2)
         .any(|w| w[0] == "--trophies" && w[1] == out_trophy.as_os_str()));
 }
+
+#[test]
+fn session_env_forwards_and_validates_bb_benchmark() {
+    let mut fx = Fixture::new(&[]);
+    fx.player.insert("BB_BENCHMARK".into(), "045".into());
+    let env: BTreeMap<_, _> = fx
+        .session(Os::Linux)
+        .env(Game::U2)
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(env["BB_BENCHMARK"], "45");
+    assert_eq!(env["BB_EXE"], Game::U2.executable());
+    assert_eq!(env["BB_USER_DIR"], fx.paths.user_dir.to_string_lossy());
+
+    fx.player.insert("BB_BENCHMARK".into(), "0".into());
+    assert!(fx.session(Os::Linux).env(Game::U2).is_err());
+}

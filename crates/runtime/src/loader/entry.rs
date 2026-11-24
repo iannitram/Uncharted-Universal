@@ -226,6 +226,7 @@ fn prepare_quit_once(quitting: &AtomicBool, gpu_on: bool, prepare_exit: impl FnO
 /// Flushes streams, saves the shader cache once if GPU mode was active, and exits immediately
 /// without running host destructors (`probe.c`'s `runtime_quit`).
 pub fn runtime_quit(code: i32) -> ! {
+    crate::benchmark_run::uncharted_benchmark_crash();
     flush_all_streams();
     let prepare_fn = BBGPU_PREPARE_EXIT_FN.load(Ordering::Acquire);
     prepare_quit_once(&QUITTING, gpu_enabled(), || {
@@ -830,6 +831,7 @@ mod runtime_boot {
         if unsafe { crate::benchmark_run::uncharted_benchmark_start(user_c.as_ptr()) } < 0 {
             return Err((2, "BB_BENCHMARK is set but cannot run".into()));
         }
+        fault::configure_benchmark_crash(Some(crate::benchmark_run::uncharted_benchmark_crash));
 
         bbgpu_register_kernel();
 
