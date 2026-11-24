@@ -174,14 +174,14 @@ impl AppleHost {
         let page = PAGE as usize;
         let size = template.span() as usize;
         if let Some((base, held)) = self.claimed {
-            let layout = template.rebased(((base + page - 1) / page * page) as u64);
+            let layout = template.rebased(base.next_multiple_of(page) as u64);
             return (held >= size + page).then_some(layout);
         }
         // Over-reserve by a guest page so the base can be aligned up to it (the host page
         // may be smaller than the guest's).
         let block = reserve(None, size + page).ok()?;
         self.claimed = Some((block, size + page));
-        Some(template.rebased(((block + page - 1) / page * page) as u64))
+        Some(template.rebased(block.next_multiple_of(page) as u64))
     }
 
     /// The host address of backing byte `phys` (0 before the pool exists).
