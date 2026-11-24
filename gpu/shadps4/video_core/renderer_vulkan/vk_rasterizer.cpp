@@ -2226,11 +2226,13 @@ void Rasterizer::ReadBackSmallWrittenBuffers() {
         const char* env = std::getenv("BB_READBACK_SMALL_GATE");
         return env && env[0] == '1';
     }();
+    bool queued_async = false;
     if (!sync && defer) {
         std::vector<std::pair<VAddr, u32>> unhandled;
         buffer_cache.DeferGuestCopyBatch(ranges, gated, unhandled);
         for (const auto& [address, size] : unhandled) {
             buffer_cache.ReadMemoryAsync(address, size);
+            queued_async = true;
         }
     } else {
         for (const auto& [address, size] : ranges) {
@@ -2238,8 +2240,14 @@ void Rasterizer::ReadBackSmallWrittenBuffers() {
                 buffer_cache.ReadMemory(address, size, false, true);
             } else {
                 buffer_cache.ReadMemoryAsync(address, size);
+                queued_async = true;
             }
         }
+    }
+    // ReadMemoryAsync defers completion via PriorityPendingOpsThread, which waits directly on
+    // work_semaphore without flushing; flush once so the copy tick is always submitted.
+    if (queued_async) {
+        scheduler.Flush();
     }
     // BB_COPY64_EOP_READBACK (NoteCopy64Readback): gated with BB_COPY64_EOP_GATE=1.
     static const bool copy64_gated = Copy64Gated();
