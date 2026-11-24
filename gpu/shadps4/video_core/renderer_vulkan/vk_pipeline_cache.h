@@ -14,6 +14,7 @@
 #include <variant>
 #include <boost/container/static_vector.hpp>
 #include <tsl/robin_map.h>
+#include "bbport_shader_preload.h"
 #include "common/shared_first_mutex.h"
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
@@ -193,6 +194,14 @@ public:
         return profile;
     }
 
+    void RequestWarmUpCancel() {
+        warm_progress.RequestCancel();
+    }
+
+    [[nodiscard]] BbShaderPreload::WarmUpProgress::Snapshot GetWarmUpProgress() const {
+        return warm_progress.GetSnapshot();
+    }
+
 private:
     bool RefreshGraphicsKey(PipelineSelection& sel);
     bool RefreshGraphicsStages(PipelineSelection& sel);
@@ -277,6 +286,7 @@ private:
 
     // bbport: preload on background threads and the driver's pipeline cache on disk.
     std::atomic<bool> warm_done{true};
+    BbShaderPreload::WarmUpProgress warm_progress;
     std::thread warm_thread;
     std::filesystem::path driver_cache_path;
     std::mutex driver_cache_mutex;

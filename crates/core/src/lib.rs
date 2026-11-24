@@ -57,6 +57,7 @@ pub mod savecard;
 pub mod saves;
 pub mod setup;
 pub mod sfo;
+pub mod shader_preload;
 pub mod steam;
 pub mod trophies;
 pub mod tune;

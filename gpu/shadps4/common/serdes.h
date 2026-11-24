@@ -56,6 +56,10 @@ struct Archive {
         return offset >= container.size();
     }
 
+    [[nodiscard]] size_t Remaining() const {
+        return offset <= container.size() ? container.size() - offset : 0;
+    }
+
     Archive() = default;
     explicit Archive(std::vector<u8>&& v) : container{v} {}
 
@@ -103,6 +107,26 @@ struct Writer {
 };
 
 struct Reader {
+    [[nodiscard]] bool CanRead(size_t size) const {
+        return ar.Remaining() >= size;
+    }
+
+    template <typename T>
+    [[nodiscard]] bool TryRead(T* ptr, size_t size) {
+        if (!CanRead(size)) {
+            return false;
+        }
+        std::memcpy(reinterpret_cast<void*>(ptr), ar.CurrPtr(), size);
+        ar.Advance(size);
+        return true;
+    }
+
+    template <typename T>
+        requires(!Container<T>)
+    [[nodiscard]] bool TryRead(T& value) {
+        return TryRead(&value, sizeof(value));
+    }
+
     template <typename T>
     void Read(T* ptr, size_t size) {
         ASSERT_MSG(ar.offset + size <= ar.container.size(),
