@@ -54,7 +54,7 @@ Established from source and synthetic tests alone: the bbcpu interpreter and tra
 4. **Licence**: see allowlist. Linking GPL code into the runtime makes the distributed Apple build GPL-governed. **Resolved 2026-11-16 (owner, recorded in #396):** asked whether the Apple build may be GPL-governed, the owner answered "Yes, GPL is fine (Recommended)": "may adopt the allowlisted GPL-2.0 files (never bbnet20's GPL-3.0 code), with SPDX lines and notices kept." App Store distribution of GPL code is a separate legal question to be settled before choosing a route; this document gives no conclusion on it.
 5. **Signing** (verify against current Apple documentation and measured behaviour): macOS Hardened Runtime needs `com.apple.security.cs.allow-jit` for any runtime translator; iOS provides no JIT for ordinary apps, so the shipped path must be AOT library plus interpreter, with the library an ordinary build-time app input. Install is by the owner's own provisioning (Xcode signing over a cable). Expiry, entitlements for extra memory and any distribution route are open.
 
-## Legal allowlist (what tests link; nothing vendored)
+## Legal allowlist (vendored under apple/vendor since #396)
 
 **Update 2026-11 (#396):** the components in the table below, and the bloodborne-recomp files `tools/recomp/scan.c`, `tools/recomp/bbrecomp.c` and `tests/fuzz_recomp.c` at `c60ccf8be752b8690f2813505c4daf9eafdb136b`, are now vendored under `apple/vendor/` (ADR 0006, owner ruling of 2026-11-16) with a `VENDOR.txt` each; the record with revisions is the "Imported code" table in `PEERS.md`. `packaging/licence_check.py apple` fails the build when anything GPL-3.0 or `bbnet20` appears under `apple/`. The list below is the original review and still governs what may be added next.
 

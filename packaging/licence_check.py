@@ -73,6 +73,8 @@ APPLE_FORBIDDEN_DIRS = ('bbnet20',)
 APPLE_FORBIDDEN_NAMES = ('gpl-3', 'gplv3', 'agpl', 'lgpl-3', 'lgplv3', 'bbnet20')
 APPLE_FORBIDDEN_TEXT = ('spdx-license-identifier: gpl-3', 'spdx-license-identifier: agpl-3',
                         'spdx-license-identifier: lgpl-3', 'spdx-license-identifier: apache-2.0',
+                        'licence: gpl-3', 'license: gpl-3', 'licence: agpl', 'license: agpl',
+                        'licence: lgpl-3', 'license: lgpl-3', 'licence: apache', 'license: apache',
                         'gnu general public license\n                       version 3', 'version 3, 29 june 2007',
                         'apache license\n                           version 2.0', 'bbnet20')
 APPLE_TEXT_SUFFIXES = ('.c', '.h', '.inc', '.s', '.m', '.mm', '.rs', '.txt', '.md', '.toml', '.py', '.sh', '')
@@ -105,15 +107,19 @@ def check_apple_tree(root):
             continue
         if path.is_file() and path.suffix.lower() in APPLE_TEXT_SUFFIXES and path.stat().st_size < 4_000_000:
             text = path.read_text(encoding='utf-8', errors='ignore').lower()
+            if path.name == 'VENDOR.txt':
+                text = _without_exclusions(text)
             hit = next((mark for mark in APPLE_FORBIDDEN_TEXT if mark in text), None)
-            if hit and not _is_policy_text(path, relative):
+            if hit:
                 problems.append(f'{relative}: contains {hit.strip().splitlines()[0]!r}')
     return problems
 
 
-def _is_policy_text(path, relative):
-    """A VENDOR.txt may say what it excludes (it names bbnet20 and GPL-3.0 to say they are not here)."""
-    return path.name == 'VENDOR.txt'
+def _without_exclusions(text):
+    """VENDOR.txt text minus the lines that say what is not vendored (they name bbnet20 and GPL-3.0)."""
+    kept = [line for line in text.splitlines()
+            if not line.strip().lower().startswith(('not vendored', 'never vendored', 'excluded'))]
+    return '\n'.join(kept)
 
 
 def _owner(command):

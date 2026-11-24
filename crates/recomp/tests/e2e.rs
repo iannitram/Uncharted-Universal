@@ -288,6 +288,31 @@ fn the_driver_builds_a_library_from_a_game_folder_and_refuses_unsafe_outputs() {
     assert_eq!(refused.status.code(), Some(1));
     assert!(!in_game.exists());
 
+    // A folder that already has someone's files and no uu-recomp marker is never emptied.
+    let theirs = temp_dir("driver-theirs");
+    std::fs::create_dir_all(theirs.join("scan")).unwrap();
+    std::fs::create_dir_all(theirs.join("gen")).unwrap();
+    std::fs::write(theirs.join("scan/receipt.pdf"), b"keep").unwrap();
+    std::fs::write(theirs.join("gen/notes.txt"), b"keep").unwrap();
+    let refused = run(&[
+        "--title",
+        "u1",
+        "--game-dir",
+        game.to_str().unwrap(),
+        "--out",
+        theirs.to_str().unwrap(),
+        "--allow-no-dynamic",
+    ]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        text(&refused.stderr).contains("not made by uu-recomp"),
+        "{}",
+        text(&refused.stderr)
+    );
+    assert!(theirs.join("scan/receipt.pdf").is_file());
+    assert!(theirs.join("gen/notes.txt").is_file());
+    assert!(!theirs.join("image.elf").exists());
+
     // Bad arguments.
     assert_eq!(run(&["--title", "u9"]).status.code(), Some(2));
     assert_eq!(run(&[]).status.code(), Some(2));

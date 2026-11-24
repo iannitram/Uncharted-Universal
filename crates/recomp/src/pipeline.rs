@@ -184,6 +184,36 @@ fn reset(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))
 }
 
+/// Name of the file that marks a folder as made by `uu-recomp`.
+const MARKER: &str = ".uu-recomp";
+
+/// Make `out` ours, or refuse. An existing folder that has files and no marker is somebody
+/// else's: the pipeline deletes `scan`, `gen` and `obj` inside its folder, so it never starts in
+/// one it did not make.
+fn claim_output(out: &Path) -> Result<(), String> {
+    let marker = out.join(MARKER);
+    if !marker.exists() {
+        let occupied = match fs::read_dir(out) {
+            Ok(mut entries) => entries.next().is_some(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(format!("{}: {e}", out.display())),
+        };
+        if occupied {
+            return Err(format!(
+                "{}: the folder already has files and was not made by uu-recomp (no {MARKER}); \
+                 use a new or empty folder",
+                out.display()
+            ));
+        }
+    }
+    fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    fs::write(
+        &marker,
+        "made by uu-recomp: scan, gen and obj here are rebuilt on every run\n",
+    )
+    .map_err(|e| format!("{}: {e}", marker.display()))
+}
+
 fn seconds(since: Instant) -> f64 {
     (since.elapsed().as_secs_f64() * 100.0).round() / 100.0
 }
@@ -195,7 +225,7 @@ pub fn run(request: &Request) -> Result<Summary, String> {
     let scan_dir = out.join("scan");
     let gen_dir = out.join("gen");
     let obj_dir = out.join("obj");
-    fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    claim_output(out)?;
     for dir in [&scan_dir, &gen_dir, &obj_dir] {
         reset(dir)?;
     }
