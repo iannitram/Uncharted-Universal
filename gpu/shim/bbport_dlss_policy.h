@@ -3,10 +3,11 @@
 // bbport: the pure decisions around DLSS and DLSS Frame Generation (#155), kept free of Vulkan
 // and NGX so a unit test can run them (tests/test_dlss_policy.cpp). nvoglv64.dll, where the
 // museum crashes of Supermedo/uncharted_pc#641 and #290 fault, is NVIDIA's Vulkan driver on
-// Windows as much as its OpenGL one (the Vulkan ICD manifest names it), so those faults are the
-// driver rejecting what the port handed it: sizes it cannot take, null resources, a feature
-// used after its device. These checks refuse such input before the driver sees it, and the
-// callers fail over (DLSS to FSR 3.1, frame generation to off) instead of crashing.
+// Windows as much as its OpenGL one (the Vulkan ICD manifest names it), so those faults are most
+// likely the driver rejecting what the port handed it (the site is not found yet): sizes it
+// cannot take, null resources, a feature used after its device. These checks refuse such input
+// before the driver sees it, and the callers fail over (DLSS to FSR 3.1, frame generation to
+// FSR 3.1 or a skipped frame) instead of crashing.
 #pragma once
 
 #include <algorithm>

@@ -353,7 +353,7 @@ bool Dlss::Evaluate(vk::CommandBuffer command, const Frame& frame) {
         return false;
     }
     // Null views and images, or motion vectors and output of another size than the feature's,
-    // reach the driver as a null object deep inside it (nvoglv64.dll, #155): refuse them here.
+    // could reach the driver as a null object deep inside it (nvoglv64.dll, #155): refuse them.
     if (!UsableResource(frame.color) || !UsableResource(frame.depth) ||
         !UsableResource(frame.motion) || !UsableResource(frame.output) ||
         frame.motion.width != impl->feature->input_width ||

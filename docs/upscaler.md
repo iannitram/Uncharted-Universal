@@ -36,14 +36,17 @@ inputs (`fg_depth`, `fg_motion`).
 
 U2 museum crash on NVIDIA Windows (#155; Supermedo/uncharted_pc#641, #290): `nvoglv64.dll` is not
 an OpenGL library the port loads. It is NVIDIA's user-mode driver, and on Windows the Vulkan
-loader's ICD manifest names it too, so a fault there is the Vulkan driver rejecting what it was
-handed. The port now refuses before the driver sees it (`gpu/shim/bbport_dlss_policy.h`, tested
-by `dlss-policy-test`): DLSS feature sizes with the render size larger than the output (the first
-wide frames while the ultrawide output size settles), null or mismatched views and sizes at
-evaluation, and frame generation inputs larger than the frame; each fails over (DLSS to FSR 3.1,
-frame generation to FSR 3.1 or a skipped frame) and logs why. NGX is also released in
-`Instance::~Instance`, while its device exists, not by the process-exit hook after the device was
-destroyed. The live museum run at 3440x1440 is still owed.
+loader's ICD manifest names it too, so a fault there is most likely the Vulkan driver rejecting
+what it was handed. The crash site is not found yet (static reading only). As guards, the port
+refuses before the driver sees it (`gpu/shim/bbport_dlss_policy.h`, tested by
+`dlss-policy-test`): zero sizes or a render size larger than the output for a DLSS feature, null
+or mismatched views and sizes at evaluation, and frame generation inputs larger than the frame;
+each fails over (DLSS to FSR 3.1, frame generation to FSR 3.1 or a skipped frame) and logs why.
+Today's callers already keep the render size within the output and skip frame generation frames
+with larger inputs, so these guards catch a future caller or a bad size, not a known museum
+path. NGX is also released in `Instance::~Instance`, while its device exists, not by the
+process-exit hook after the device was destroyed. The live museum run at 3440x1440 is still
+owed.
 
 `BB_FORCE_FRAME_GEN=1` (default off, testing only): tries DLSS Frame Generation (2x) on a GPU NGX
 reports as unsupported, such as a GeForce RTX 30. The bridge asks for the Frame Generation device

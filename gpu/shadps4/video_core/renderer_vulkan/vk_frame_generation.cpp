@@ -673,8 +673,8 @@ u32 FrameGenerator::GenerateDlss(vk::CommandBuffer cmdbuf, vk::Image color,
     const Dlss::FrameGenDesc desc{width, height, ColorFormat, input_width, input_height};
     if (const char* problem =
             BbDlssPolicy::FrameGenSizeProblem(width, height, input_width, input_height)) {
-        // Sizes the NVIDIA driver cannot take (a null object inside nvoglv64.dll, #155): this
-        // frame only, no switch of provider.
+        // Sizes the NVIDIA driver may not take (#155; Generate already skips larger inputs, this
+        // also covers zero and oversized ones): this frame only, no switch of provider.
         static int noted = 0;
         if (noted++ < 3) {
             std::printf("Frame generation: skipped a frame (%s: %ux%u, depth and motion %ux%u)\n",
