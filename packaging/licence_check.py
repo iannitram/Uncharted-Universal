@@ -9,6 +9,9 @@ licence files into the package, and exit 1 naming each library that breaks the r
                                                      /clang64/share/licenses/ (the folder is not always named
                                                      after the package); if none, packaging/windows/licenses/<short name>-LICENSE.txt
   licence_check.py linux <licenses dir> <library>... Debian: dpkg -S, /usr/share/doc/<package>/copyright
+  licence_check.py apple [<apple dir>]               the tree vendored for the Apple build (ADR 0006, #396): no GPL-3.0
+                                                     family or bbnet20 path or text, no Apache-2.0, and every
+                                                     apple/vendor/<component> has a VENDOR.txt and a LICENSE
 """
 import os
 import shutil
@@ -62,6 +65,55 @@ def check_licences(entries):
         elif not files:
             problems.append(f'{name}: package {package} has no licence files')
     return problems
+
+
+# What may never be under apple/ (feasibility-211 allowlist): the workspace is GPL-2.0-only, and
+# gpu/bbnet20 (GPL-3.0) is excluded. Apache-2.0 is incompatible with GPL-2.0-only.
+APPLE_FORBIDDEN_DIRS = ('bbnet20',)
+APPLE_FORBIDDEN_NAMES = ('gpl-3', 'gplv3', 'agpl', 'lgpl-3', 'lgplv3', 'bbnet20')
+APPLE_FORBIDDEN_TEXT = ('spdx-license-identifier: gpl-3', 'spdx-license-identifier: agpl-3',
+                        'spdx-license-identifier: lgpl-3', 'spdx-license-identifier: apache-2.0',
+                        'gnu general public license\n                       version 3', 'version 3, 29 june 2007',
+                        'apache license\n                           version 2.0', 'bbnet20')
+APPLE_TEXT_SUFFIXES = ('.c', '.h', '.inc', '.s', '.m', '.mm', '.rs', '.txt', '.md', '.toml', '.py', '.sh', '')
+
+
+def check_apple_tree(root):
+    """Problems in the tree vendored for the Apple build; an empty list means it is allowed.
+
+    Fails on any path with a bbnet20 component or a GPL-3.0-family / AGPL / LGPL-3.0 / bbnet20 name, on
+    GPL-3.0-family or Apache-2.0 licence text or SPDX lines in a text file, and on a vendored component
+    (a folder of apple/vendor) with no VENDOR.txt or no LICENSE file.
+    """
+    root = Path(root)
+    problems = []
+    if not root.is_dir():
+        return [f'{root}: not a folder']
+    vendor = root / 'vendor'
+    if vendor.is_dir():
+        for component in sorted(p for p in vendor.iterdir() if p.is_dir()):
+            if not (component / 'VENDOR.txt').is_file():
+                problems.append(f'{component.relative_to(root)}: no VENDOR.txt (upstream URL, revision, files, licence)')
+            if not any((component / name).is_file() for name in ('LICENSE', 'LICENSE.txt', 'COPYING')):
+                problems.append(f'{component.relative_to(root)}: no LICENSE file')
+    for path in sorted(root.rglob('*')):
+        relative = path.relative_to(root)
+        parts = [part.lower() for part in relative.parts]
+        if any(part in APPLE_FORBIDDEN_DIRS for part in parts) or \
+                (path.is_file() and any(mark in path.name.lower() for mark in APPLE_FORBIDDEN_NAMES)):
+            problems.append(f'{relative}: GPL-3.0 or bbnet20 path under apple/')
+            continue
+        if path.is_file() and path.suffix.lower() in APPLE_TEXT_SUFFIXES and path.stat().st_size < 4_000_000:
+            text = path.read_text(encoding='utf-8', errors='ignore').lower()
+            hit = next((mark for mark in APPLE_FORBIDDEN_TEXT if mark in text), None)
+            if hit and not _is_policy_text(path, relative):
+                problems.append(f'{relative}: contains {hit.strip().splitlines()[0]!r}')
+    return problems
+
+
+def _is_policy_text(path, relative):
+    """A VENDOR.txt may say what it excludes (it names bbnet20 and GPL-3.0 to say they are not here)."""
+    return path.name == 'VENDOR.txt'
 
 
 def _owner(command):
@@ -137,6 +189,11 @@ def run(mode, licenses, libraries):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:2] == ['apple'] and len(sys.argv) <= 3:
+        found = check_apple_tree(sys.argv[2] if len(sys.argv) == 3 else Path(__file__).resolve().parent.parent / 'apple')
+        for problem in found:
+            print(f'licence check: {problem}', file=sys.stderr)
+        sys.exit(1 if found else 0)
     if len(sys.argv) < 3 or sys.argv[1] not in ('windows', 'linux'):
         sys.exit(__doc__)
     sys.exit(run(sys.argv[1], sys.argv[2], sys.argv[3:]))

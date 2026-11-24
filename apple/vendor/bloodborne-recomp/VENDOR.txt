@@ -1,0 +1,12 @@
+Vendored from https://github.com/bloodborne-native/bloodborne-recomp commit c60ccf8be752b8690f2813505c4daf9eafdb136b (2026-11, ADR 0006, #396).
+Licence: GNU GPL v2 or later. LICENSE is upstream's root LICENSE (GPL-2.0 text) at that revision.
+  Upstream's README.md ("Licensed under the GNU GPL v2 or later") says "or later"; the source files carry no
+  per-file notice. Same open question as bbcpu (feasibility gate 4 note); this tree uses the files under GPL-2.0.
+Files: tools/recomp/scan.c (function discovery), tools/recomp/bbrecomp.c (C generator and --snippets mode),
+  tests/fuzz_recomp.c (recompiled C against the interpreter, one instruction at a time). Their headers come
+  from apple/vendor/bbcpu and apple/vendor/zydis.
+Never vendored, by rule: annotations/ (name tables for a specific title), signatures, offset or function
+  tables, generated output, build_library.py, and the rest of tools/, docs/ and src/. bbrecomp reads an
+  annotations file only when BB_RECOMP_ANNOTATIONS names one; uu-recomp never sets it.
+Local modifications: "/* SPDX-License-Identifier: GPL-2.0-or-later */" added as the first line of each .c file
+  (upstream has none). Nothing else is changed.
