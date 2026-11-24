@@ -118,6 +118,20 @@ fn sanitize_text(s: &str, max_chars: usize) -> Option<String> {
     }
 }
 
+fn sanitize_multiline(s: &str, max_chars: usize) -> Option<String> {
+    let cleaned: String = s
+        .chars()
+        .filter(|&c| c == '\n' || !c.is_control())
+        .take(max_chars)
+        .collect();
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
 fn decode(phase: &str, game: Game, slot: u8, code: Option<i32>, stdout: &[u8]) -> Result<Sync> {
     if is_missing_vcruntime(code) {
         return Err(missing_vcruntime_error());
@@ -306,6 +320,7 @@ pub struct RelayChallenge {
     pub service: CloudService,
     pub verification_url: String,
     pub user_code: Option<String>,
+    pub qr: Option<String>,
 }
 
 /// Setup & sign-in operations delegated to the `save-relay` binary (credentials stay in the
@@ -435,10 +450,15 @@ fn decode_start_oauth(
     let user_code = report["data"]["user_code"]
         .as_str()
         .and_then(|s| sanitize_text(s, 128));
+    let qr = report["data"]["qr"]
+        .as_str()
+        .or_else(|| report["data"]["qr_ascii"].as_str())
+        .and_then(|s| sanitize_multiline(s, 4096));
     Ok(RelayChallenge {
         service,
         verification_url,
         user_code,
+        qr,
     })
 }
 

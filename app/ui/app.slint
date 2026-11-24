@@ -639,6 +639,7 @@ export component AppWindow inherits Window {
     in property <int> page-game;
     in property <[SlotRowData]> save-slots;
     in property <[SlotRowData]> save-backups;
+    in property <SlotRowData> save-sync;
     in property <string> saves-relay;
     in property <string> saves-confirm;
 
@@ -1059,6 +1060,52 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        if root.save-sync.title != "": Rectangle {
+                            height: root.unit * 3.2;
+                            border-radius: root.unit * 0.3;
+                            background: Theme.panel;
+                            border-width: root.save-slots.length + root.save-backups.length == root.page-row ? 2px : 0px;
+                            border-color: Theme.edge;
+                            HorizontalLayout {
+                                padding: root.unit * 0.3;
+                                spacing: root.unit * 0.6;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    HorizontalLayout {
+                                        spacing: root.unit * 0.5;
+                                        Text {
+                                            text: root.save-sync.title;
+                                            color: Theme.text;
+                                            font-size: root.unit;
+                                            font-weight: 700;
+                                            overflow: elide;
+                                        }
+                                        if root.save-sync.mark != "": Text {
+                                            text: root.save-sync.mark;
+                                            color: Theme.accent;
+                                            font-size: root.unit * 0.85;
+                                            font-weight: 700;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    Text {
+                                        text: root.save-sync.detail;
+                                        color: Theme.dim;
+                                        font-size: root.unit * 0.85;
+                                        overflow: elide;
+                                    }
+                                }
+                                for label[c] in root.save-sync.buttons: FocusButton {
+                                    label: label;
+                                    unit: root.unit * 0.85;
+                                    focused: root.saves-confirm == "" && root.save-slots.length + root.save-backups.length == root.page-row && c == root.page-col;
+                                    clicked => {
+                                        root.page-clicked(root.save-slots.length + root.save-backups.length, c);
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Settings: the three cards, Tune this device, the choices, the notes.
@@ -1191,7 +1238,7 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                if root.page == 1: Hint {
+                if root.page == 1 && root.save-sync.title == "": Hint {
                     unit: root.unit;
                     text: root.saves-relay;
                     wrap: word-wrap;

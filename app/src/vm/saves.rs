@@ -77,10 +77,12 @@ pub enum Button {
         stamp: String,
         to: u8,
     },
+    RelaySignIn,
+    RelaySignOut,
 }
 
 impl Button {
-    fn label(&self, selected: u8) -> String {
+    fn label(&self, selected: u8, relay_configured: bool) -> String {
         match self {
             Button::Use(slot) if *slot == selected => "Active".into(),
             Button::Use(_) => "Use this slot".into(),
@@ -88,6 +90,9 @@ impl Button {
             Button::BackUp(_) => "Back up".into(),
             Button::Delete(_) => "Delete".into(),
             Button::Restore { to, .. } => format!("Restore to slot {to}"),
+            Button::RelaySignIn if relay_configured => "Sign in again".into(),
+            Button::RelaySignIn => "Set up save sync".into(),
+            Button::RelaySignOut => "Sign out".into(),
         }
     }
 }
@@ -125,6 +130,10 @@ pub enum SavesCommand {
         stamp: String,
         to: u8,
     },
+    /// Open the Save sync setup / sign-in page.
+    RelaySignIn,
+    /// Sign out of Save Relay (removes credential from OS credential store).
+    RelaySignOut,
 }
 
 /// The name of a backup folder: the UTC time it was made and the slot it holds,
@@ -188,6 +197,8 @@ pub struct SavesVm {
     confirm: Option<u8>,
     /// save-relay's state, as the Continue screen's status line says it.
     relay: String,
+    relay_available: bool,
+    relay_configured: bool,
     status: String,
 }
 
@@ -202,6 +213,8 @@ impl SavesVm {
             focus: Grid::default(),
             confirm: None,
             relay: relay.to_owned(),
+            relay_available: false,
+            relay_configured: false,
             status: String::new(),
         };
         vm.focus = vm.default_focus();
@@ -223,6 +236,12 @@ impl SavesVm {
 
     pub fn set_relay(&mut self, relay: &str) {
         relay.clone_into(&mut self.relay);
+    }
+
+    pub fn set_relay_account(&mut self, available: bool, configured: bool) {
+        self.relay_available = available;
+        self.relay_configured = configured;
+        self.focus = self.focus.clamp(&self.lens());
     }
 
     /// New data from disk after a command: the same game stays shown, focus stays on the
@@ -274,6 +293,13 @@ impl SavesVm {
             }],
             None => Vec::new(),
         }));
+        if self.relay_available {
+            rows.push(if self.relay_configured {
+                vec![Button::RelaySignIn, Button::RelaySignOut]
+            } else {
+                vec![Button::RelaySignIn]
+            });
+        }
         rows
     }
 
@@ -342,6 +368,8 @@ impl SavesVm {
                 SavesCommand::None
             }
             Button::Restore { stamp, to } => SavesCommand::Restore { game, stamp, to },
+            Button::RelaySignIn => SavesCommand::RelaySignIn,
+            Button::RelaySignOut => SavesCommand::RelaySignOut,
         }
     }
 
@@ -376,7 +404,11 @@ impl SavesVm {
     pub fn view(&self, clock: &Clock) -> SavesView {
         let data = self.data();
         let rows = self.rows();
-        let labels = |row: &[Button]| row.iter().map(|b| b.label(data.selected)).collect();
+        let labels = |row: &[Button]| {
+            row.iter()
+                .map(|b| b.label(data.selected, self.relay_configured))
+                .collect()
+        };
         let slots = data
             .slots
             .iter()
@@ -433,11 +465,23 @@ impl SavesVm {
                 }
             })
             .collect();
+        let backups_end = data.slots.len() + data.backups.len();
+        let save_sync = self.relay_available.then(|| SavesRow {
+            title: "Save sync".into(),
+            detail: self.relay.clone(),
+            mark: if self.relay_configured {
+                "Connected".into()
+            } else {
+                String::new()
+            },
+            buttons: rows.get(backups_end).map_or_else(Vec::new, |r| labels(r)),
+        });
         SavesView {
             games: self.games.iter().map(|g| g.game.name()).collect(),
             current: self.current,
             slots,
             backups,
+            save_sync,
             focus: self.focus,
             relay: format!(
                 "save-relay syncs the active slot of {}: Slot {}. {}",
@@ -464,6 +508,8 @@ pub struct SavesView {
     pub slots: Vec<SavesRow>,
     /// Newest first; their focus rows follow the slots'.
     pub backups: Vec<SavesRow>,
+    /// Save sync row (when `save-relay` is present): shows service/account and sign-in/out actions.
+    pub save_sync: Option<SavesRow>,
     pub focus: Grid,
     /// What save-relay syncs, and its state.
     pub relay: String,

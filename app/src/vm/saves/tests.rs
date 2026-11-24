@@ -248,3 +248,37 @@ fn set_relay_updates_saves_relay_line() {
         "save-relay syncs the active slot of Uncharted 2: Slot 3. Save sync ready (Nextcloud: nathan)."
     );
 }
+
+#[test]
+fn save_sync_row_lets_controller_sign_in_or_sign_out() {
+    let mut vm = SavesVm::new(
+        games(),
+        Game::U2,
+        "Save sync is not set up yet: saves stay on this device.",
+    );
+    vm.set_relay_account(true, false);
+    let view = vm.view(&clock());
+    let sync = view.save_sync.as_ref().expect("save sync row");
+    assert_eq!(sync.title, "Save sync");
+    assert_eq!(sync.mark, "");
+    assert_eq!(sync.buttons, ["Set up save sync"]);
+
+    // Navigate down to the Save sync row (2 slots + 2 backups = row 4) and activate.
+    for _ in 0..3 {
+        vm.handle(Input::Move(Nav::Down));
+    }
+    assert_eq!(vm.focus(), Grid::at(4, 0));
+    assert_eq!(vm.handle(Input::Activate), SavesCommand::RelaySignIn);
+
+    // When configured, row shows Connected and offers Sign in again / Sign out.
+    vm.set_relay("Save sync ready (Nextcloud: nathan).");
+    vm.set_relay_account(true, true);
+    let view = vm.view(&clock());
+    let sync = view.save_sync.as_ref().expect("save sync row");
+    assert_eq!(sync.mark, "Connected");
+    assert_eq!(sync.buttons, ["Sign in again", "Sign out"]);
+    assert_eq!(vm.handle(Input::Activate), SavesCommand::RelaySignIn);
+    vm.handle(Input::Move(Nav::Right));
+    assert_eq!(vm.focus(), Grid::at(4, 1));
+    assert_eq!(vm.handle(Input::Activate), SavesCommand::RelaySignOut);
+}
