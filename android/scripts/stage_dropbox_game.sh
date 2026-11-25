@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Stages and uploads per-game files + manifest.json for Stage 7.04 (#525) in-app Dropbox
-# downloads into Save Relay's Dropbox app folder (uncharted-universal-game/<game>/).
+# Stages and uploads per-game files as a single resumable game.tar + manifest.json
+# for Stage 7.04 (#525) in-app Dropbox downloads into Save Relay's Dropbox app folder
+# (uncharted-universal-game/<game>/).
 # Only for the owner's own Dropbox: never commit game files or manifests to git (M9).
 set -euo pipefail
 
@@ -9,7 +10,6 @@ DUMP_DIR=""
 RCLONE_DEST="dropbox:Apps/save-relay"
 LOCAL_DEST=""
 RCLONE_BIN=""
-TRANSFERS=8
 DRY_RUN=0
 
 usage() {
@@ -22,8 +22,7 @@ Options:
   --rclone-dest <remote>    rclone destination root (default: dropbox:Apps/save-relay)
   --local-dest <dir>        Stage to a local directory instead of rclone
   --rclone <path>           Path to rclone binary (auto-detected if omitted)
-  --transfers <N>           Parallel rclone transfers (default: 8)
-  --dry-run                 Generate manifest.json and print plan without uploading
+  --dry-run                 Build game.tar + manifest.json and print size without uploading
   -h, --help                Show this help
 EOF
 }
@@ -35,7 +34,6 @@ while [[ $# -gt 0 ]]; do
         --rclone-dest) RCLONE_DEST="$2"; shift 2 ;;
         --local-dest) LOCAL_DEST="$2"; shift 2 ;;
         --rclone) RCLONE_BIN="$2"; shift 2 ;;
-        --transfers) TRANSFERS="$2"; shift 2 ;;
         --dry-run) DRY_RUN=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -75,10 +73,15 @@ for req in "$EXEC_FILE" "$DATA_DIR"; do
     fi
 done
 
-STAGE_DIR="$(mktemp -d)"
-MANIFEST_PATH="$(mktemp)"
+STAGE_BASE="${STAGE_TMP:-$HOME/.cache/uncharted-stage}"
+mkdir -p "$STAGE_BASE"
+WORK_DIR="$(mktemp -d "$STAGE_BASE/${GAME}.XXXXXX")"
+STAGE_DIR="$WORK_DIR/links"
+TAR_PATH="$WORK_DIR/game.tar"
+MANIFEST_PATH="$WORK_DIR/manifest.json"
+mkdir -p "$STAGE_DIR"
 cleanup() {
-    rm -rf "$STAGE_DIR" "$MANIFEST_PATH"
+    rm -rf "$WORK_DIR"
 }
 trap cleanup EXIT
 
@@ -88,35 +91,30 @@ for item in "$EXEC_FILE" "sce_discmap.plt" "sce_module" "shareddata" "$DATA_DIR"
     fi
 done
 
-echo "== Hashing $GAME files from $DUMP_DIR"
-python3 - "$STAGE_DIR" "$MANIFEST_PATH" <<'PY'
-import hashlib, json, os, pathlib, sys
+echo "== Packing $GAME into $TAR_PATH"
+tar -chf "$TAR_PATH" --format=gnu -C "$STAGE_DIR" .
 
-stage = pathlib.Path(sys.argv[1])
-out_path = pathlib.Path(sys.argv[2])
+echo "== Hashing $GAME archive"
+python3 - "$TAR_PATH" "$MANIFEST_PATH" <<'PY'
+import hashlib, json, pathlib, sys
 
-entries = []
-for root, _, files in os.walk(stage, followlinks=True):
-    for name in files:
-        if name in ("manifest.json", ".DS_Store"):
-            continue
-        full = pathlib.Path(root) / name
-        rel = full.relative_to(stage).as_posix()
-        h = hashlib.sha256()
-        size = 0
-        with full.open("rb") as fh:
-            while True:
-                chunk = fh.read(4 * 1024 * 1024)
-                if not chunk:
-                    break
-                size += len(chunk)
-                h.update(chunk)
-        entries.append({"path": rel, "size": size, "sha256": h.hexdigest()})
+tar_path = pathlib.Path(sys.argv[1])
+manifest_path = pathlib.Path(sys.argv[2])
+h = hashlib.sha256()
+size = 0
+with tar_path.open("rb") as fh:
+    while True:
+        chunk = fh.read(8 * 1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        h.update(chunk)
 
-entries.sort(key=lambda e: e["path"])
-out_path.write_text(json.dumps({"version": 1, "files": entries}, separators=(",", ":")))
-total_gb = sum(e["size"] for e in entries) / (1024 ** 3)
-print(f"Manifest ready: {len(entries)} files, {total_gb:.2f} GiB")
+manifest_path.write_text(json.dumps({
+    "version": 1,
+    "files": [{"path": "game.tar", "size": size, "sha256": h.hexdigest()}],
+}, separators=(",", ":")))
+print(f"Manifest ready: game.tar ({size / (1024 ** 3):.2f} GiB, sha256={h.hexdigest()[:12]}...)")
 PY
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -127,7 +125,7 @@ fi
 if [[ -n "$LOCAL_DEST" ]]; then
     DEST_DIR="$LOCAL_DEST/uncharted-universal-game/$GAME"
     mkdir -p "$DEST_DIR"
-    cp -RL "$STAGE_DIR"/* "$DEST_DIR"/
+    cp "$TAR_PATH" "$DEST_DIR/game.tar"
     cp "$MANIFEST_PATH" "$DEST_DIR/manifest.json"
     chmod 644 "$DEST_DIR/manifest.json"
     echo "== Staged locally to $DEST_DIR"
@@ -135,11 +133,9 @@ if [[ -n "$LOCAL_DEST" ]]; then
 fi
 
 REMOTE_TARGET="${RCLONE_DEST%/}/uncharted-universal-game/$GAME"
-echo "== Uploading $GAME files to $REMOTE_TARGET"
-"$RCLONE_BIN" copy "$STAGE_DIR" "$REMOTE_TARGET" \
-    --copy-links \
-    --transfers "$TRANSFERS" \
-    --checkers 8 \
+echo "== Uploading game.tar to $REMOTE_TARGET/game.tar"
+"$RCLONE_BIN" copyto "$TAR_PATH" "$REMOTE_TARGET/game.tar" \
+    --dropbox-chunk-size 128M \
     --stats 15s \
     --stats-one-line
 
