@@ -10,6 +10,7 @@
 #include <android/log.h>
 #include <android/looper.h>
 #include <android/native_activity.h>
+#include <android/native_window.h>
 #include <android/window.h>
 #include <android_native_app_glue.h>
 #include <dlfcn.h>
@@ -18,6 +19,8 @@
 #include <unistd.h>
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -77,11 +80,25 @@ struct AppJniMetadata {
 
 struct ApkRuntimeState {
     AndroidApkFfiSession* session = nullptr;
+    AppJniMetadata meta;
+    uint32_t gpu_vendor_id = 0;
+    std::string gpu_driver_name = "unknown-vulkan";
+    std::string vk_api_str = "0.0.0";
+    int driver_family = 0;
+    int driver_rc = -1;
+    uint32_t driver_mode = 0;
+    bool fex_ok = false;
+    uint32_t rt_ver = 0;
+    uint32_t fex_ver = 0;
+    int32_t display_w = 0;
+    int32_t display_h = 0;
+    std::string last_input = "none";
     uint64_t timestamp_ms = 0;
 };
 
 ANativeActivity* g_ui_activity = nullptr;
 int g_ui_pipe[2] = {-1, -1};
+int32_t g_last_smallest_dp = 0;
 
 void HideSystemBars(JNIEnv* env, jobject activity) {
     if (!env || !activity) {
@@ -165,6 +182,7 @@ void ApplyPixelFoldOrientation(JNIEnv* env, jobject activity) {
         env->DeleteLocalRef(res);
     }
     if (env->ExceptionCheck()) env->ExceptionClear();
+    if (sw > 0) g_last_smallest_dp = sw;
     const int want = sw >= 600 ? 13 : 6;
     static int asked = -1;
     if (want != asked) {
@@ -330,11 +348,10 @@ AppJniMetadata QueryAppMetadataViaJni(ANativeActivity* activity) {
     return meta;
 }
 
-void ProbeVulkanGpuAndDriver(const AppJniMetadata& meta,
-                             uint32_t& out_vendor_id,
-                             std::string& out_driver_name) {
-    out_vendor_id = 0;
-    out_driver_name = "unknown-vulkan";
+void ProbeVulkanGpuAndDriver(const AppJniMetadata& meta, ApkRuntimeState& state) {
+    state.gpu_vendor_id = 0;
+    state.gpu_driver_name = "unknown-vulkan";
+    state.vk_api_str = "0.0.0";
 
     void* vk_lib = dlopen("libvulkan.so", RTLD_NOW);
     if (!vk_lib) {
@@ -372,12 +389,16 @@ void ProbeVulkanGpuAndDriver(const AppJniMetadata& meta,
                     vk_enum_devs(instance, &count, &gpu) >= 0 && count > 0 && gpu) {
                     VkPhysicalDeviceProperties props{};
                     vk_get_props(gpu, &props);
-                    out_vendor_id = props.vendorID;
-                    out_driver_name = props.deviceName;
-                    LOGI("Vulkan physical device: vendor=0x%04x device=\"%s\" api=%u.%u.%u",
-                         props.vendorID, props.deviceName, VK_API_VERSION_MAJOR(props.apiVersion),
-                         VK_API_VERSION_MINOR(props.apiVersion),
-                         VK_API_VERSION_PATCH(props.apiVersion));
+                    state.gpu_vendor_id = props.vendorID;
+                    state.gpu_driver_name = props.deviceName;
+                    char api_buf[32];
+                    std::snprintf(api_buf, sizeof(api_buf), "%u.%u.%u",
+                                  VK_API_VERSION_MAJOR(props.apiVersion),
+                                  VK_API_VERSION_MINOR(props.apiVersion),
+                                  VK_API_VERSION_PATCH(props.apiVersion));
+                    state.vk_api_str = api_buf;
+                    LOGI("Vulkan physical device: vendor=0x%04x device=\"%s\" api=%s",
+                         props.vendorID, props.deviceName, api_buf);
                 }
                 if (vk_destroy_inst) {
                     vk_destroy_inst(instance, nullptr);
@@ -388,7 +409,7 @@ void ProbeVulkanGpuAndDriver(const AppJniMetadata& meta,
     dlclose(vk_lib);
 
     const BbAndroidGpuFamily family =
-        bb_android_classify_gpu(out_vendor_id, out_driver_name.c_str());
+        bb_android_classify_gpu(state.gpu_vendor_id, state.gpu_driver_name.c_str());
     BbAndroidDriverConfig turnip_cfg{};
     turnip_cfg.mode = BB_ANDROID_DRIVER_BUNDLED;
     turnip_cfg.use_legacy_packaging = 1;
@@ -400,19 +421,203 @@ void ProbeVulkanGpuAndDriver(const AppJniMetadata& meta,
     BbAndroidDriverConfig selected{};
     char err_buf[256] = {};
     const int sel_rc = bb_android_select_driver_for_gpu(
-        out_vendor_id, out_driver_name.c_str(), &turnip_cfg, &selected, err_buf, sizeof(err_buf));
-    LOGI("Driver selector: family=%d rc=%d mode=%u msg=\"%s\"", static_cast<int>(family), sel_rc,
+        state.gpu_vendor_id, state.gpu_driver_name.c_str(), &turnip_cfg, &selected, err_buf,
+        sizeof(err_buf));
+    state.driver_family = static_cast<int>(family);
+    state.driver_rc = sel_rc;
+    state.driver_mode = selected.mode;
+    LOGI("Driver selector: family=%d rc=%d mode=%u msg=\"%s\"", state.driver_family, sel_rc,
          selected.mode, err_buf);
 }
 
-void VerifyFexRuntimeBridge() {
-    const uint32_t rt_ver = uncharted_runtime_version();
-    const uint32_t fex_ver = runtime_fex_abi_version();
-    const bool abi_ok = bb::android::VerifyRuntimeAbi();
+void VerifyFexRuntimeBridge(ApkRuntimeState& state) {
+    state.rt_ver = uncharted_runtime_version();
+    state.fex_ver = runtime_fex_abi_version();
+    state.fex_ok = bb::android::VerifyRuntimeAbi();
     const uint64_t ctx = bb::android::CreateGuestContext(0x1000, 0x2000);
     const int destroy_rc = ctx != 0 ? bb::android::DestroyGuestContext(ctx) : -1;
     LOGI("FEX bridge verified: abi_ok=%d rt_ver=%u fex_ver=%u ctx=%llu destroy_rc=%d",
-         abi_ok ? 1 : 0, rt_ver, fex_ver, static_cast<unsigned long long>(ctx), destroy_rc);
+         state.fex_ok ? 1 : 0, state.rt_ver, state.fex_ver, static_cast<unsigned long long>(ctx),
+         destroy_rc);
+}
+
+// Compact 5x7 uppercase/ASCII bitmap font for ANativeWindow_Buffer diagnostics UI.
+const uint8_t* Glyph5x7(char raw) {
+    const unsigned char c = static_cast<unsigned char>(std::toupper(static_cast<unsigned char>(raw)));
+    static constexpr uint8_t kSpace[5] = {0x00, 0x00, 0x00, 0x00, 0x00};
+    static constexpr uint8_t kBang[5] = {0x00, 0x00, 0x5F, 0x00, 0x00};
+    static constexpr uint8_t kParenL[5] = {0x00, 0x1C, 0x22, 0x41, 0x00};
+    static constexpr uint8_t kParenR[5] = {0x00, 0x41, 0x22, 0x1C, 0x00};
+    static constexpr uint8_t kPlus[5] = {0x08, 0x08, 0x3E, 0x08, 0x08};
+    static constexpr uint8_t kComma[5] = {0x00, 0x50, 0x30, 0x00, 0x00};
+    static constexpr uint8_t kDash[5] = {0x08, 0x08, 0x08, 0x08, 0x08};
+    static constexpr uint8_t kDot[5] = {0x00, 0x60, 0x60, 0x00, 0x00};
+    static constexpr uint8_t kSlash[5] = {0x20, 0x10, 0x08, 0x04, 0x02};
+    static constexpr uint8_t kColon[5] = {0x00, 0x36, 0x36, 0x00, 0x00};
+    static constexpr uint8_t kEq[5] = {0x14, 0x14, 0x14, 0x14, 0x14};
+    static constexpr uint8_t kQ[5] = {0x02, 0x01, 0x51, 0x09, 0x06};
+    static constexpr uint8_t kUnder[5] = {0x40, 0x40, 0x40, 0x40, 0x40};
+    static constexpr uint8_t kPipe[5] = {0x00, 0x00, 0x7F, 0x00, 0x00};
+    static constexpr uint8_t kDigits[10][5] = {
+        {0x3E, 0x51, 0x49, 0x45, 0x3E}, {0x00, 0x42, 0x7F, 0x40, 0x00},
+        {0x42, 0x61, 0x51, 0x49, 0x46}, {0x21, 0x41, 0x45, 0x4B, 0x31},
+        {0x18, 0x14, 0x12, 0x7F, 0x10}, {0x27, 0x45, 0x45, 0x45, 0x39},
+        {0x3C, 0x4A, 0x49, 0x49, 0x30}, {0x01, 0x71, 0x09, 0x05, 0x03},
+        {0x36, 0x49, 0x49, 0x49, 0x36}, {0x06, 0x49, 0x49, 0x29, 0x1E},
+    };
+    static constexpr uint8_t kAlpha[26][5] = {
+        {0x7E, 0x11, 0x11, 0x11, 0x7E}, {0x7F, 0x49, 0x49, 0x49, 0x36},
+        {0x3E, 0x41, 0x41, 0x41, 0x22}, {0x7F, 0x41, 0x41, 0x22, 0x1C},
+        {0x7F, 0x49, 0x49, 0x49, 0x41}, {0x7F, 0x09, 0x09, 0x09, 0x01},
+        {0x3E, 0x41, 0x49, 0x49, 0x7A}, {0x7F, 0x08, 0x08, 0x08, 0x7F},
+        {0x00, 0x41, 0x7F, 0x41, 0x00}, {0x20, 0x40, 0x41, 0x3F, 0x01},
+        {0x7F, 0x08, 0x14, 0x22, 0x41}, {0x7F, 0x40, 0x40, 0x40, 0x40},
+        {0x7F, 0x02, 0x0C, 0x02, 0x7F}, {0x7F, 0x04, 0x08, 0x10, 0x7F},
+        {0x3E, 0x41, 0x41, 0x41, 0x3E}, {0x7F, 0x09, 0x09, 0x09, 0x06},
+        {0x3E, 0x41, 0x51, 0x21, 0x5E}, {0x7F, 0x09, 0x19, 0x29, 0x46},
+        {0x46, 0x49, 0x49, 0x49, 0x31}, {0x01, 0x01, 0x7F, 0x01, 0x01},
+        {0x3F, 0x40, 0x40, 0x40, 0x3F}, {0x1F, 0x20, 0x40, 0x20, 0x1F},
+        {0x3F, 0x40, 0x38, 0x40, 0x3F}, {0x63, 0x14, 0x08, 0x14, 0x63},
+        {0x07, 0x08, 0x70, 0x08, 0x07}, {0x61, 0x51, 0x49, 0x45, 0x43},
+    };
+    if (c >= '0' && c <= '9') return kDigits[c - '0'];
+    if (c >= 'A' && c <= 'Z') return kAlpha[c - 'A'];
+    switch (c) {
+        case '!': return kBang;
+        case '(': return kParenL;
+        case ')': return kParenR;
+        case '+': return kPlus;
+        case ',': return kComma;
+        case '-': return kDash;
+        case '.': return kDot;
+        case '/': return kSlash;
+        case ':': return kColon;
+        case '=': return kEq;
+        case '?': return kQ;
+        case '_': return kUnder;
+        case '|': return kPipe;
+        default: return kSpace;
+    }
+}
+
+inline uint32_t PackRgba(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) {
+    return static_cast<uint32_t>(r) | (static_cast<uint32_t>(g) << 8) |
+           (static_cast<uint32_t>(b) << 16) | (static_cast<uint32_t>(a) << 24);
+}
+
+void FillRect(const ANativeWindow_Buffer& buf, int x, int y, int w, int h, uint32_t rgba) {
+    const int x0 = std::max(0, x);
+    const int y0 = std::max(0, y);
+    const int x1 = std::min(static_cast<int>(buf.width), x + w);
+    const int y1 = std::min(static_cast<int>(buf.height), y + h);
+    auto* pixels = static_cast<uint32_t*>(buf.bits);
+    for (int py = y0; py < y1; ++py) {
+        uint32_t* row = pixels + py * buf.stride;
+        for (int px = x0; px < x1; ++px) {
+            row[px] = rgba;
+        }
+    }
+}
+
+void DrawText(const ANativeWindow_Buffer& buf, int x, int y, int scale, uint32_t rgba,
+              const std::string& text) {
+    int cx = x;
+    for (const char ch : text) {
+        if (cx + 6 * scale > static_cast<int>(buf.width)) break;
+        const uint8_t* col = Glyph5x7(ch);
+        for (int gx = 0; gx < 5; ++gx) {
+            const uint8_t bits = col[gx];
+            for (int gy = 0; gy < 7; ++gy) {
+                if ((bits >> gy) & 1) {
+                    FillRect(buf, cx + gx * scale, y + gy * scale, scale, scale, rgba);
+                }
+            }
+        }
+        cx += 6 * scale;
+    }
+}
+
+void RenderSurfaceFrame(ANativeWindow* window, const ApkRuntimeState& s) {
+    if (!window) return;
+    const int32_t w = ANativeWindow_getWidth(window);
+    const int32_t h = ANativeWindow_getHeight(window);
+    if (w <= 0 || h <= 0) return;
+
+    ANativeWindow_setBuffersGeometry(window, w, h, WINDOW_FORMAT_RGBA_8888);
+    ANativeWindow_Buffer buf{};
+    if (ANativeWindow_lock(window, &buf, nullptr) != 0 || !buf.bits) {
+        return;
+    }
+
+    const uint32_t bg = PackRgba(18, 24, 34);
+    const uint32_t card = PackRgba(34, 42, 56);
+    const uint32_t border = PackRgba(212, 160, 62);
+    const uint32_t title_col = PackRgba(245, 240, 224);
+    const uint32_t text_col = PackRgba(206, 214, 226);
+    const uint32_t ok_col = PackRgba(112, 224, 152);
+    const uint32_t warn_col = PackRgba(235, 180, 90);
+
+    FillRect(buf, 0, 0, w, h, bg);
+
+    const int margin = std::max(24, std::min(w, h) / 14);
+    const int cw = w - margin * 2;
+    const int ch = h - margin * 2;
+    const int t = std::max(3, std::min(w, h) / 280);
+    FillRect(buf, margin, margin, cw, ch, border);
+    FillRect(buf, margin + t, margin + t, cw - 2 * t, ch - 2 * t, card);
+
+    const int scale = std::max(2, std::min(w, h) / 260);
+    const int line_h = scale * 12;
+    const int lx = margin + scale * 8;
+    int ly = margin + scale * 8;
+
+    const char* game_title = "UNCHARTED: DRAKE'S FORTUNE";
+    if (s.meta.game_id == "u2") game_title = "UNCHARTED 2: AMONG THIEVES";
+    else if (s.meta.game_id == "u3") game_title = "UNCHARTED 3: DRAKE'S DECEPTION";
+
+    DrawText(buf, lx, ly, scale + 1, border, game_title);
+    ly += line_h + scale * 4;
+    DrawText(buf, lx, ly, scale, title_col, "ANDROID RUNTIME DIAGNOSTICS (STAGE 7.03 / 7.07)");
+    ly += line_h * 2;
+
+    char line[256];
+    std::snprintf(line, sizeof(line), "PACKAGE: %s", s.meta.package_name.c_str());
+    DrawText(buf, lx, ly, scale, text_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "DISPLAY: %dx%d  SW: %d DP (%s)", w, h, g_last_smallest_dp,
+                  g_last_smallest_dp >= 600 ? "UNFOLDED / FULL USER" : "COVER / LANDSCAPE");
+    DrawText(buf, lx, ly, scale, text_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "VULKAN GPU: %s (0X%04X) API %s", s.gpu_driver_name.c_str(),
+                  s.gpu_vendor_id, s.vk_api_str.c_str());
+    DrawText(buf, lx, ly, scale, ok_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "DRIVER SELECTOR: FAMILY=%d RC=%d MODE=%u", s.driver_family,
+                  s.driver_rc, s.driver_mode);
+    DrawText(buf, lx, ly, scale, text_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "FEX BRIDGE: ABI=%s RT=%u FEX=%u",
+                  s.fex_ok ? "OK" : "FAIL", s.rt_ver, s.fex_ver);
+    DrawText(buf, lx, ly, scale, s.fex_ok ? ok_col : warn_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "GAME FILES: %s",
+                  s.meta.game_files_present ? "INSTALLED" : "NOT DOWNLOADED (USE SETUP)");
+    DrawText(buf, lx, ly, scale, s.meta.game_files_present ? ok_col : warn_col, line);
+    ly += line_h;
+
+    std::snprintf(line, sizeof(line), "LAST INPUT: %s", s.last_input.c_str());
+    DrawText(buf, lx, ly, scale, text_col, line);
+
+    const int fy = margin + ch - line_h - scale * 6;
+    DrawText(buf, lx, fy, scale, border, "TAP SCREEN OR PRESS BACK TO RETURN TO SETUP");
+
+    ANativeWindow_unlockAndPost(window);
+    LOGI("Surface frame rendered (%dx%d)", w, h);
 }
 
 int32_t HandleInputEvent(struct android_app* app, AInputEvent* event) {
@@ -430,8 +635,17 @@ int32_t HandleInputEvent(struct android_app* app, AInputEvent* event) {
         const int32_t meta = AKeyEvent_getMetaState(event);
         const bool shift_held = (meta & AMETA_SHIFT_ON) != 0;
         const bool is_repeat = AKeyEvent_getRepeatCount(event) > 0;
+        if (action == AKEY_EVENT_ACTION_UP &&
+            (key_code == AKEYCODE_BACK || key_code == AKEYCODE_BUTTON_B)) {
+            ANativeActivity_finish(app->activity);
+            return 1;
+        }
         const int32_t slint_code = uncharted_apk_session_on_key_event(
             state->session, device_id, key_code, action, shift_held, is_repeat);
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "KEY %d ACT %d", key_code, action);
+        state->last_input = buf;
+        if (app->window) RenderSurfaceFrame(app->window, *state);
         if (slint_code >= 0) {
             const int32_t decision = uncharted_apk_session_first_boot_decision(state->session);
             LOGI("Gamepad KeyEvent: dev=%d key=%d -> slint_code=%d first_boot_decision=%d",
@@ -439,6 +653,12 @@ int32_t HandleInputEvent(struct android_app* app, AInputEvent* event) {
             return 1;
         }
     } else if (event_type == AINPUT_EVENT_TYPE_MOTION) {
+        const int32_t source = AInputEvent_getSource(event);
+        const int32_t action = AMotionEvent_getAction(event) & AMOTION_EVENT_ACTION_MASK;
+        if ((source & AINPUT_SOURCE_TOUCHSCREEN) != 0 && action == AMOTION_EVENT_ACTION_UP) {
+            ANativeActivity_finish(app->activity);
+            return 1;
+        }
         constexpr int32_t kAxes[] = {
             AMOTION_EVENT_AXIS_X,
             AMOTION_EVENT_AXIS_Y,
@@ -476,11 +696,14 @@ void HandleAppCmd(struct android_app* app, int32_t cmd) {
         const int32_t w = ANativeWindow_getWidth(app->window);
         const int32_t h = ANativeWindow_getHeight(app->window);
         if (w > 0 && h > 0) {
+            state->display_w = w;
+            state->display_h = h;
             state->timestamp_ms += 200;
             const int32_t rc = uncharted_apk_session_on_display_change(
                 state->session, static_cast<uint32_t>(w), static_cast<uint32_t>(h),
                 state->timestamp_ms);
             LOGI("Display update (%dx%d) -> rc=%d", w, h, rc);
+            RenderSurfaceFrame(app->window, *state);
         }
     }
 }
@@ -511,25 +734,24 @@ void android_main(struct android_app* app) {
         return;
     }
 
-    const AppJniMetadata meta = QueryAppMetadataViaJni(app->activity);
-    LOGI("Booting thin APK: game_id=%s package=%s m9_bundled_assets=false game_files_present=%d",
-         meta.game_id.c_str(), meta.package_name.c_str(), meta.game_files_present ? 1 : 0);
-
-    VerifyFexRuntimeBridge();
-
-    uint32_t gpu_vendor_id = 0;
-    std::string gpu_driver_name;
-    ProbeVulkanGpuAndDriver(meta, gpu_vendor_id, gpu_driver_name);
-
     ApkRuntimeState state;
+    state.meta = QueryAppMetadataViaJni(app->activity);
+    LOGI("Booting thin APK: game_id=%s package=%s m9_bundled_assets=false game_files_present=%d",
+         state.meta.game_id.c_str(), state.meta.package_name.c_str(),
+         state.meta.game_files_present ? 1 : 0);
+
+    VerifyFexRuntimeBridge(state);
+    ProbeVulkanGpuAndDriver(state.meta, state);
+
     state.session = uncharted_apk_session_create(
-        meta.game_id.c_str(), meta.package_name.c_str(), meta.native_lib_dir.c_str(),
-        meta.app_storage_dir.c_str(), gpu_vendor_id, gpu_driver_name.c_str(), 1280, 720,
-        meta.game_files_present);
+        state.meta.game_id.c_str(), state.meta.package_name.c_str(),
+        state.meta.native_lib_dir.c_str(), state.meta.app_storage_dir.c_str(),
+        state.gpu_vendor_id, state.gpu_driver_name.c_str(), 1280, 720,
+        state.meta.game_files_present);
 
     if (!state.session) {
         LOGE("uncharted_apk_session_create failed fail-closed for game_id=%s package=%s",
-             meta.game_id.c_str(), meta.package_name.c_str());
+             state.meta.game_id.c_str(), state.meta.package_name.c_str());
         return;
     }
 
@@ -552,5 +774,5 @@ void android_main(struct android_app* app) {
 
     uncharted_apk_session_destroy(state.session);
     state.session = nullptr;
-    LOGI("Thin APK exiting cleanly: game_id=%s", meta.game_id.c_str());
+    LOGI("Thin APK exiting cleanly: game_id=%s", state.meta.game_id.c_str());
 }

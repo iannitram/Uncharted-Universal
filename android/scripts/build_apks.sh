@@ -150,6 +150,54 @@ echo "== Compiling NDK r30 native glue and C++ bridges"
     "$GLUE_DIR/android_native_app_glue.c" \
     -o "$WORK/obj/android_native_app_glue.o"
 
+"$CLANG" -c -fPIC -O2 -DANDROID -I"$REPO_ROOT/android/apk/native" \
+    "$REPO_ROOT/android/apk/native/save_relay_jni.c" \
+    -o "$WORK/obj/save_relay_jni.o"
+
+SAVE_RELAY_LIB="${SAVE_RELAY_LIB:-}"
+if [[ -z "$SAVE_RELAY_LIB" ]]; then
+    if [[ -f "/home/deck/dev/save-relay/target/aarch64-linux-android/release/libsave_relay.a" ]]; then
+        SAVE_RELAY_LIB="/home/deck/dev/save-relay/target/aarch64-linux-android/release/libsave_relay.a"
+    else
+        SAVE_RELAY_LIB="$WORK/libsave_relay.a"
+    fi
+fi
+if [[ ! -f "$SAVE_RELAY_LIB" ]]; then
+    echo "== Fetching pinned libsave_relay.a from components.lock.json"
+    python3 - "$REPO_ROOT/android/components.lock.json" "$SAVE_RELAY_LIB" <<'PY'
+import hashlib, json, pathlib, sys, urllib.request
+
+lock = json.loads(pathlib.Path(sys.argv[1]).read_text())["save-relay"]
+url = f"{lock['source'].rstrip('/')}/releases/download/{lock['version']}/{lock['asset']}"
+dest = pathlib.Path(sys.argv[2])
+dest.parent.mkdir(parents=True, exist_ok=True)
+urllib.request.urlretrieve(url, dest)
+got = hashlib.sha256(dest.read_bytes()).hexdigest()
+if got != lock["sha256"]:
+    dest.unlink(missing_ok=True)
+    raise SystemExit(f"SHA-256 mismatch for {url}: got {got}, expected {lock['sha256']}")
+print(f"Verified {dest.name} ({got})")
+PY
+fi
+
+echo "== Compiling Android Java UI and Save Relay bindings -> classes.dex"
+rm -rf "$WORK/classes" "$WORK/dex"
+mkdir -p "$WORK/classes" "$WORK/dex"
+JAVA_FILES=()
+while IFS= read -r -d '' jf; do
+    JAVA_FILES+=("$jf")
+done < <(find "$REPO_ROOT/android/apk/java" -name "*.java" -print0)
+javac -nowarn -Xlint:-options -source 8 -target 8 \
+    -bootclasspath "$ANDROID_JAR" \
+    -classpath "$BUILD_TOOLS/core-lambda-stubs.jar" \
+    -d "$WORK/classes" \
+    "${JAVA_FILES[@]}"
+CLASS_FILES=()
+while IFS= read -r -d '' cf; do
+    CLASS_FILES+=("$cf")
+done < <(find "$WORK/classes" -name "*.class" -print0)
+"$BUILD_TOOLS/d8" --release --min-api 33 --lib "$ANDROID_JAR" --output "$WORK/dex" "${CLASS_FILES[@]}"
+
 "$CLANGXX" -std=c++20 -c -fPIC -O2 -Wall -Wextra -Werror \
     -I"$REPO_ROOT" \
     "$REPO_ROOT/android/fex_bridge.cpp" \
@@ -209,6 +257,8 @@ with zipfile.ZipFile(apk_path, "r") as zf:
     names = zf.namelist()
     if "lib/arm64-v8a/libuncharted_android_apk.so" not in names:
         raise SystemExit(f"Missing lib/arm64-v8a/libuncharted_android_apk.so in {apk_path}")
+    if "classes.dex" not in names:
+        raise SystemExit(f"Missing classes.dex in {apk_path}")
     for name in names:
         low = name.lower()
         if low.endswith(forbidden_exts) or any(part in low for part in forbidden_parts):
@@ -240,13 +290,17 @@ for game in "${GAMES[@]}"; do
         -Wl,--gc-sections \
         -Wl,--no-undefined \
         -Wl,-u,ANativeActivity_onCreate \
+        -Wl,-u,JNI_OnLoad \
+        -Wl,-u,Java_org_saverelay_SaveRelay_nativeInit \
         -o "$SO_OUT" \
         "$WORK/obj/android_native_app_glue.o" \
+        "$WORK/obj/save_relay_jni.o" \
         "$WORK/obj/android_bridge.o" \
         "$WORK/obj/fex_bridge.o" \
         "$WORK/obj/driver_loader.o" \
         "$APK_RUST_LIB" \
         "$RUNTIME_LIB" \
+        "$SAVE_RELAY_LIB" \
         "$ADRENOTOOLS_LIB" \
         ${LINKERNSBYPASS_LIB:+"$LINKERNSBYPASS_LIB"} \
         -landroid -llog -ldl -lm
@@ -267,11 +321,12 @@ for game in "${GAMES[@]}"; do
         "$STAGE/res_flat.zip" \
         -o "$STAGE/base.apk"
 
-    python3 - "$STAGE/base.apk" "$STAGE/lib/arm64-v8a" <<'PY'
+    python3 - "$STAGE/base.apk" "$STAGE/lib/arm64-v8a" "$WORK/dex/classes.dex" <<'PY'
 import os, sys, zipfile
 
-apk_path, lib_dir = sys.argv[1], sys.argv[2]
+apk_path, lib_dir, dex_path = sys.argv[1], sys.argv[2], sys.argv[3]
 with zipfile.ZipFile(apk_path, "a", compression=zipfile.ZIP_DEFLATED) as zf:
+    zf.write(dex_path, "classes.dex")
     for fn in sorted(os.listdir(lib_dir)):
         if fn.endswith(".so"):
             zf.write(os.path.join(lib_dir, fn), f"lib/arm64-v8a/{fn}")
