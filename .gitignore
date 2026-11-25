@@ -27,11 +27,26 @@ patches.json
 !crates/core/data/collection-artwork/*.png
 !crates/core/data/icons/*.png
 
+# AOT recompiler output (uu-recomp): generated from the owner's own game, never commit it.
+recomp-out/
+librecomp-*.dylib
+
 # Decrypted game dumps: ~58 GB of user-owned game data, never commit these.
 # Matched on the EP9000- / CUSA- title folder names rather than a fixed path,
 # so any dump the launcher or BB_GAME_DIR points at is covered.
 /EP[0-9A-Z]*-CUSA[0-9A-Z]*_*/
+/CUSA*/
+/sce_sys/
 /game
+# Game containers and executables, wherever they turn up (tools/check_no_game_data.sh checks packages too).
+*.self
+*.prx
+*.sprx
+eboot.bin
+param.sfo
 
 # Rust
 /target
+
+# Metal probe run record (written by tests/apple_metal/run.sh when given this path)
+metal-probe-report.json

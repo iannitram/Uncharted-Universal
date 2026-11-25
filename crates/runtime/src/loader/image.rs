@@ -51,6 +51,17 @@ impl MappedImage {
         unresolved_handler: usize,
         strict_imports: bool,
     ) -> Result<Self, String> {
+        let mapped = Self::map_without_relocs(boot, payload, page_size, unresolved_handler)?;
+        mapped.apply_relocs(boot, strict_imports)?;
+        Ok(mapped)
+    }
+
+    pub(crate) fn map_without_relocs(
+        boot: &BootImage,
+        payload: &[u8],
+        page_size: usize,
+        unresolved_handler: usize,
+    ) -> Result<Self, String> {
         let image_size =
             usize::try_from(boot.size).map_err(|_| "image size overflow".to_string())?;
         if payload.len() != image_size {
@@ -108,7 +119,6 @@ impl MappedImage {
         };
 
         mapped.emit_traps(boot.import_names.len(), unresolved_handler);
-        mapped.apply_relocs(boot, strict_imports)?;
         Ok(mapped)
     }
 
@@ -130,7 +140,11 @@ impl MappedImage {
         }
     }
 
-    fn apply_relocs(&self, boot: &BootImage, strict_imports: bool) -> Result<(), String> {
+    pub(crate) fn apply_relocs(
+        &self,
+        boot: &BootImage,
+        strict_imports: bool,
+    ) -> Result<(), String> {
         let native_libc = matches!(
             boot.format,
             ProbeFormat::V3 | ProbeFormat::V4 | ProbeFormat::V5

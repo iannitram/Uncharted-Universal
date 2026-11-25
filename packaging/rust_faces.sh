@@ -5,11 +5,19 @@
 # side by side: the app runs `uncharted-universal` beside itself, and `uncharted-universal play`
 # runs `uncharted-run` beside itself (roadmap 2.10).
 faces=(uncharted-app uncharted-universal uncharted-run)
-cargo build --release --locked --bins -p uncharted-app -p uncharted_cli -p uncharted_runtime
+# The Mac app is Apple silicon only (arm64): build that target explicitly so an Intel host
+# cannot produce a different bundle. Elsewhere the host triple, as before.
+cargo_target=()
+target_subdir=
+if [[ $(uname -s) == Darwin ]]; then
+    cargo_target=(--target aarch64-apple-darwin)
+    target_subdir=/aarch64-apple-darwin
+fi
+cargo build --release --locked --bins ${cargo_target[@]+"${cargo_target[@]}"} -p uncharted-app -p uncharted_cli -p uncharted_runtime
 faces_dir=${CARGO_TARGET_DIR:-$PWD/target}
 # Git Bash and MSYS2 may hold a Windows path (B:\...) in CARGO_TARGET_DIR.
 if command -v cygpath >/dev/null 2>&1; then faces_dir=$(cygpath -u "$faces_dir"); fi
-faces_dir=$faces_dir/release
+faces_dir=$faces_dir$target_subdir/release
 exe_suffix=
 case $(uname -s) in MINGW*|MSYS*|CYGWIN*) exe_suffix=.exe ;; esac
 for face in "${faces[@]}"; do
