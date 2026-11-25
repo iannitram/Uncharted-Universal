@@ -5,11 +5,11 @@
 #                                named UU-metal-probe (created here, deleted afterwards)
 #   run.sh build-sim             compile only for the iOS Simulator (no device needed)
 # Exit 0 on pass or on a clearly reported skip (no Metal device), 1 on a failed check.
-# The JSON record goes to the report path (default metal-probe-report.json) and stderr carries
+# The JSON record goes to the report path (default ${TMPDIR:-/tmp}/metal-probe-report.json) and stderr carries
 # the per-check log. Shaders compile at run time, so no Metal Toolchain component is needed.
 set -eu
 mode=${1:-macos}; shift 2>/dev/null || true
-out=${1:-metal-probe-report.json}
+out=${1:-${TMPDIR:-/tmp}/metal-probe-report.json}
 d=$(cd "$(dirname "$0")" && pwd)
 out=$(cd "$(dirname "$out")" && pwd)/$(basename "$out")
 w=${UU_PROBE_BUILD:-${TMPDIR:-/tmp}/uu-metal-probe-build}
