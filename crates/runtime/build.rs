@@ -10,7 +10,9 @@
 //!   `bbgpu` target) there before the crate is compiled. `build.sh` sets it on Linux; on Windows
 //!   CMake builds `gpu/` and the loader and runs cargo itself, so this step is not used there.
 //!   Apple targets (macOS, iOS) never build `gpu/`: CI leaves the variable unset and this script
-//!   refuses it for them (8.02; the Apple renderer is Metal, 8.04).
+//!   refuses it for them (8.02; the Apple renderer is Metal, 8.04);
+//! - the Windows link flags of `uncharted-run`: no high-entropy ASLR and a 16 MiB committed main
+//!   stack, as `gpu/CMakeLists.txt` gives `bb-probe` (see `windows_bin_link_args`).
 
 use std::env;
 use std::fmt::Write as _;
@@ -25,7 +27,34 @@ fn main() {
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     nid_table(&root, &out);
     loader_cfg();
+    windows_bin_link_args();
     gpu(&root);
+}
+
+/// `uncharted-run` reserves the PS4 address range (64 GiB - 1 TiB) at boot (`memory/windows.rs`).
+/// With high-entropy ASLR, Windows may put heaps, thread stacks or mapped files inside it, and
+/// the reservation then fails with exit 21. Link the runner the way `gpu/CMakeLists.txt` links
+/// `bb-probe`: `--disable-high-entropy-va` keeps those allocations low, and the main stack is
+/// 16 MiB reserved and committed. Only the binary: the library is linked into other programs.
+fn windows_bin_link_args() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let args: &[&str] = if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+        &["/HIGHENTROPYVA:NO", "/STACK:16777216,16777216"]
+    } else {
+        // `-Wl,` would split `16777216,16777216` at the comma; `-Xlinker` passes it whole.
+        &[
+            "-Wl,--disable-high-entropy-va",
+            "-Xlinker",
+            "--stack",
+            "-Xlinker",
+            "16777216,16777216",
+        ]
+    };
+    for arg in args {
+        println!("cargo::rustc-link-arg-bin=uncharted-run={arg}");
+    }
 }
 
 /// Every `{"nid","symbol"},` line of `import_names.inc`, sorted by NID (bytewise, as `strcmp`).
