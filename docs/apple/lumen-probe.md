@@ -1,6 +1,6 @@
 # Lumen Metal adapter probe (#408)
 
-Status: **research and measurement only; no lumen code is vendored.** Owner ruling 2026-11-24:
+Status: **route A chosen for #408 (2026-11-24, ADR 0006 amendment); no lumen code is vendored yet.** Owner ruling 2026-11-24:
 "Yes, probe first". Question: can the Metal-backed Vulkan C API adapter in `gs-soft-it/lumen-emu`
 serve as the static Vulkan provider under our near-stock shadPS4 renderer in `gpu/`, instead of
 reconciling `bloodborne-runtime`'s `renderer_metal` (159 files differ, 100 missing; see

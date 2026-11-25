@@ -6,6 +6,12 @@
 
 **Amended 2026-11-23** by owner ruling (`SPEC.md`, M15, M18): the iOS/iPadOS release is **split into three separate per-game unsigned `.ipa` apps** (Uncharted 1, Uncharted 2, Uncharted 3) so install size stays manageable. Each `.ipa` installs thin (no bundled game assets), boots and prompts *"Would you like to download the rest of the game files?"*, and pulls that game's files from Dropbox through `save-relay`'s Dropbox app (`iannitram/save-relay#305`) with resumable downloads that pick right back up after battery death or force-close.
 
+**Amended 2026-11-24** by owner ruling ("Whichever you think will work better", delegating the #408 route to the Apple coordinator after the lumen probe): the Metal renderer is entered through **route A**, lumen-emu's Metal-backed Vulkan adapter (GPL-2.0-only, pin `6127cba8`) placed under our near-stock shadPS4 Vulkan renderer. This replaces porting bloodborne-runtime's `renderer_metal`. The rest of this ADR stands: the recompiled no-JIT library, the iOS shell and the three per-game `.ipa`s. Two cheap tests come first:
+- a re-dump with a Metal-shaped shader profile at MSL 2.3, for macOS and iOS;
+- a plain-buffer memory-arena spike on the 3090.
+
+The route falls back to B (the `renderer_metal` reconcile) under the stop rules in `docs/apple/lumen-probe.md`, chiefly the two-week rule for the sparse-arena replacement. Measurement and estimates are in `docs/apple/lumen-probe.md`.
+
 ## Decision
 
 Adopt bloodborne-native's route (bloodborne-runtime, -mac, -ios; GPL-2.0 per their headers, licence files checked at piece 8.01 before code comes in, credited): on the Mac, the launcher recompiles each game's x86-64 code from my dump into a native ARM64 library (no JIT, so the same library serves iOS), and the game draws through their Metal renderer. Their code is vendored under `apple/` and stays in its language; our Rust runtime builds for `aarch64-apple-darwin` and `aarch64-apple-ios`. The Mac builds three separate thin unsigned `.ipa` apps (Uncharted 1, Uncharted 2, Uncharted 3; iphoneos, arm64) with a version in each file name and puts them in `Dropbox/_transfers/Uncharted-Universal/ios/`; I install whichever game I want from Dropbox with SideStore, which signs it with my free Apple ID and re-signs it every 7 days on the device. On boot, each iOS app prompts *"Would you like to download the rest of the game files?"* and pulls that game's files from Dropbox through `save-relay`'s Dropbox app with checkpointed resume across battery death or force-close.
