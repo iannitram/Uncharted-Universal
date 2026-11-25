@@ -177,6 +177,8 @@ public class GameDownload extends Service {
             for (int i = 0; i < files.length(); i++) {
                 sum += files.getJSONObject(i).optLong("size", 0);
             }
+            done = 0;
+            total = sum;
             File partial = game.partialDir(ctx);
             File dest = game.gameDir(ctx);
             partial.mkdirs();
@@ -194,15 +196,19 @@ public class GameDownload extends Service {
                 if (parent != null) parent.mkdirs();
 
                 long have = target.isFile() ? target.length() : 0;
+                done = completed + have;
                 if (have < size || size == 0) {
-                    updateStatus("Downloading " + rel + " (" + (i + 1) + "/" + files.length() + ")",
-                            completed + have, sum);
+                    updateStatus("Downloading " + rel + " (" + (done / (1024 * 1024)) + " / "
+                            + Math.max(1L, sum / (1024 * 1024)) + " MB)", done, sum);
                     fetchDropbox(ctx, game.remoteDir + "/" + rel, target, have);
                 }
-                if (!sha256.isEmpty() && !sha256Matches(target, sha256)) {
-                    //noinspection ResultOfMethodCallIgnored
-                    target.delete();
-                    throw new Fatal("Checksum mismatch for " + rel + ". Tap Download to retry.");
+                if (!sha256.isEmpty()) {
+                    updateStatus("Verifying " + rel + "...", sum, sum);
+                    if (!sha256Matches(target, sha256)) {
+                        //noinspection ResultOfMethodCallIgnored
+                        target.delete();
+                        throw new Fatal("Checksum mismatch for " + rel + ". Tap Download to retry.");
+                    }
                 }
                 completed += size;
                 updateStatus("Verified " + rel, completed, sum);
@@ -211,15 +217,22 @@ public class GameDownload extends Service {
             for (int i = 0; i < files.length(); i++) {
                 String rel = files.getJSONObject(i).getString("path");
                 File src = new File(partial, rel);
-                File out = new File(dest, rel);
-                File outParent = out.getParentFile();
-                if (outParent != null) outParent.mkdirs();
-                if (out.exists()) {
+                if (rel.endsWith(".tar")) {
+                    updateStatus("Unpacking " + rel + "...", sum, sum);
+                    extractTar(src, dest);
                     //noinspection ResultOfMethodCallIgnored
-                    out.delete();
-                }
-                if (!src.renameTo(out)) {
-                    throw new IOException("Failed to move " + rel + " into place");
+                    src.delete();
+                } else {
+                    File out = new File(dest, rel);
+                    File outParent = out.getParentFile();
+                    if (outParent != null) outParent.mkdirs();
+                    if (out.exists()) {
+                        //noinspection ResultOfMethodCallIgnored
+                        out.delete();
+                    }
+                    if (!src.renameTo(out)) {
+                        throw new IOException("Failed to move " + rel + " into place");
+                    }
                 }
             }
             try (FileOutputStream out = new FileOutputStream(new File(dest, "manifest.json"))) {
@@ -280,17 +293,187 @@ public class GameDownload extends Service {
              FileOutputStream out = new FileOutputStream(into, from > 0 && code == 206)) {
             byte[] buf = new byte[65536];
             int n;
+            long lastNotify = done;
+            String label = into.getName();
             while ((n = in.read(buf)) > 0) {
                 if (Thread.currentThread().isInterrupted()) {
                     throw new Fatal("Download cancelled");
                 }
                 out.write(buf, 0, n);
                 done += n;
+                if (done - lastNotify >= 2L * 1024 * 1024) {
+                    lastNotify = done;
+                    updateStatus("Downloading " + label + " (" + (done / (1024 * 1024))
+                            + " / " + Math.max(1L, total / (1024 * 1024)) + " MB)", done, total);
+                }
             }
         } finally {
             c.disconnect();
         }
         return null;
+    }
+
+    private static void extractTar(File tarFile, File destDir) throws IOException {
+        String destCanonical = destDir.getCanonicalPath() + File.separator;
+        byte[] header = new byte[512];
+        byte[] buf = new byte[65536];
+        String nextLongName = null;
+        long nextPaxSize = -1;
+
+        try (FileInputStream in = new FileInputStream(tarFile)) {
+            while (readFullyOrEof(in, header, 512)) {
+                boolean allZero = true;
+                for (byte b : header) {
+                    if (b != 0) {
+                        allZero = false;
+                        break;
+                    }
+                }
+                if (allZero) break;
+
+                String name = parseTarString(header, 0, 100);
+                String prefix = parseTarString(header, 345, 155);
+                if (!prefix.isEmpty()) {
+                    name = prefix + "/" + name;
+                }
+                long size = nextPaxSize >= 0 ? nextPaxSize : parseTarOctal(header, 124, 12);
+                byte type = header[156];
+
+                if (type == 'L') {
+                    byte[] nameBytes = readExactBytes(in, (int) size);
+                    skipTarPadding(in, size);
+                    nextLongName = trimNulls(nameBytes);
+                    continue;
+                }
+                if (type == 'x') {
+                    byte[] paxBytes = readExactBytes(in, (int) size);
+                    skipTarPadding(in, size);
+                    String pax = new String(paxBytes, StandardCharsets.UTF_8);
+                    for (String line : pax.split("\n")) {
+                        int sp = line.indexOf(' ');
+                        if (sp <= 0) continue;
+                        String kv = line.substring(sp + 1);
+                        if (kv.startsWith("path=")) nextLongName = kv.substring(5);
+                        else if (kv.startsWith("size=")) nextPaxSize = Long.parseLong(kv.substring(5));
+                    }
+                    continue;
+                }
+
+                if (nextLongName != null) {
+                    name = nextLongName;
+                }
+                nextLongName = null;
+                nextPaxSize = -1;
+
+                while (name.startsWith("./")) name = name.substring(2);
+                while (name.startsWith("/")) name = name.substring(1);
+                if (name.isEmpty() || ".".equals(name)) {
+                    skipFully(in, size);
+                    skipTarPadding(in, size);
+                    continue;
+                }
+
+                File out = new File(destDir, name);
+                String outCanonical = out.getCanonicalPath();
+                if (!outCanonical.startsWith(destCanonical)) {
+                    throw new IOException("Blocked tar path traversal: " + name);
+                }
+
+                if (type == '5') {
+                    //noinspection ResultOfMethodCallIgnored
+                    out.mkdirs();
+                    skipFully(in, size);
+                } else if (type == '0' || type == 0) {
+                    File parent = out.getParentFile();
+                    if (parent != null) parent.mkdirs();
+                    try (FileOutputStream fos = new FileOutputStream(out)) {
+                        long rem = size;
+                        while (rem > 0) {
+                            int want = (int) Math.min(buf.length, rem);
+                            int got = in.read(buf, 0, want);
+                            if (got <= 0) throw new IOException("Unexpected EOF in tar entry " + name);
+                            fos.write(buf, 0, got);
+                            rem -= got;
+                        }
+                    }
+                } else {
+                    skipFully(in, size);
+                }
+                skipTarPadding(in, size);
+            }
+        }
+    }
+
+    private static boolean readFullyOrEof(InputStream in, byte[] dst, int len) throws IOException {
+        int off = 0;
+        while (off < len) {
+            int n = in.read(dst, off, len - off);
+            if (n < 0) {
+                if (off == 0) return false;
+                throw new IOException("Truncated tar header");
+            }
+            off += n;
+        }
+        return true;
+    }
+
+    private static byte[] readExactBytes(InputStream in, int len) throws IOException {
+        byte[] out = new byte[len];
+        if (!readFullyOrEof(in, out, len)) throw new IOException("Unexpected EOF in tar");
+        return out;
+    }
+
+    private static void skipFully(InputStream in, long n) throws IOException {
+        long rem = n;
+        while (rem > 0) {
+            long skipped = in.skip(rem);
+            if (skipped <= 0) {
+                if (in.read() < 0) throw new IOException("Unexpected EOF skipping tar");
+                rem--;
+            } else {
+                rem -= skipped;
+            }
+        }
+    }
+
+    private static void skipTarPadding(InputStream in, long size) throws IOException {
+        long mod = size % 512;
+        if (mod != 0) skipFully(in, 512 - mod);
+    }
+
+    private static String parseTarString(byte[] buf, int off, int len) {
+        int end = off;
+        int max = off + len;
+        while (end < max && buf[end] != 0) end++;
+        return new String(buf, off, end - off, StandardCharsets.UTF_8);
+    }
+
+    private static String trimNulls(byte[] buf) {
+        int end = buf.length;
+        while (end > 0 && buf[end - 1] == 0) end--;
+        return new String(buf, 0, end, StandardCharsets.UTF_8);
+    }
+
+    private static long parseTarOctal(byte[] buf, int off, int len) {
+        if ((buf[off] & 0x80) != 0) {
+            long v = 0;
+            for (int i = 1; i < len; i++) {
+                v = (v << 8) | (buf[off + i] & 0xFFL);
+            }
+            return v;
+        }
+        long v = 0;
+        for (int i = off; i < off + len; i++) {
+            byte b = buf[i];
+            if (b == 0 || b == ' ') {
+                if (v != 0) break;
+                continue;
+            }
+            if (b >= '0' && b <= '7') {
+                v = (v << 3) | (b - '0');
+            }
+        }
+        return v;
     }
 
     private static boolean sha256Matches(File file, String expectedHex) throws Exception {
