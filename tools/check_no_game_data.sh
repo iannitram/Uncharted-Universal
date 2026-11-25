@@ -13,17 +13,21 @@ set -euo pipefail
 max_file=${MAX_FILE_BYTES:-67108864}
 max_total=${MAX_TOTAL_BYTES:-536870912}
 (($# > 0)) || { echo "usage: check_no_game_data.sh <directory | .app | .ipa | .zip>..." >&2; exit 2; }
-# A missing tool must never read as a clean tree (a failed find inside <(...) would).
+# A missing tool must never read as a clean tree, so check for each one first.
 for tool in find od wc tr basename mktemp; do
     command -v "$tool" >/dev/null || { echo "game data check: needs $tool" >&2; exit 2; }
 done
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 failures=0
+lists=0
 fail() { echo "game data check: $1" >&2; failures=$((failures + 1)); }
 
 scan() { # <directory> <label>
-    local dir=$1 label=$2 total=0 file size magic name
+    local dir=$1 label=$2 total=0 file size magic name list
+    # Listings go through files in $work, not <(...): a minimal chroot has no /dev/fd.
+    list=$work/files.$((++lists))
+    find "$dir" -type f -print0 > "$list"
     while IFS= read -r -d '' file; do
         name=$(basename -- "$file")
         rel=${file#"$dir"/}
@@ -42,11 +46,12 @@ scan() { # <directory> <label>
                 7f434e54) fail "$label: $rel starts with the PS4 PKG magic" ;;
             esac
         fi
-    done < <(find "$dir" -type f -print0)
+    done < "$list"
     # Folder names: a title id (CUSA + digits) or the sce_sys metadata folder anywhere in the tree.
+    find "$dir" -type d \( -iname 'CUSA[0-9]*' -o -iname 'sce_sys' -o -iname 'sce_module' \) -print0 > "$list"
     while IFS= read -r -d '' file; do
         fail "$label: ${file#"$dir"/} is a game folder name"
-    done < <(find "$dir" -type d \( -iname 'CUSA[0-9]*' -o -iname 'sce_sys' -o -iname 'sce_module' \) -print0)
+    done < "$list"
     ((total <= max_total)) || fail "$label: $total bytes in all (limit $max_total)"
 }
 
@@ -66,9 +71,11 @@ for target in "$@"; do
         case $target in
             *.zip|*.ipa)
                 # Names first (cheap), then unpacked for the magic and size checks.
+                names=$work/names.$((++lists))
+                zip_names "$target" > "$names"
                 while IFS= read -r name; do
                     if [[ $name =~ (^|/)(CUSA[0-9]+|sce_sys|sce_module)(/|$) ]]; then fail "$target: $name is a game folder name"; fi
-                done < <(zip_names "$target")
+                done < "$names"
                 dest=$work/$(basename -- "$target").d
                 mkdir -p "$dest"
                 zip_extract "$target" "$dest"
