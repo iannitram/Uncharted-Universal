@@ -3,8 +3,8 @@
 //! gets nothing. An unknown opening packet is refused before anything else is read. Every file
 //! here is synthetic.
 //!
-//! Paired-device storage fails closed on Windows, so there pairing and pulls must fail and store
-//! nothing; the full flow runs on Linux and macOS.
+//! The full flow runs on Linux, macOS and Windows (owner-only, atomically replaced paired-device
+//! file on Windows, #189).
 
 #![cfg(feature = "hub")]
 

@@ -4,8 +4,8 @@
 //! pull under a name the hub never paired both fail with the reason. Every file is synthetic;
 //! nothing leaves loopback and mDNS is not used (`--bind 127.0.0.1` skips the announcement).
 //!
-//! Paired-device storage fails closed on Windows until its ACL work lands, so there the commands
-//! must fail before listening or connecting, and store nothing.
+//! The same flow runs on Windows, where the paired-device file is owner-only and atomically
+//! replaced (#189).
 
 #![cfg(feature = "hub")]
 
