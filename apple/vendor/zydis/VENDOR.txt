@@ -1,0 +1,10 @@
+Vendored from https://github.com/zyantific/zydis tag v4.1.1 (commit a2278f1d254e492f6a6b39f6cb5d1f5d515659dc)
+  with its bundled Zycore, https://github.com/zyantific/zycore-c tag v1.5.2 (commit 0b2432ced0884fd152b471d97ecf0258ff4d859f)
+  (2026-11, ADR 0006, #396).
+Licence: MIT. LICENSE is Zydis's and dependencies/zycore/LICENSE is Zycore's, both unchanged.
+Files: include/ and src/ (including src/Generated/*.inc) of Zydis; dependencies/zycore/include and
+  dependencies/zycore/src of Zycore. The x86-64 decoder that bbcpu, scan.c and bbrecomp.c need.
+Not vendored: tools, examples, tests, CMake and Meson files, docs, msvc, resources, assets, man, subprojects.
+Local modifications: "/* SPDX-License-Identifier: MIT */" added as the first line of each .c, .h and .inc file
+  (the files carry the MIT notice in their own headers, not an SPDX line). Nothing else is changed.
+Built by crates/recomp/build.rs as a static library with ZYDIS_STATIC_BUILD and ZYCORE_STATIC_BUILD.

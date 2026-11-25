@@ -1,0 +1,80 @@
+name: apple-recomp
+
+# The Apple AOT recompiler foundation (#396, ADR 0006): the vendored bbcpu, bloodborne-recomp
+# generator and Zydis under apple/vendor, built by crates/recomp, tested on authored synthetic
+# code only (tests/recomp/). The recompiler is never run on a game here: CI has no game files.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apple/**"
+      - "crates/recomp/**"
+      - "crates/core/src/link.rs"
+      - "crates/core/src/link/**"
+      - "crates/core/src/prepare.rs"
+      - "tests/recomp/**"
+      - "packaging/licence_check.py"
+      - "tests/test_licence_check.py"
+      - ".github/workflows/apple-recomp.yml"
+  pull_request:
+    paths:
+      - "apple/**"
+      - "crates/recomp/**"
+      - "crates/core/src/link.rs"
+      - "crates/core/src/link/**"
+      - "crates/core/src/prepare.rs"
+      - "tests/recomp/**"
+      - "packaging/licence_check.py"
+      - "tests/test_licence_check.py"
+      - ".github/workflows/apple-recomp.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  recomp-macos:
+    # The snippet fuzz (generated C against the interpreter, zero mismatches) and the synthetic
+    # end-to-end run: scan, generate, compile, run under bbcpu with BB_JIT=0 (no JIT is needed
+    # or used), a patched function falling back, an unsupported instruction refused.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Check the runner is arm64
+        run: |
+          echo "runner architecture: $(uname -m)"
+          test "$(uname -m)" = arm64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - name: Nothing GPL-3.0 or bbnet20 under apple/
+        run: python3 packaging/licence_check.py apple
+      - name: Licence check tests
+        run: cd tests && python3 -m unittest -v test_licence_check
+      - name: Recompiler tests (snippet fuzz, synthetic end to end, output guard)
+        run: cargo test -p uncharted_recomp
+      - name: The importable core inputs
+        run: cargo test -p uncharted_core --lib recomp_inputs
+
+  recomp-ios-build:
+    # The vendored C builds for iOS (no host tools there, and nothing is run).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - run: cargo build -p uncharted_recomp --lib --target aarch64-apple-ios

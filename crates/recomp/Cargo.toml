@@ -1,0 +1,28 @@
+[package]
+name = "uncharted_recomp"
+description = "The Apple AOT recompiler foundation: libbbcpu, the host tools and the uu-recomp driver (ADR 0006, #396)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+build = "build.rs"
+
+[lib]
+name = "uncharted_recomp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "uu-recomp"
+path = "src/main.rs"
+
+# Everything is for Apple arm64 targets only (the vendored CPU layer translates x86-64 to arm64
+# and its host tools run on a Mac): elsewhere the crate is empty and these are not even built.
+[target.'cfg(all(target_vendor = "apple", target_arch = "aarch64"))'.dependencies]
+uncharted_core = { path = "../core" }
+serde_json = "1"
+
+# Compiles the vendored C (apple/vendor: bbcpu, Zydis) and the host tools with the target's
+# toolchain. MIT or Apache-2.0, build-time only.
+[build-dependencies]
+cc = "1"

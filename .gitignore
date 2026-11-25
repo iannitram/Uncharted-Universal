@@ -27,6 +27,10 @@ patches.json
 !crates/core/data/collection-artwork/*.png
 !crates/core/data/icons/*.png
 
+# AOT recompiler output (uu-recomp): generated from the owner's own game, never commit it.
+recomp-out/
+librecomp-*.dylib
+
 # Decrypted game dumps: ~58 GB of user-owned game data, never commit these.
 # Matched on the EP9000- / CUSA- title folder names rather than a fixed path,
 # so any dump the launcher or BB_GAME_DIR points at is covered.

@@ -20,9 +20,9 @@ peer: AdilDevStuff/uncharted_pc_linux | GPL-2.0 | raw mouse, CI packages, aim bl
 peer: Mevlock/uncharted_pc-dev | GPL-2.0 | performance builds: pools, buffer arenas, overlay stats
 peer: revvv991/uncharted-android | GPL-2.0-or-later | direct Android port; reports Retroid Pocket G2 tests; selected build and bridge work only (#207-#210), not a whole-tree import
 peer: shadps4-emu/shadPS4 | GPL-2.0 | texture and buffer cache fixes to back-port into gpu/shadps4
-peer: bloodborne-native/bloodborne-runtime | GPL-2.0 root; file/dependency licenses vary | Apple Metal and iOS feasibility source (#211); explicitly exclude its GPL-3.0 bbnet20 component
-peer: bloodborne-native/bloodborne-recomp | GPL-2.0 root licence | AOT feasibility only at #211; generator expects Bloodborne-specific inputs; never copy annotations or output
-peer: bloodborne-native/bbcpu | GPL-2.0 root licence | synthetic no-JIT test pattern (#212, after #211); interpreter coverage remains unproven for these games
+peer: bloodborne-native/bloodborne-runtime | GPL-2.0 root; file/dependency licenses vary | Apple Metal and iOS feasibility source (#211); explicitly exclude its GPL-3.0 bbnet20 component (packaging/licence_check.py apple fails on it under apple/)
+peer: bloodborne-native/bloodborne-recomp | GPL-2.0 root licence (README: or later) | AOT generator: scan.c, bbrecomp.c and fuzz_recomp.c vendored under apple/vendor (#396, see Imported code); never copy annotations, offset tables, signatures or output
+peer: bloodborne-native/bbcpu | GPL-2.0 root licence (README: or later) | CPU layer: src/cpu and rc.h vendored under apple/vendor (#396, see Imported code); synthetic no-JIT test pattern (#212); interpreter coverage remains unproven for these games
 peer: bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and settings
 peer: eladharels/uncharted_android | GPL-2.0 | a second Android port (FEX JIT + Turnip): device notes
 peer: bloodborne-native/bloodborne-mac | GPL-2.0 | native Apple Silicon port of the same bbport family: the Mac base
@@ -51,6 +51,9 @@ peer: gilrs (crate) | MIT or Apache-2.0 | gamepad input on desktop
 
 | Here | From (repo and commit) | License | Credit |
 |---|---|---|---|
+| `apple/vendor/bbcpu` (`src/cpu/*`, `src/recomp/rc.h`; marker addresses made configuration, SPDX lines added) | [bloodborne-native/bbcpu@3f9b6c1a11d5](https://github.com/bloodborne-native/bbcpu/commit/3f9b6c1a11d5a443ee2e556a0d1f3aec4a73f0ca) | GPL-2.0-or-later (upstream README and docs/CREDITS.md; root `LICENSE` is the GPL-2.0 text; no per-file notice; "or later" not confirmed with the author, used under GPL-2.0 either way). Record: `apple/vendor/bbcpu/VENDOR.txt` | Owner ruling 2026-11-16 (#396): the Apple build may be GPL-governed; vendored under `apple/` (ADR 0006). x86-64 interpreter, arm64 translator and recompiled-library loader. |
+| `apple/vendor/bloodborne-recomp` (`tools/recomp/scan.c`, `tools/recomp/bbrecomp.c`, `tests/fuzz_recomp.c`; SPDX lines added) | [bloodborne-native/bloodborne-recomp@c60ccf8be752](https://github.com/bloodborne-native/bloodborne-recomp/commit/c60ccf8be752b8690f2813505c4daf9eafdb136b) | GPL-2.0-or-later (upstream README; root `LICENSE` is the GPL-2.0 text; no per-file notice). Record: `apple/vendor/bloodborne-recomp/VENDOR.txt` | Function scan, C generator and the generated-C fuzz. **Never vendored:** `annotations/`, signatures, offset tables, generated output, `build_library.py`. |
+| `apple/vendor/zydis` (`include/`, `src/`, bundled Zycore `include/` and `src/`; SPDX lines added) | [zyantific/zydis@a2278f1d254e (v4.1.1)](https://github.com/zyantific/zydis/commit/a2278f1d254e492f6a6b39f6cb5d1f5d515659dc), Zycore [zycore-c@0b2432ced088 (v1.5.2)](https://github.com/zyantific/zycore-c/commit/0b2432ced0884fd152b471d97ecf0258ff4d859f) | MIT. [Zydis LICENSE](https://github.com/zyantific/zydis/blob/a2278f1d254e492f6a6b39f6cb5d1f5d515659dc/LICENSE), Zycore LICENSE kept beside it. Record: `apple/vendor/zydis/VENDOR.txt` | x86-64 decoder that bbcpu, `scan.c` and `bbrecomp.c` need. |
 
 ## Earlier notes (kept as written)
 
