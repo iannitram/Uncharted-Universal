@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Synthetic Metal probe (feasibility plan step 4, #408, #211).
 //
-// Authored from the Metal documentation. It contains no game data and no code from any peer.
+// Provenance: authored here from Apple's Metal documentation. It contains no game data and no code from any peer.
 // It creates a device, compiles MSL at run time, renders a textured triangle to an offscreen
 // RGBA8 target, uploads an RGBA8 and a BC1 sub-rectangle through a staging buffer (the shape of
 // ButtonPrompts::Patch upload), reads each result back and compares a CRC-32 with a value that

@@ -40,6 +40,10 @@ jobs:
           set -o pipefail
           echo "runner architecture: $(uname -m)"
           sh tests/apple_metal/run.sh macos "$RUNNER_TEMP/metal-probe-macos.json" || rc=$?
+          if [ ! -s "$RUNNER_TEMP/metal-probe-macos.json" ]; then
+            echo "::error::The probe wrote no JSON report (exit code ${rc:-0}); it likely crashed. See the log above."
+            exit "${rc:-1}"
+          fi
           python3 - "$RUNNER_TEMP/metal-probe-macos.json" <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json, sys
           r = json.load(open(sys.argv[1]))
