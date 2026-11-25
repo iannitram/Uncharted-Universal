@@ -48,6 +48,8 @@ int bbgpu_notify_resize(uint32_t width, uint32_t height);
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */
 int bbgpu_handle_fault(void *ucontext, void *address);
+/* Resumes a GPU speculative-read recovery point (runtime_fault_recover), or returns 0. */
+int bbgpu_fault_recover(int sig_or_code, void *context);
 /* BB_WRITE_LOG=1: prints the logged GPU-side writes to guest memory near the fault. */
 void bbgpu_dump_guest_writes(void *ucontext);
 /* Keyboard text entry through the game window (IME dialog). begin returns 0 when
