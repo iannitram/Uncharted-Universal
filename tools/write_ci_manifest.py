@@ -8,6 +8,15 @@ import platform
 from pathlib import Path
 
 
+# The package each platform must contribute: naming a platform whose package is missing is an
+# error, so a release cannot go out without one of its files (the Mac zip is arm64 only).
+PACKAGES = {
+    "linux": ("Uncharted-x86_64.AppImage", "uncharted-linux.tar.gz"),
+    "windows": ("uncharted-windows.zip",),
+    "macos": ("uncharted-macos.zip",),
+}
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -28,6 +37,13 @@ def main():
     smoke = args.smoke_result.resolve()
     if not directory.is_dir():
         parser.error(f"not a directory: {directory}")
+    platforms = [name for name in args.platform.split(",") if name]
+    unknown = [name for name in platforms if name not in PACKAGES]
+    if not platforms or unknown:
+        parser.error(f"--platform takes {','.join(PACKAGES)}; got {args.platform!r}")
+    missing = [name for p in platforms for name in PACKAGES[p] if not (directory / name).is_file()]
+    if missing:
+        parser.error(f"missing package files in {directory}: {', '.join(missing)}")
     if not smoke.is_file() or not smoke.stat().st_size:
         parser.error(f"missing or empty smoke result: {smoke}")
     if "FAIL" in smoke.read_text(encoding="utf-8", errors="replace").upper():

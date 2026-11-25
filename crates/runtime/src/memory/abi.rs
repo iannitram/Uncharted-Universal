@@ -11,7 +11,6 @@ use super::linux::{self as os, MemfdHost as HostImpl};
 #[cfg(windows)]
 use super::windows::{self as os, WinHost as HostImpl};
 
-static POOL: OnceLock<u64> = OnceLock::new();
 static DMEM_OVERRIDE_MB: AtomicU64 = AtomicU64::new(0);
 static MEMORY: OnceLock<Memory<HostImpl>> = OnceLock::new();
 static WATCHER: AtomicBool = AtomicBool::new(false);
@@ -38,21 +37,22 @@ fn set_dmem_in(slot: &AtomicU64, pool_ready: bool, mb: u32) -> c_int {
     0
 }
 
-/// `BB_DMEM_MB`, read once.
+/// The pool size the address space starts with: `runtime_memory_set_dmem`, else `BB_DMEM_MB`.
+fn initial_pool() -> u64 {
+    dmem_override().unwrap_or_else(|| pool_size(env("BB_DMEM_MB").as_deref()))
+}
+
+/// The direct pool size (it can still grow until the pool is mapped, see
+/// `runtime_memory_set_dmem`).
 fn pool() -> u64 {
-    *POOL.get_or_init(|| {
-        if let Some(bytes) = dmem_override() {
-            return bytes;
-        }
-        pool_size(env("BB_DMEM_MB").as_deref())
-    })
+    memory().read(|s| s.pool_size())
 }
 
 /// The process's address space; `BB_MEMORY_LOG=1` traces every mapping call.
 fn memory() -> &'static Memory<HostImpl> {
     MEMORY.get_or_init(|| {
         let trace = env("BB_MEMORY_LOG").is_some_and(|value| value.starts_with('1'));
-        Memory::new(Space::new(pool(), HostImpl::new()).with_trace(trace))
+        Memory::new(Space::new(initial_pool(), HostImpl::new()).with_trace(trace))
     })
 }
 
@@ -591,10 +591,21 @@ pub extern "C" fn runtime_memory_reserve() {
     memory().read(|s| s.host().reserve());
 }
 
-/// Sets `BB_DMEM_MB` programmatically before the direct-memory pool is created.
+/// Sets `BB_DMEM_MB` programmatically before the direct-memory pool is mapped. On Windows
+/// `runtime_memory_reserve` builds the address space before `bbgpu_init` asks for a bigger
+/// pool (automatic render size, #595), so the size of an unmapped pool can still change.
 #[no_mangle]
 pub extern "C" fn runtime_memory_set_dmem(mb: u32) -> c_int {
-    set_dmem_in(&DMEM_OVERRIDE_MB, POOL.get().is_some(), mb)
+    let Some(memory) = MEMORY.get() else {
+        return set_dmem_in(&DMEM_OVERRIDE_MB, false, mb);
+    };
+    memory.write(|s| {
+        let result = set_dmem_in(&DMEM_OVERRIDE_MB, !s.pool_resizable(), mb);
+        if result == 0 {
+            s.set_pool_size(u64::from(mb) << 20);
+        }
+        result
+    })
 }
 
 /// Re-reads the `BB_TOGGLE_FILE` numbers every 250 ms and prints each change.

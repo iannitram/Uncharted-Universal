@@ -64,6 +64,12 @@ fn uncharted_run_probe_force_fault_and_list_missing() {
     assert!(String::from_utf8_lossy(&list.stdout).contains("0 of 0 imports missing"));
 }
 
+// The BB_BENCHMARK check is in the guest boot path, which only x86-64 Linux and Windows build;
+// elsewhere uncharted-run exits 3 before reaching it.
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_os = "linux", target_os = "windows")
+))]
 #[test]
 fn uncharted_run_rejects_invalid_bb_benchmark() {
     let bin = env!("CARGO_BIN_EXE_uncharted-run");

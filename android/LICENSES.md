@@ -15,6 +15,7 @@ work directory; this file records their identifiers and upstream notice paths.
 | Mesa Turnip | [Mesa](https://gitlab.freedesktop.org/mesa/mesa/-/tree/mesa-26.2.5) | MIT, with per-file notices | `mesa/docs/license.rst`, source-file SPDX headers |
 | libadrenotools | [bylaws/libadrenotools](https://github.com/bylaws/libadrenotools/tree/8fae8ce254dfc1344527e05301e43f37dea2df80) | BSD-2-Clause | `libadrenotools/LICENSE` |
 | SDL 3 | [SDL](https://github.com/libsdl-org/SDL/tree/release-3.4.18) | Zlib | `SDL/LICENSE.txt` |
+| save-relay | [iannitram/save-relay](https://github.com/iannitram/save-relay/tree/961513cb9ef56253970ee67b5b6febe2c2f0349d) (`v1.0.0-rc.2`) | MIT | `save-relay/LICENSE`, `save-relay/NOTICE` |
 | Android NDK toolchain | [Android NDK r30](https://developer.android.com/ndk/downloads) | Android SDK/NDK license terms | Installed SDK/NDK package licenses |
 
 The build keeps fetched sources and outputs outside the repository. The target
@@ -97,4 +98,5 @@ emulator/bridge closure is MIT.
 - `zenithblue-oss/shadps4-arm64` (`be6bc2e9c60799e071dd2fafa6216e8d80ec619c`, `LICENSES/MIT.txt`): MIT notice applies to the selected MIT-marked donor files only; transitive `GPL-2.0-or-later` headers (`hle_trace.h`, `Common/*`, `core/libraries/kernel/threads/exception.h`) remain governed by GNU GPL v2 (or later, selected as GPL-2.0-only in this repository).
 - `revvv991/uncharted-android` (`847faf5a802253cf90664144765f0e5d12eb410e`, `android/LICENSES.md`): GNU GPL v2 or later (selected as GPL-2.0-only in this repository).
 - `bylaws/libadrenotools` (`8fae8ce254dfc1344527e05301e43f37dea2df80`, `LICENSE`): BSD-2-Clause.
+- `iannitram/save-relay` (`v1.0.0-rc.2`, `961513cb9ef56253970ee67b5b6febe2c2f0349d`, `LICENSE`, `NOTICE`): MIT.
 - FEXCore (`FEX-Emu/FEX` @ `f2b679f6028ce1c38875233aecfcf5d3f8ebecec`, `LICENSE`, `External/*`): MIT with individual notices for bundled submodules.
