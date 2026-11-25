@@ -112,12 +112,12 @@ MINGW*|MSYS*)
         fi
         for test in "${tests[@]}"; do "out/gpu/$test.exe"; done
         # uncharted-run (roadmap 3.17d): the Rust loader linked against the GPU library. Headless
-        # smoke checks only (no game, no Vulkan device): --help, a bad argument and --probe.
+        # smoke checks only (no game, no Vulkan driver on the CI runner): --help and a bad
+        # argument. --probe needs a Vulkan instance, so it is not run here.
         out/uncharted-run.exe --help > /dev/null
         if out/uncharted-run.exe --no-such-option > /dev/null 2>&1; then
             echo 'uncharted-run accepted an unknown option' >&2; exit 1
         fi
-        out/uncharted-run.exe --probe > /dev/null
         BB_BUTTON_PROMPTS=nintendo "out/gpu/button-prompts-test.exe" --forced-nintendo
         # The file module is Rust now (crates/runtime/src/file.rs, piece 3.09): its Windows
         # coverage is the crate's own tests (check.yml, windows-latest).
