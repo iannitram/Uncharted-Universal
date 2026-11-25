@@ -1,0 +1,18 @@
+Vendored from https://github.com/bloodborne-native/bbcpu commit 3f9b6c1a11d5a443ee2e556a0d1f3aec4a73f0ca (2026-11, ADR 0006, #396).
+Licence: GNU GPL v2 or later. LICENSE is upstream's root LICENSE (GPL-2.0 text) at that revision.
+  Upstream's README.md ("Licensed under the GNU GPL v2 or later") and docs/CREDITS.md say "or later"; the
+  source files carry no per-file notice. The "or later" terms are not confirmed with the author (feasibility
+  gate 4 note); the files are tagged GPL-2.0-or-later as upstream states, and this tree uses them under
+  GPL-2.0 either way.
+Files: src/cpu/* (every file in that directory: a64.h bbcpu.h cpu.c cpu_internal.h decode.c hostcall.S interp.c
+  interp_vec.c interp_x87.c jit_arm64.c native.c recomp.c record.c record.h trace.h) and src/recomp/rc.h (the
+  recompiled-library interface, BB_RECOMP_API_VERSION 4). recomp.c is the loader of the recompiled library.
+Not vendored: tests/, tools/, examples/, docs/, build.sh, and anything of bbcpu that is not listed above.
+Local modifications (all marked "uu-local" in the source):
+  - Added "/* SPDX-License-Identifier: GPL-2.0-or-later */" as the first line of every .c, .h and .S file
+    (upstream has none). The line is ours; the files' text is otherwise upstream's.
+  - src/cpu/bbcpu_config.h is new: the marker addresses upstream hard-codes for Bloodborne's address layout
+    (host -> guest call sentinels, the recompiled-code frame base, the thread sentinel) as macros with
+    upstream's values as defaults, so a host can set its own with -D (feasibility gate 2).
+  - cpu.c (SENTINEL), record.c (SENTINEL), recomp.c (FRAME_BASE) and jit_arm64.c (the thread sentinel, two
+    uses) use those macros instead of the constants, and include bbcpu_config.h.

@@ -22,6 +22,8 @@
 
 #[cfg(any(target_os = "linux", target_os = "android", windows))]
 pub mod abi;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub mod apple;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux;
 #[cfg(windows)]
@@ -56,6 +58,147 @@ pub const IMAGE_LIMIT: u64 = 0x8000_0000;
 /// Where `runtime_map_guest_memory` asks for its flexible memory: high, because games claim
 /// virtual ranges from `USER_MIN` up without reserving them.
 pub const GUEST_SCRATCH: u64 = 0xf0_0000_0000;
+/// Where the guest's pieces of address space sit and how large they are. [`Layout::DEFAULT`]
+/// is the constants above (Linux, Android, Windows and macOS use it, so nothing there
+/// changes); [`Layout::IOS`] fits an iOS app without the extended-virtual-addressing
+/// entitlement, whose address space the owner's device has yet to confirm (6 GiB is the
+/// peer's measured figure). A [`Space`] reads its layout instead of the constants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Layout {
+    /// The user range `[user_min, user_max)` where guest mappings are placed.
+    pub user_min: u64,
+    pub user_max: u64,
+    /// Host-owned guest-visible memory lives in `[low_min, user_min)`.
+    pub low_min: u64,
+    /// The main executable's window `[image_min, image_limit)`.
+    pub image_min: u64,
+    pub image_limit: u64,
+    /// Where `runtime_map_guest_memory` asks for its flexible memory.
+    pub scratch: u64,
+    /// The direct pool, as `sceKernelGetDirectMemorySize` reports it.
+    pub pool_size: u64,
+    /// Flexible memory's backing span after the pool, and the budget inside it.
+    pub flex_span: u64,
+    pub flexible_size: u64,
+}
+
+impl Layout {
+    /// The constants of this module.
+    pub const DEFAULT: Layout = Layout {
+        user_min: USER_MIN,
+        user_max: USER_MAX,
+        low_min: LOW_MIN,
+        image_min: IMAGE_MIN,
+        image_limit: IMAGE_LIMIT,
+        scratch: GUEST_SCRATCH,
+        pool_size: RETAIL_POOL,
+        flex_span: FLEX_SPAN,
+        flexible_size: FLEXIBLE_SIZE,
+    };
+
+    /// An iOS app with no extended addressing, as offsets from a base: 5888 MiB of address
+    /// space in all (see [`Layout::footprint`]). The pool is 2560 MiB, below the retail 5056
+    /// MiB, because the app's memory limit (3.29 GiB measured by the peer) is far under it;
+    /// the backing is a file (`apple::AppleHost`), so clean pages can leave memory. The image
+    /// window cannot sit below 2 GiB there, so titles that assume that need the owner-device
+    /// check before this profile is relied on.
+    ///
+    /// This is a template at base 0, not addresses to map: on arm64 the dyld shared cache
+    /// (from 0x1_8000_0000), the host executable (0x1_0000_0000 plus a slide) and early heap
+    /// all sit in the range a fixed layout would pick. `apple::AppleHost::claim` reserves a
+    /// block where the kernel says it is free and returns the template rebased onto it
+    /// ([`Layout::rebased`]).
+    pub const IOS: Layout = Layout {
+        low_min: 256 << 20,
+        image_min: 0,
+        image_limit: 256 << 20,
+        user_min: 512 << 20,
+        user_max: (512 << 20) + (2304 << 20),
+        scratch: (512 << 20) + (2304 << 20) - (256 << 20),
+        pool_size: 2560 << 20,
+        flex_span: 512 << 20,
+        flexible_size: 256 << 20,
+    };
+
+    /// The contiguous address range the windows span, `[image_min, user_max)`.
+    pub const fn span(&self) -> u64 {
+        self.user_max - self.image_min
+    }
+
+    /// The layout moved up by `base` (every address field; sizes stay).
+    pub const fn rebased(&self, base: u64) -> Layout {
+        Layout {
+            user_min: self.user_min + base,
+            user_max: self.user_max + base,
+            low_min: self.low_min + base,
+            image_min: self.image_min + base,
+            image_limit: self.image_limit + base,
+            scratch: self.scratch + base,
+            ..*self
+        }
+    }
+
+    /// Bytes of address space the layout asks for: the backing view (pool and flexible
+    /// span), the user range, the host-owned window below it and the image window.
+    pub const fn footprint(&self) -> u64 {
+        self.pool_size
+            + self.flex_span
+            + (self.user_max - self.user_min)
+            + (self.user_min - self.low_min)
+            + (self.image_limit - self.image_min)
+    }
+
+    /// Whether the windows are ordered, page aligned and disjoint, and the scratch address
+    /// and flexible budget lie inside their ranges.
+    pub fn is_valid(&self) -> bool {
+        let aligned = [
+            self.user_min,
+            self.user_max,
+            self.low_min,
+            self.image_min,
+            self.image_limit,
+            self.scratch,
+            self.pool_size,
+            self.flex_span,
+            self.flexible_size,
+        ]
+        .iter()
+        .all(|v| v % PAGE == 0);
+        aligned
+            && self.image_min < self.image_limit
+            && self.image_limit <= self.low_min
+            && self.low_min < self.user_min
+            && self.user_min < self.user_max
+            && (self.user_min..self.user_max).contains(&self.scratch)
+            && self.pool_size >= PAGE
+            && self.flex_span >= PAGE
+            && self.flexible_size <= self.flex_span
+    }
+
+    /// The layout for an address-space budget in bytes: the default when it fits, else the
+    /// iOS profile when that fits, else `None`.
+    pub fn for_budget(budget: u64) -> Option<Layout> {
+        [Layout::DEFAULT, Layout::IOS]
+            .into_iter()
+            .find(|layout| layout.is_valid() && layout.footprint() <= budget)
+    }
+
+    /// The profile this build starts with: iOS on iOS, the default elsewhere.
+    ///
+    /// On iOS this is a base-0 template, whose addresses fall inside `__PAGEZERO`. It must
+    /// go through `AppleHost::claim` (or `Layout::rebased`) before it is used.
+    pub const fn host_default() -> Layout {
+        if cfg!(target_os = "ios") {
+            Layout::IOS
+        } else {
+            Layout::DEFAULT
+        }
+    }
+}
+
+/// The address-space budget of an iOS app without extended virtual addressing.
+pub const IOS_BUDGET: u64 = 6 << 30;
+
 /// Direct-memory blocks the table holds at once.
 pub const BLOCK_LIMIT: usize = 4096;
 
@@ -385,6 +528,7 @@ enum Hook {
 /// Every method is the C's "locked" form: [`Memory`] holds the lock around it.
 pub struct Space<H> {
     host: H,
+    layout: Layout,
     pool_size: u64,
     pooled: bool,
     trace: bool,
@@ -400,14 +544,27 @@ pub struct Space<H> {
 impl<H: Host> Space<H> {
     /// An empty address space with a direct pool of `pool_size` bytes.
     pub fn new(pool_size: u64, host: H) -> Self {
+        Self::with_layout(
+            Layout {
+                pool_size,
+                ..Layout::DEFAULT
+            },
+            host,
+        )
+    }
+
+    /// An empty address space laid out as `layout` (its `pool_size` is the direct pool).
+    pub fn with_layout(layout: Layout, host: H) -> Self {
+        debug_assert!(layout.is_valid(), "invalid memory layout");
         Self {
             host,
-            pool_size,
+            layout,
+            pool_size: layout.pool_size,
             pooled: false,
             trace: false,
             blocks: Vec::new(),
             vmas: Vec::new(),
-            flex: vec![0; (FLEX_SPAN / PAGE / 64) as usize],
+            flex: vec![0; (layout.flex_span / PAGE).div_ceil(64) as usize],
             hooks: [None; 3],
             pending: VecDeque::new(),
             stats: Stats::default(),
@@ -429,6 +586,27 @@ impl<H: Host> Space<H> {
         self.pool_size
     }
 
+    /// True until the pool is mapped (first map or flexible allocation) and before any
+    /// direct block: [`Self::set_pool_size`] can still change it.
+    pub fn pool_resizable(&self) -> bool {
+        !self.pooled && self.blocks.is_empty()
+    }
+
+    /// A new direct pool size while [`Self::pool_resizable`]; false (unchanged) after.
+    /// [`Self::layout`] follows it, so `layout().pool_size` stays the pool's size.
+    pub fn set_pool_size(&mut self, pool_size: u64) -> bool {
+        if !self.pool_resizable() {
+            return false;
+        }
+        self.pool_size = pool_size;
+        self.layout.pool_size = pool_size;
+        true
+    }
+
+    pub fn layout(&self) -> &Layout {
+        &self.layout
+    }
+
     pub fn host(&self) -> &H {
         &self.host
     }
@@ -447,7 +625,7 @@ impl<H: Host> Space<H> {
 
     fn ensure_pool(&mut self) -> bool {
         if !self.pooled {
-            self.pooled = self.host.pool(self.pool_size + FLEX_SPAN);
+            self.pooled = self.host.pool(self.pool_size + self.layout.flex_span);
         }
         self.pooled
     }
@@ -512,12 +690,12 @@ impl<H: Host> Space<H> {
 
     /// First fit in the PS4 user range, starting from the hint; 0 when nothing fits.
     fn find_free(&self, hint: u64, size: u64, alignment: u64) -> u64 {
-        let Some(mut at) = checked_align_up(hint.max(USER_MIN), alignment) else {
+        let Some(mut at) = checked_align_up(hint.max(self.layout.user_min), alignment) else {
             return 0;
         };
         let mut i = self.vma_index(at);
         while let Some(end) = at.checked_add(size) {
-            if end > USER_MAX {
+            if end > self.layout.user_max {
                 break;
             }
             match self.vmas.get(i) {
@@ -550,7 +728,7 @@ impl<H: Host> Space<H> {
     fn flex_alloc(&mut self, size: u64) -> Option<u64> {
         let pages = size / PAGE;
         let mut run = 0;
-        for page in 0..FLEX_SPAN / PAGE {
+        for page in 0..self.layout.flex_span / PAGE {
             run = if self.flex_test(page) { 0 } else { run + 1 };
             if run == pages {
                 let first = page + 1 - pages;
@@ -864,7 +1042,9 @@ impl<H: Host> Space<H> {
         if size == 0 || !size.is_multiple_of(PAGE) || prot & !PROT_MASK != 0 {
             return Err(INVALID);
         }
-        if self.stats.flexible_bytes.wrapping_add(size) > FLEXIBLE_SIZE || !self.ensure_pool() {
+        if self.stats.flexible_bytes.wrapping_add(size) > self.layout.flexible_size
+            || !self.ensure_pool()
+        {
             return Err(NO_MEMORY);
         }
         let phys = self.flex_alloc(size).ok_or(NO_MEMORY)?;
@@ -1554,6 +1734,22 @@ mod tests {
             refusal_line(raised, 0, retail, PAGE),
             format!("Runtime: direct allocation of 16384 bytes in [0, {raised:#x}) refused: no space (pool {raised} bytes)")
         );
+    }
+
+    #[test]
+    fn the_pool_size_changes_only_until_the_pool_is_mapped() {
+        // Windows builds the address space before the automatic render size raises the
+        // pool (#595); the raise must still apply then, and never after the first allocation.
+        let mut s = space();
+        assert!(s.pool_resizable());
+        assert!(s.set_pool_size(6000 * MIB));
+        assert_eq!(s.pool_size(), 6000 * MIB);
+        assert_eq!(s.layout().pool_size, 6000 * MIB);
+        allocate(&mut s, 0, RETAIL_POOL as i64, PAGE, 0, 0).unwrap();
+        assert!(!s.pool_resizable());
+        assert!(!s.set_pool_size(8000 * MIB));
+        assert_eq!(s.pool_size(), 6000 * MIB);
+        assert_eq!(s.layout().pool_size, 6000 * MIB);
     }
 
     #[test]

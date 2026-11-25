@@ -1,0 +1,9 @@
+{
+  "format": 1,
+  "bundle_prefix": "io.github.iannitram.uncharted-universal",
+  "games": {
+    "u1": { "number": 1, "name": "Uncharted 1", "app": "UnchartedU1", "bundle_suffix": "u1", "relay_manifest": "uncharted-1.json" },
+    "u2": { "number": 2, "name": "Uncharted 2", "app": "UnchartedU2", "bundle_suffix": "u2", "relay_manifest": "uncharted-2.json" },
+    "u3": { "number": 3, "name": "Uncharted 3", "app": "UnchartedU3", "bundle_suffix": "u3", "relay_manifest": "uncharted-3.json" }
+  }
+}

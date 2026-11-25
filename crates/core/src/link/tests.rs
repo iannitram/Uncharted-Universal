@@ -1475,3 +1475,115 @@ pub(crate) mod link_modules {
         assert_eq!(encode_id(0xffff), "P--");
     }
 }
+
+#[test]
+fn recomp_inputs_name_the_import_slots_and_the_code_pointers() {
+    let named_import = identity("NIDIMPORT01", named("libc", 1), named("libc", 1));
+    let mut module = empty_module();
+    module.symbols = vec![
+        symbol("", 3, 0, 0, 0, 0, None),
+        symbol("NIDIMPORT01#q#q", 2, 1, 0, 0, 0, Some(named_import)),
+        symbol("module_start", 2, 1, 1, 0x40, 8, None),
+    ];
+    module.relocations = vec![
+        Relocation {
+            target: 0x3000,
+            kind: R_X86_64_JUMP_SLOT,
+            symbol: 1,
+            addend: 0,
+        },
+        Relocation {
+            target: 0x3008,
+            kind: R_X86_64_GLOB_DAT,
+            symbol: 1,
+            addend: 0,
+        },
+        // A named symbol without an identity, and an index past the table, are not imports.
+        Relocation {
+            target: 0x3010,
+            kind: R_X86_64_JUMP_SLOT,
+            symbol: 2,
+            addend: 0,
+        },
+        Relocation {
+            target: 0x3018,
+            kind: R_X86_64_JUMP_SLOT,
+            symbol: 99,
+            addend: 0,
+        },
+        Relocation {
+            target: 0x4000,
+            kind: R_X86_64_RELATIVE,
+            symbol: 0,
+            addend: 0x1200,
+        },
+        Relocation {
+            target: 0x4008,
+            kind: R_X86_64_RELATIVE,
+            symbol: 0,
+            addend: 0x1100,
+        },
+        Relocation {
+            target: 0x4010,
+            kind: R_X86_64_RELATIVE,
+            symbol: 0,
+            addend: 0x1200,
+        },
+        Relocation {
+            target: 0x4018,
+            kind: R_X86_64_RELATIVE,
+            symbol: 0,
+            addend: -8,
+        },
+        Relocation {
+            target: 0x4020,
+            kind: R_X86_64_64,
+            symbol: 1,
+            addend: 4,
+        },
+    ];
+    let inputs = recomp_inputs_of(&module);
+    assert!(inputs.has_dynamic);
+    assert_eq!(
+        inputs.import_slots,
+        vec![
+            ImportSlot {
+                slot: 0x3000,
+                nid: "NIDIMPORT01".into()
+            },
+            ImportSlot {
+                slot: 0x3008,
+                nid: "NIDIMPORT01".into()
+            },
+        ]
+    );
+    assert_eq!(inputs.code_pointers, vec![0x1100, 0x1200]);
+}
+
+#[test]
+fn recomp_inputs_of_a_plain_elf_are_empty() {
+    // A minimal ELF64 with one PT_LOAD and no dynamic segment.
+    let mut elf = vec![0u8; 256];
+    elf[..4].copy_from_slice(b"\x7fELF");
+    elf[4] = 2;
+    elf[5] = 1;
+    elf[6] = 1;
+    elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+    elf[18..20].copy_from_slice(&62u16.to_le_bytes());
+    elf[24..32].copy_from_slice(&0x78u64.to_le_bytes());
+    elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+    elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+    elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+    elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+    let ph = 64;
+    let size = elf.len() as u64;
+    elf[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes());
+    elf[ph + 4..ph + 8].copy_from_slice(&5u32.to_le_bytes());
+    elf[ph + 32..ph + 40].copy_from_slice(&size.to_le_bytes());
+    elf[ph + 40..ph + 48].copy_from_slice(&0x1000u64.to_le_bytes());
+    elf[ph + 48..ph + 56].copy_from_slice(&0x1000u64.to_le_bytes());
+    elf[0x78] = 0xc3;
+    let inputs = recomp_inputs(&elf).unwrap();
+    assert_eq!(inputs, RecompInputs::default());
+    assert!(!inputs.has_dynamic);
+}
