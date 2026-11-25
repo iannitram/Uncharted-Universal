@@ -44,7 +44,7 @@ target_dir=${CARGO_TARGET_DIR:-$root/target}
 runtime_lib=$target_dir/$rust_target/release/libuncharted_runtime.a
 [ -f "$runtime_lib" ] || fail "no $runtime_lib"
 
-relay=$(python3 -I "$here/fetch_save_relay.py" "$cache" ${fetch_args[@]+"${fetch_args[@]}"})
+relay=$(python3 -I "$root/packaging/ios/fetch_save_relay.py" "$cache" ${fetch_args[@]+"${fetch_args[@]}"})
 relay_lib=$relay/lib/libsave_relay.a
 [ -f "$relay_lib" ] || fail "no $relay_lib"
 

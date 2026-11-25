@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Fetch the pinned Save Relay iOS library (apple/ios/components.lock.json) and print its folder.
 
-  apple/fetch_save_relay.py <cache dir>         the release zip, checked against the lock's SHA256
-  apple/fetch_save_relay.py <cache dir> --sim   a Simulator build of the pinned tag (local and CI tests)
+  packaging/ios/fetch_save_relay.py <cache dir>         the release zip, checked against the lock's SHA256
+  packaging/ios/fetch_save_relay.py <cache dir> --sim   a Simulator build of the pinned tag (local and CI tests)
 
 The folder printed on stdout (the only thing written there) has lib/libsave_relay.a, include/save_relay.h
 and bindings/ios/{SaveRelay.swift,module.modulemap}, the layout of the release zip. The library is
@@ -19,8 +19,8 @@ import zipfile
 from pathlib import Path
 from urllib.request import urlopen
 
-HERE = Path(__file__).resolve().parent
-LOCK = HERE / "ios" / "components.lock.json"
+ROOT = Path(__file__).resolve().parents[2]
+LOCK = ROOT / "apple" / "ios" / "components.lock.json"
 
 
 def log(message):

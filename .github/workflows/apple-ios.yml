@@ -8,6 +8,8 @@ on:
   pull_request:
     paths:
       - "apple/**"
+      - "packaging/ios/**"
+      - "tests/apple/**"
       - "crates/runtime/include/**"
       - "packaging/save-relay/**"
       - "packaging/rust_licences.py"
@@ -16,6 +18,8 @@ on:
     branches: [main]
     paths:
       - "apple/**"
+      - "packaging/ios/**"
+      - "tests/apple/**"
       - "crates/runtime/include/**"
       - "packaging/save-relay/**"
       - "packaging/rust_licences.py"

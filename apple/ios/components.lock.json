@@ -10,6 +10,6 @@
     "source": "https://github.com/iannitram/save-relay",
     "license": "MIT",
     "license_source": "https://github.com/iannitram/save-relay/blob/961513cb9ef56253970ee67b5b6febe2c2f0349d/LICENSE",
-    "simulator_slice": "The release has no Simulator slice. The Simulator test build compiles the tag at source_commit: cargo build --release --lib --no-default-features --features ffi --target aarch64-apple-ios-sim (apple/fetch_save_relay.py --sim). Device builds always use the release asset."
+    "simulator_slice": "The release has no Simulator slice. The Simulator test build compiles the tag at source_commit: cargo build --release --lib --no-default-features --features ffi --target aarch64-apple-ios-sim (packaging/ios/fetch_save_relay.py --sim). Device builds always use the release asset."
   }
 }

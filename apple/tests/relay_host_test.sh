@@ -22,7 +22,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-relay=$(python3 -I "$here/fetch_save_relay.py" "${CACHE:-$scratch/cache}" --sim)
+relay=$(python3 -I "$root/packaging/ios/fetch_save_relay.py" "${CACHE:-$scratch/cache}" --sim)
 sdk_path=$(xcrun --sdk iphonesimulator --show-sdk-path)
 # The Keychain also needs an application identifier. On a device SideStore's signature supplies it; the
 # Simulator reads it from an entitlements section in the executable, as Xcode does. Test app only.
@@ -58,7 +58,7 @@ cat > "$scratch/RelayHostTest.app/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
-python3 -I "$here/tests/fake_server.py" "$scratch/port" &
+python3 -I "$root/tests/apple/fake_server.py" "$scratch/port" &
 server_pid=$!
 for _ in $(seq 1 50); do [ -s "$scratch/port" ] && break; sleep 0.1; done
 [ -s "$scratch/port" ] || { echo "the fake server did not start" >&2; exit 1; }
