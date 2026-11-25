@@ -7,10 +7,12 @@ use crate::display::{DisplayAdaptation, DisplayError, DisplayMetrics, DisplaySta
 use crate::driver::{
     open_validated_driver, DriverLoaderProbe, DriverMode, DriverValidationError, TurnipDriverConfig,
 };
+use crate::game::{local_game_files_complete, DownloadPhase, FirstBootDecision, FirstBootState};
 pub use crate::game::{AndroidGame, FIRST_BOOT_DOWNLOAD_PROMPT};
-use crate::game::{FirstBootDecision, FirstBootState};
 use crate::gamepad::{AndroidAxisEvent, AndroidGamepadAdapter, AndroidKeyEvent};
+use crate::save_relay::GameFilesBackend;
 use std::fmt;
+use std::path::Path;
 
 pub const DEFAULT_PACKAGE_NAME: &str = AndroidGame::U1.application_id();
 pub const MIN_SUPPORTED_ANDROID_API: u32 = 33;
@@ -84,6 +86,12 @@ impl AndroidLaunchConfig {
             app_storage_dir,
             custom_driver_so,
         )
+    }
+
+    /// Updates `game_files_present` by inspecting `u1data`/`u2data`/`u3data` + manifest under `app_storage_dir`.
+    pub fn check_local_game_files(mut self, app_storage_dir: &Path) -> Self {
+        self.game_files_present = local_game_files_complete(app_storage_dir, self.game);
+        self
     }
 }
 
@@ -217,6 +225,39 @@ impl<H> AndroidApkSession<H> {
         let mapped = self.gamepad.handle_axis_event(event)?;
         Some(self.first_boot.handle_input(mapped.input))
     }
+
+    /// Runs or resumes the Stage 7.04 per-game Dropbox download via `save-relay#305`, transitioning
+    /// `first_boot.decision` to [`FirstBootDecision::AlreadyInstalled`] once complete.
+    pub fn start_or_resume_download<B: GameFilesBackend + ?Sized>(
+        &mut self,
+        backend: &mut B,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> &DownloadPhase {
+        self.first_boot
+            .download
+            .run_resumable_download(backend, dest_dir, manifest_json);
+        if self.first_boot.download.phase == DownloadPhase::Completed {
+            self.first_boot.decision = FirstBootDecision::AlreadyInstalled { game: self.game };
+        }
+        &self.first_boot.download.phase
+    }
+
+    /// Retries a paused, offline, or re-authenticated Stage 7.04 download from `.part` state.
+    pub fn retry_download<B: GameFilesBackend + ?Sized>(
+        &mut self,
+        backend: &mut B,
+        dest_dir: &str,
+        manifest_json: &str,
+    ) -> &DownloadPhase {
+        self.first_boot
+            .download
+            .retry_or_resume(backend, dest_dir, manifest_json);
+        if self.first_boot.download.phase == DownloadPhase::Completed {
+            self.first_boot.decision = FirstBootDecision::AlreadyInstalled { game: self.game };
+        }
+        &self.first_boot.download.phase
+    }
 }
 
 /// Validates manifest/API constraints and opens + verifies the selected Vulkan driver fail-closed
@@ -266,16 +307,270 @@ pub fn bootstrap_session<P: DriverLoaderProbe>(
     })
 }
 
-/// NativeActivity entrypoint symbol for the Android `aarch64-linux-android` APK library.
-///
-/// Stage 7.03 scaffold: Stages 7.04–7.06 wire `android-activity` (`AndroidApp`) and
-/// `slint::android::init` + `uncharted_runtime` launch here.
+/// Opaque FFI handle wrapping [`AndroidApkSession`] for `android/apk/native/android_bridge.cpp`.
+pub struct AndroidApkFfiSession {
+    inner: AndroidApkSession<()>,
+}
+
+struct FfiBootstrapProbe {
+    driver_name: String,
+}
+
+impl DriverLoaderProbe for FfiBootstrapProbe {
+    type Handle = ();
+
+    fn open_system(&mut self, _so_name: &str) -> Result<Self::Handle, String> {
+        Ok(())
+    }
+
+    fn open_custom(
+        &mut self,
+        _native_library_dir: &str,
+        _parts: &crate::driver::DriverPathParts,
+    ) -> Result<Self::Handle, String> {
+        Ok(())
+    }
+
+    fn query_driver_name(&mut self, _handle: &Self::Handle) -> Result<String, String> {
+        Ok(self.driver_name.clone())
+    }
+
+    fn close_handle(&mut self, _handle: Self::Handle) {}
+}
+
+unsafe fn cstr_to_str<'a>(ptr: *const core::ffi::c_char) -> Option<&'a str> {
+    if ptr.is_null() {
+        return None;
+    }
+    core::ffi::CStr::from_ptr(ptr).to_str().ok()
+}
+
+/// Returns the compile-time selected game key (`"u1"`, `"u2"`, `"u3"`, or `""`).
+#[no_mangle]
+pub extern "C" fn uncharted_apk_compiled_game_key() -> *const core::ffi::c_char {
+    match AndroidGame::compiled_default() {
+        Some(AndroidGame::U1) => c"u1".as_ptr(),
+        Some(AndroidGame::U2) => c"u2".as_ptr(),
+        Some(AndroidGame::U3) => c"u3".as_ptr(),
+        None => c"".as_ptr(),
+    }
+}
+
+/// Returns the exact Stage 7.04 first-boot download prompt string.
+#[no_mangle]
+pub extern "C" fn uncharted_apk_first_boot_prompt_text() -> *const core::ffi::c_char {
+    c"Would you like to download the rest of the game files?".as_ptr()
+}
+
+/// Creates and validates an Android thin-APK session from `NativeActivity` / JNI metadata.
 ///
 /// # Safety
-/// Called by Android's `NativeActivity` loader with a valid `ANativeActivity*` / `android_app*`.
-#[cfg(target_os = "android")]
+/// All non-null string pointers must be valid NUL-terminated UTF-8 C strings.
 #[no_mangle]
-pub unsafe extern "C" fn android_main(_app: *mut core::ffi::c_void) {}
+pub unsafe extern "C" fn uncharted_apk_session_create(
+    game_id: *const core::ffi::c_char,
+    package_name: *const core::ffi::c_char,
+    _native_lib_dir: *const core::ffi::c_char,
+    _app_storage_dir: *const core::ffi::c_char,
+    gpu_vendor_id: u32,
+    gpu_driver_name: *const core::ffi::c_char,
+    display_width: u32,
+    display_height: u32,
+    game_files_present: bool,
+) -> *mut AndroidApkFfiSession {
+    let game = cstr_to_str(game_id)
+        .and_then(AndroidGame::from_key)
+        .or_else(AndroidGame::compiled_default);
+    let Some(game) = game else {
+        return core::ptr::null_mut();
+    };
+
+    let pkg = cstr_to_str(package_name)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| game.application_id());
+
+    let driver_name = cstr_to_str(gpu_driver_name)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("system-vulkan");
+
+    let mut cfg = AndroidLaunchConfig::for_game_with_system_mali(game);
+    cfg.driver = if gpu_vendor_id == crate::driver::VENDOR_ID_QUALCOMM {
+        TurnipDriverConfig::system_adreno()
+    } else {
+        TurnipDriverConfig::system_mali()
+    };
+    cfg.driver.expected_driver_name = driver_name.to_owned();
+    cfg.package_name = pkg.to_owned();
+    cfg.bundled_game_assets = false;
+    cfg.game_files_present = game_files_present;
+    if display_width > 0 && display_height > 0 {
+        cfg.display = DisplayMetrics::new(display_width, display_height);
+    }
+
+    let mut probe = FfiBootstrapProbe {
+        driver_name: driver_name.to_owned(),
+    };
+    match bootstrap_session(&cfg, &mut probe) {
+        Ok(session) => Box::into_raw(Box::new(AndroidApkFfiSession { inner: session })),
+        Err(_) => core::ptr::null_mut(),
+    }
+}
+
+/// Destroys a session created by [`uncharted_apk_session_create`].
+///
+/// # Safety
+/// `session` must be null or a live pointer returned by [`uncharted_apk_session_create`].
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_destroy(session: *mut AndroidApkFfiSession) {
+    if !session.is_null() {
+        drop(Box::from_raw(session));
+    }
+}
+
+/// Registers a connected Android input device and hides the touch overlay.
+///
+/// # Safety
+/// `session` must be a live pointer; `name` must be null or a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_connect_gamepad(
+    session: *mut AndroidApkFfiSession,
+    device_id: i32,
+    vendor_id: i32,
+    name: *const core::ffi::c_char,
+) {
+    let Some(session) = session.as_mut() else {
+        return;
+    };
+    let vendor = u16::try_from(vendor_id).ok();
+    let dev_name = cstr_to_str(name).unwrap_or("Android Gamepad");
+    session.inner.connect_gamepad(device_id, vendor, dev_name);
+}
+
+/// Unregisters a disconnected Android input device.
+///
+/// # Safety
+/// `session` must be null or a live pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_disconnect_gamepad(
+    session: *mut AndroidApkFfiSession,
+    device_id: i32,
+) {
+    if let Some(session) = session.as_mut() {
+        session.inner.disconnect_gamepad(device_id);
+    }
+}
+
+/// Routes an Android `AKeyEvent` through [`AndroidGamepadAdapter`] and [`FirstBootState`].
+/// Returns the Slint `Input::from_code` integer (`0..=10`), or `-1` if unmapped/ignored.
+///
+/// `action`: `0` = `AKEY_EVENT_ACTION_DOWN`, non-zero = up/multiple.
+///
+/// # Safety
+/// `session` must be null or a live pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_on_key_event(
+    session: *mut AndroidApkFfiSession,
+    device_id: i32,
+    key_code: i32,
+    action: i32,
+    shift_held: bool,
+    is_repeat: bool,
+) -> i32 {
+    let Some(session) = session.as_mut() else {
+        return -1;
+    };
+    let key_action = if action == 0 {
+        crate::gamepad::KeyAction::Down
+    } else {
+        crate::gamepad::KeyAction::Up
+    };
+    let event = AndroidKeyEvent {
+        device_id,
+        key_code,
+        action: key_action,
+        shift_held,
+        is_repeat,
+    };
+    match session.inner.gamepad.handle_key_event(event) {
+        Some(mapped) => {
+            session.inner.first_boot.handle_input(mapped.input);
+            mapped.slint_code
+        }
+        None => -1,
+    }
+}
+
+/// Routes an Android `AMotionEvent` axis value through [`AndroidGamepadAdapter`] and [`FirstBootState`].
+/// Returns the Slint `Input::from_code` integer (`0..=10`), or `-1` if below threshold/held.
+///
+/// # Safety
+/// `session` must be null or a live pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_on_axis_event(
+    session: *mut AndroidApkFfiSession,
+    device_id: i32,
+    axis: i32,
+    value: f32,
+) -> i32 {
+    let Some(session) = session.as_mut() else {
+        return -1;
+    };
+    let event = AndroidAxisEvent {
+        device_id,
+        axis,
+        value,
+    };
+    match session.inner.gamepad.handle_axis_event(event) {
+        Some(mapped) => {
+            session.inner.first_boot.handle_input(mapped.input);
+            mapped.slint_code
+        }
+        None => -1,
+    }
+}
+
+/// Updates live display dimensions on fold/unfold or rotation (`APP_CMD_INIT_WINDOW`/`WINDOW_RESIZED`).
+/// Returns `0` on success, `-1` on invalid dimensions or null session.
+///
+/// # Safety
+/// `session` must be null or a live pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_on_display_change(
+    session: *mut AndroidApkFfiSession,
+    width: u32,
+    height: u32,
+    timestamp_ms: u64,
+) -> i32 {
+    let Some(session) = session.as_mut() else {
+        return -1;
+    };
+    match session.inner.on_display_change(width, height, timestamp_ms) {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Returns the current [`FirstBootDecision`] code (`0=PromptDownload`, `1=ReadyForStage704Download`,
+/// `2=DeclinedWait`, `3=AlreadyInstalled`), or `-1` if `session` is null.
+///
+/// # Safety
+/// `session` must be null or a live pointer.
+#[no_mangle]
+pub unsafe extern "C" fn uncharted_apk_session_first_boot_decision(
+    session: *const AndroidApkFfiSession,
+) -> i32 {
+    let Some(session) = session.as_ref() else {
+        return -1;
+    };
+    match session.inner.first_boot.decision {
+        FirstBootDecision::PromptDownload => 0,
+        FirstBootDecision::ReadyForStage704Download { .. } => 1,
+        FirstBootDecision::DeclinedWait => 2,
+        FirstBootDecision::AlreadyInstalled { .. } => 3,
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -629,5 +924,51 @@ mod tests {
         // Disconnecting the gamepad restores touch overlay.
         session.disconnect_gamepad(11);
         assert!(session.display.current().touch_overlay.visible);
+    }
+
+    #[test]
+    fn ffi_session_roundtrips_gamepad_display_and_stage704_prompt() {
+        unsafe {
+            let prompt = core::ffi::CStr::from_ptr(uncharted_apk_first_boot_prompt_text())
+                .to_str()
+                .unwrap();
+            assert_eq!(prompt, FIRST_BOOT_DOWNLOAD_PROMPT);
+
+            let session = uncharted_apk_session_create(
+                c"u3".as_ptr(),
+                c"org.uncharted.universal.u3".as_ptr(),
+                c"/data/app/org.uncharted.universal.u3/lib/arm64".as_ptr(),
+                c"/data/user/0/org.uncharted.universal.u3/files".as_ptr(),
+                0x13B5,
+                c"Mali-G710".as_ptr(),
+                2208,
+                1840,
+                false,
+            );
+            assert!(!session.is_null());
+            assert_eq!(uncharted_apk_session_first_boot_decision(session), 0);
+
+            uncharted_apk_session_connect_gamepad(session, 4, 0x054c, c"DualSense".as_ptr());
+            assert_eq!(
+                uncharted_apk_session_on_axis_event(session, 4, axis::X, 0.9),
+                3 // Nav::Right -> Slint code 3
+            );
+            assert_eq!(
+                uncharted_apk_session_on_key_event(session, 4, keycode::DPAD_LEFT, 0, false, false),
+                2 // Nav::Left -> Slint code 2
+            );
+            assert_eq!(
+                uncharted_apk_session_on_key_event(session, 4, keycode::BUTTON_A, 0, false, false),
+                6 // Activate -> Slint code 6
+            );
+            assert_eq!(uncharted_apk_session_first_boot_decision(session), 1);
+
+            assert_eq!(
+                uncharted_apk_session_on_display_change(session, 1080, 2092, 1000),
+                0
+            );
+            uncharted_apk_session_disconnect_gamepad(session, 4);
+            uncharted_apk_session_destroy(session);
+        }
     }
 }
