@@ -2,6 +2,7 @@
 #include "android/driver_loader.h"
 
 #include <cassert>
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -205,6 +206,62 @@ int main() {
     assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == -3);
     assert(handle == nullptr);
     assert(g_state.close_calls == 1);
+
+    // 9. Every required Tensor/Mali capability is individually enforced fail-closed.
+    const BbAndroidVulkanCaps base_mali = {
+        BB_ANDROID_VENDOR_ARM,
+        BB_ANDROID_VK_API_VERSION_1_3,
+        1,
+        1,
+        1,
+        1,
+        1,
+        "Mali-G710",
+    };
+    assert(bb_android_validate_mali_caps(nullptr, err, sizeof(err)) == -1);
+    assert(bb_android_validate_mali_caps(&base_mali, err, sizeof(err)) == 0);
+
+    {
+        BbAndroidVulkanCaps c = base_mali;
+        c.has_synchronization2 = 0;
+        assert(bb_android_validate_mali_caps(&c, err, sizeof(err)) == -3);
+    }
+    {
+        BbAndroidVulkanCaps c = base_mali;
+        c.has_timeline_semaphore = 0;
+        assert(bb_android_validate_mali_caps(&c, err, sizeof(err)) == -3);
+    }
+    {
+        BbAndroidVulkanCaps c = base_mali;
+        c.has_buffer_device_address = 0;
+        assert(bb_android_validate_mali_caps(&c, err, sizeof(err)) == -3);
+    }
+    {
+        BbAndroidVulkanCaps c = base_mali;
+        c.has_swapchain_ext = 0;
+        assert(bb_android_validate_mali_caps(&c, err, sizeof(err)) == -3);
+    }
+    {
+        BbAndroidVulkanCaps c = base_mali;
+        c.vendor_id = BB_ANDROID_VENDOR_QUALCOMM;
+        std::snprintf(c.driver_name, sizeof(c.driver_name), "%s", "Adreno 750");
+        assert(bb_android_validate_mali_caps(&c, err, sizeof(err)) == -3);
+    }
+
+    // 10. system_mali selection fails closed if an Adreno driver is reported.
+    g_state = MockState{};
+    g_state.reported_driver = "Qualcomm Adreno 750";
+    assert(bb_android_open_vulkan_driver(&selected, &kCapsProbe, &handle, err, sizeof(err)) == -3);
+    assert(handle == nullptr);
+    assert(g_state.close_calls == 1);
+
+    // 11. Immortalis / Turnip / Freedreno classification and null handle probe guard.
+    assert(bb_android_classify_gpu(0, "Immortalis-G715") == BB_ANDROID_GPU_MALI);
+    assert(bb_android_classify_gpu(0, "Turnip Adreno 740") == BB_ANDROID_GPU_ADRENO);
+    assert(bb_android_classify_gpu(0, "freedreno") == BB_ANDROID_GPU_ADRENO);
+    BbAndroidVulkanCaps dummy_caps = {};
+    assert(bb_android_probe_vulkan_caps_from_handle(nullptr, &dummy_caps, err, sizeof(err)) == -1);
+    assert(bb_android_probe_vulkan_caps_from_handle(&g_state, nullptr, err, sizeof(err)) == -1);
 
     return 0;
 }

@@ -81,6 +81,14 @@ int bb_android_select_driver_for_gpu(uint32_t vendor_id,
                                      char* err_buf,
                                      size_t err_cap);
 
+/// Probes Vulkan driver identity, vendor ID, API version, and Tensor/Mali required features
+/// directly from an opened `libvulkan.so` / `libadrenotools` dlopen handle via
+/// `vkGetInstanceProcAddr` (#536). Returns 0 on success or < 0 with a diagnostic.
+int bb_android_probe_vulkan_caps_from_handle(void* vulkan_handle,
+                                             BbAndroidVulkanCaps* out_caps,
+                                             char* err_buf,
+                                             size_t err_cap);
+
 /// Opens and validates the explicitly selected Vulkan driver.
 /// Returns 0 on success with *out_handle set; returns < 0 on failure with *out_handle == NULL
 /// and an explanation in err_buf. Never silently falls back from custom/bundled to system.

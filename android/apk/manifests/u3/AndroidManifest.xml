@@ -11,6 +11,13 @@
 
     <!-- Home-network hub pairing, Stage 7.04 resumable Dropbox download, and Stage 7.05 save-relay. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Vulkan 1.1+ required; explicit Turnip or validated system driver is checked at startup. -->
     <uses-feature
@@ -21,6 +28,14 @@
         android:name="android.hardware.gamepad"
         android:required="false" />
 
+    <queries>
+        <package android:name="org.uncharted.universal.u1" />
+        <package android:name="org.uncharted.universal.u2" />
+        <package android:name="org.uncharted.universal.u3" />
+        <package android:name="io.github.acnhrecomp" />
+        <package android:name="com.android.chrome" />
+    </queries>
+
     <!--
         android:extractNativeLibs="true" mirrors Gradle packaging.jniLibs.useLegacyPackaging=true,
         which android/driver_loader.cpp requires so libadrenotools can inject Turnip from
@@ -28,29 +43,72 @@
     -->
     <application
         android:allowBackup="false"
+        android:appCategory="game"
         android:extractNativeLibs="true"
-        android:hasCode="false"
-        android:label="Uncharted 3">
+        android:hasCode="true"
+        android:isGame="true"
+        android:label="Uncharted 3"
+        android:largeHeap="true"
+        android:networkSecurityConfig="@xml/network_security_config">
 
         <meta-data
             android:name="org.uncharted.game_id"
             android:value="u3" />
 
         <activity
-            android:name="android.app.NativeActivity"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboard|keyboardHidden|navigation|uiMode"
+            android:name="org.uncharted.universal.Home"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="sensorLandscape">
-
-            <meta-data
-                android:name="android.app.lib_name"
-                android:value="uncharted_android_apk" />
+            android:resizeableActivity="true"
+            android:theme="@android:style/Theme.Material.NoActionBar">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="signed-in"
+                    android:scheme="uncharted-u3" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name="org.uncharted.universal.GameDownload"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name="org.uncharted.universal.GameDownloadJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <provider
+            android:name="org.uncharted.universal.SharedTokenProvider"
+            android:authorities="org.uncharted.universal.u3.saverelay.token"
+            android:exported="true" />
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|density|navigation"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:screenOrientation="sensorLandscape"
+            android:theme="@style/Game"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing">
+
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="uncharted_android_apk" />
+            <meta-data
+                android:name="android.max_aspect"
+                android:value="3.0" />
         </activity>
     </application>
 </manifest>

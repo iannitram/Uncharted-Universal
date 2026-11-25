@@ -307,6 +307,37 @@ jobs:
           retention-days: 3
           path: dist/uncharted-macos.zip
 
+  android:
+    needs: []
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install Android build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build unzip openjdk-17-jdk-headless
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
+      - name: Setup Android NDK r30 and SDK 35
+        run: bash android/scripts/setup_ndk_sdk.sh --target "$HOME/Android" --accept-licenses
+      - name: Build and verify per-game thin APKs (U1, U2, U3)
+        run: |
+          bash android/scripts/build_apks.sh \
+            --out-dir dist/android \
+            --work "${{ runner.temp }}/android-apks-work"
+      - uses: actions/upload-artifact@v4
+        continue-on-error: ${{ github.ref != 'refs/heads/main' || github.event_name == 'pull_request' || inputs.ref != '' }}
+        with:
+          name: uncharted-android-apks
+          retention-days: 3
+          path: dist/android/uncharted-*-thin.apk
+
   release:
     # main only: the Linux, Windows and macOS packages in one release, with one manifest.json and
     # one SHA256SUMS over all of them (the Linux job's software Vulkan smoke result stands for
