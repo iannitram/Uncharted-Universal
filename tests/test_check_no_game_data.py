@@ -24,6 +24,10 @@ class CheckNoGameDataTests(unittest.TestCase):
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
 
+    def assertExit(self, result, code, note=""):
+        """Compare the exit status; on a mismatch, show the script's own output."""
+        self.assertEqual(result.returncode, code, f"{note} stdout={result.stdout!r} stderr={result.stderr!r}")
+
     def tree(self, files):
         folder = self.root / "tree"
         folder.mkdir()
@@ -35,26 +39,25 @@ class CheckNoGameDataTests(unittest.TestCase):
 
     def test_a_plain_bundle_passes(self):
         folder = self.tree({"Contents/MacOS/app": b"\xcf\xfa\xed\xfe", "Contents/Info.plist": b"<plist/>"})
-        self.assertEqual(check(folder).returncode, 0)
+        self.assertExit(check(folder), 0)
 
     def test_executable_container_magic_fails(self):
         for magic in (bytes.fromhex("4f153d1d"), bytes.fromhex("7f434e54")):
             folder = self.tree({"data.bin": magic + b"\0" * 8})
-            result = check(folder)
-            self.assertEqual(result.returncode, 1, magic)
+            self.assertExit(check(folder), 1, magic)
             shutil.rmtree(folder)
 
     def test_names_that_only_dumps_carry_fail(self):
         for name in ("eboot.bin", "x/module.PRX", "a.sprx", "b.self", "c.elf", "sce_sys/param.sfo", "CUSA12345/x.txt"):
             folder = self.tree({name: b"text"})
-            self.assertEqual(check(folder).returncode, 1, name)
+            self.assertExit(check(folder), 1, name)
             shutil.rmtree(folder)
 
     def test_size_limits_fail(self):
         folder = self.tree({"big.dat": b"\0" * 2048})
-        self.assertEqual(check(folder, MAX_FILE_BYTES="1024").returncode, 1)
-        self.assertEqual(check(folder, MAX_TOTAL_BYTES="1024").returncode, 1)
-        self.assertEqual(check(folder).returncode, 0)
+        self.assertExit(check(folder, MAX_FILE_BYTES="1024"), 1)
+        self.assertExit(check(folder, MAX_TOTAL_BYTES="1024"), 1)
+        self.assertExit(check(folder), 0)
 
     def test_zip_and_ipa_are_unpacked_and_scanned(self):
         import zipfile
@@ -62,11 +65,11 @@ class CheckNoGameDataTests(unittest.TestCase):
             archive = self.root / f"pkg.{suffix}"
             with zipfile.ZipFile(archive, "w") as z:
                 z.writestr(member, b"x")
-            self.assertEqual(check(archive).returncode, 0 if ok else 1, suffix)
+            self.assertExit(check(archive), 0 if ok else 1, suffix)
 
     def test_missing_target_and_no_argument_fail(self):
         self.assertNotEqual(check(self.root / "absent").returncode, 0)
-        self.assertEqual(check().returncode, 2)
+        self.assertExit(check(), 2)
 
 
 if __name__ == "__main__":
