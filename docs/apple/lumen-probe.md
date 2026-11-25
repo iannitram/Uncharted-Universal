@@ -282,3 +282,67 @@ Two separate reviews re-checked this probe against the adapter source at pin `61
 - step 1 shows more than a handful of the first 50 pipelines over the slot limits, or SPIRV-Cross failing broadly;
 - instance rate and the binding limits can't be fixed in the adapter within about a week;
 - the sparse replacement runs past about two weeks.
+
+## Step 1 results: measured shader counts (2026-11-24)
+
+These are aggregates only, from local runs on the Windows 3090 machine, reported by the Uncharted - Windows session. No shader bytes, MSL text or file names left that machine (M9).
+
+| Item | Value |
+| --- | --- |
+| Runs | U1: menus and the opening cutscene. U2: a save loaded into gameplay, then 2 minutes of play. U3: not measured. |
+| Tool | `BB_DUMP_SHADERS` dumps, `spirv-cross` `d8e3e2b1 --msl --msl-version 30000` (macOS platform) |
+| Pipelines (graphics / compute) | U1: 88 (69 / 19). U2: 262 (233 / 29). |
+| Distinct modules | U1: 123. U2: 364. |
+| MSL pass as dumped | U1: 70. U2: 206. |
+| The one failure | `PerVertexKHR` decoration (NVIDIA-shaped profile). Every module passes once it is removed. |
+| Pipelines over 29 buffers / 16 samplers / 8 storage images | 0 / 0 / 0 in both games |
+| Peak bindings per stage (U2, max / p95) | Vertex: 9 / 8 buffers. Fragment: 4 / 2 buffers, 12 / 10 textures, 4 / 3 samplers. Compute: 14 / 11 buffers, 1 / 1 storage image. |
+| Instance-rate vertex input | 0 of 69 and 0 of 233 graphics pipelines |
+| Topology | QuadList: U1 25, U2 29. RectList: 0. Everything else is TriangleList. |
+| Features (modules using each) | Demote: 3 / 15. Quad subgroup: 2 / 2. Other subgroup ops: 4 / 6. `StorageImageReadWithoutFormat` declared but never used. `Int64` in every module, with no 64-bit atomics. `Float64`, `Int64Atomics`, `AtomicFloat32MinMax`, `StencilExport`: 0. |
+
+**No stop rule trips.** No pipeline goes over a slot limit, the converter fails in one way only and that has a known fix, and the instance-rate and slot-limit week is no longer needed.
+
+## Second verification round (four investigators, one adversarial critic)
+
+**Corrections to this note:**
+- **QuadList does not use the software tessellator.** The adapter builds the tessellator and capture path only when the TES writes `CullDistance` (`MetalVulkanCommands.mm:2568`, `:2683-2716`). Our aux TES does not, so QuadList goes through native `drawPatches` (`:3596-3602`). This replaces the RectList/QuadList row above.
+- **The cost moves elsewhere.** A tessellated draw on the adapter ends the render pass once per instance and runs 2–5 compute passes and seven fresh buffer allocations per draw (`:3411-3605`). Indirect draws on a tessellation pipeline are rejected (`:5100-5101`).
+- **Route B has no QuadList support either.** `bloodborne-runtime` skips quad-list draws (`renderer_metal/mtl_pipeline_build.mm:234-235`).
+- **The adapter is not macOS-only.** lumen-emu ships an iOS app that links the same adapter. Its files compile for `arm64-apple-ios15.0`/`16.0` with 0 errors and 0 warnings (compile only; nothing was linked).
+- **The measured `PerVertexKHR` failures come from the NVIDIA profile.** Under the adapter, manual interpolation is off, so only `V_INTERP_MOV` marks inputs PerVertex. With barycentrics reported off, the P10/P20 reads assert instead (`vector_interpolation.cpp:104-106`), so that path needs counting.
+
+**New cost items for A:**
+- **Convert QuadList to an indexed TriangleList in our renderer: 2–5 days.**
+  - Non-indexed draws use a fixed pattern buffer.
+  - Indexed draws expand quads to triangles (port of Huax-1839/bloodborne-macos `mtl_index_expand`, GPL-2.0-or-later).
+  - Indirect draws need a small pre-pass.
+  - It runs on the Windows Vulkan build too, so it can be compared there first.
+- **Metal-shaped shader profile: 3–8 days.**
+  - Barycentrics off.
+  - Set `ios_use_simdgroup_functions`, otherwise subgroup ops turn into quad ops on iOS.
+  - The adapter reports zero 1.3 properties and a default driver ID.
+  - Tail risk: 5–15 days if P10/P20 reads on non-flat attributes are common.
+- **The adapter compiles shaders at MSL 2.3, not 3.0.** The gates for Int64, demote and the other measured features are all at 2.3 or below, but the counts above were taken at 3.0 with the macOS platform.
+- **iOS memory: 12–25 days.** There is no zero-copy guest import, the adapter allocates twice, and there is no memory budget. B needs about 5–10 days, because the peer already runs its renderer on an iPhone with a free Apple ID.
+- **Implied minimum iOS device:** Apple7 (A14) or newer.
+
+**Revised estimate:**
+
+| | Mac | Mac + iOS |
+| --- | --- | --- |
+| A | 37–65 days (42–80 if the P10/P20 tail lands) | 49–90 |
+| B | 42–85 (adds QuadList) | 47–95 |
+
+**Recommendation from the round:** route A, Mac first, still entered through cheap tests.
+- **Biggest risk:** the sparse-arena replacement. It is a prerequisite, it reaches the recompiler's page table, and it must be designed with iOS host-memory import in mind.
+
+**Next steps (replaces step 1 of the revised order):**
+- **1a.** Re-dump with a forced Metal profile (barycentrics off, non-NVIDIA driver). Count P10/P20 reads on non-flat attributes, and rerun SPIRV-Cross at MSL 2.3 for `--msl` and `--msl-ios` (with and without simdgroup functions). About half a day, local, aggregates only.
+- **1b.** A 2–3 day spike on the 3090: an arena of plain buffers with a fixed page shift, running the same U1 menus and U2 save load. The two-week stop rule still applies.
+
+**What could still overturn this:**
+- Later content and U3 could bring per-instance input, indirect or GPU-written QuadList index buffers, 64-bit atomics, or shaders over the slot limits.
+- Each would push A toward the high end of its range. None favours B, which shares the recompiler and also lacks QuadList support.
+
+Nothing in this round ran on a Mac, an iPhone or through the adapter.
