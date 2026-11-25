@@ -17,7 +17,7 @@ reconciling `bloodborne-runtime`'s `renderer_metal` (159 files differ, 100 missi
 | Toolchain | Apple clang 21.0.0, Xcode 27.2 macOS SDK, arm64 (Apple M1 Mac mini) |
 | Our side | `gpu/` at this branch (`b4e7ae77` shadPS4 base plus `bbport:` changes) |
 
-How the needs list was made: `docs/apple/lumen-probe-scan.py` maps every vulkan.hpp method to the
+How the needs list was made: `tools/apple/lumen-probe-scan.py` maps every vulkan.hpp method to the
 `vk*` function it dispatches (parsed from `vulkan_funcs.hpp`), then greps `gpu/shadps4/video_core`
 for those method names. That is an **upper bound** (a method name such as `destroy` also matches
 unrelated handle types), so every row below marked "needed" was then checked by hand in the source.
@@ -98,7 +98,7 @@ linked two programs against it:
 
 1. Our own `tests/test_vulkan_smoke.c`, unmodified: **PASS** ("Vulkan: Apple M1; command submission
    and readback 4096-byte readback PASS").
-2. `docs/apple/lumen-probe-smoke.c` (authored for this probe): instance, device enumeration, report
+2. `tools/apple/lumen-probe-smoke.c` (authored for this probe): instance, device enumeration, report
    of extensions and features, `vkCreateDevice`, `vkCmdFillBuffer` + host readback (**PASS**, 0 bad
    words), `vkCmdClearColorImage` + `vkCmdCopyImageToBuffer` + readback (**PASS**, first pixel
    255 128 0 255 as cleared). It also prints the report that fed the gap table: device
