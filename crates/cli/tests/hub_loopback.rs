@@ -55,8 +55,8 @@ fn command(root: &Path, args: &[&str]) -> Command {
 }
 
 /// The per-user data folder `command` gives the binary under `root`: `XDG_DATA_HOME` on Linux,
-/// `<HOME>/Library/Application Support` on the Mac (`uncharted_core::platform`).
-#[cfg(not(windows))]
+/// `LOCALAPPDATA` on Windows (both `<root>/data`), `<HOME>/Library/Application Support` on the
+/// Mac (`uncharted_core::platform`).
 fn user_data(root: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         root.join("home/Library/Application Support")
