@@ -586,6 +586,23 @@ impl<H: Host> Space<H> {
         self.pool_size
     }
 
+    /// True until the pool is mapped (first map or flexible allocation) and before any
+    /// direct block: [`Self::set_pool_size`] can still change it.
+    pub fn pool_resizable(&self) -> bool {
+        !self.pooled && self.blocks.is_empty()
+    }
+
+    /// A new direct pool size while [`Self::pool_resizable`]; false (unchanged) after.
+    /// [`Self::layout`] follows it, so `layout().pool_size` stays the pool's size.
+    pub fn set_pool_size(&mut self, pool_size: u64) -> bool {
+        if !self.pool_resizable() {
+            return false;
+        }
+        self.pool_size = pool_size;
+        self.layout.pool_size = pool_size;
+        true
+    }
+
     pub fn layout(&self) -> &Layout {
         &self.layout
     }
@@ -1717,6 +1734,22 @@ mod tests {
             refusal_line(raised, 0, retail, PAGE),
             format!("Runtime: direct allocation of 16384 bytes in [0, {raised:#x}) refused: no space (pool {raised} bytes)")
         );
+    }
+
+    #[test]
+    fn the_pool_size_changes_only_until_the_pool_is_mapped() {
+        // Windows builds the address space before the automatic render size raises the
+        // pool (#595); the raise must still apply then, and never after the first allocation.
+        let mut s = space();
+        assert!(s.pool_resizable());
+        assert!(s.set_pool_size(6000 * MIB));
+        assert_eq!(s.pool_size(), 6000 * MIB);
+        assert_eq!(s.layout().pool_size, 6000 * MIB);
+        allocate(&mut s, 0, RETAIL_POOL as i64, PAGE, 0, 0).unwrap();
+        assert!(!s.pool_resizable());
+        assert!(!s.set_pool_size(8000 * MIB));
+        assert_eq!(s.pool_size(), 6000 * MIB);
+        assert_eq!(s.layout().pool_size, 6000 * MIB);
     }
 
     #[test]
