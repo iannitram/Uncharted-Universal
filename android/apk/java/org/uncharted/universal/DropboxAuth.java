@@ -11,6 +11,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.URL;
@@ -61,6 +62,10 @@ final class DropboxAuth {
     static synchronized void setForeground(boolean active) {
         foreground = active;
         if (active) DropboxAuth.class.notifyAll();
+    }
+
+    static synchronized String failure() {
+        return failed;
     }
 
     static synchronized String await(int gen) {
@@ -135,9 +140,12 @@ final class DropboxAuth {
         if (state == null) {
             throw new Exception("save-relay sign-in returned no state");
         }
-        final ServerSocket server = new ServerSocket(PORT, 4, InetAddress.getByName("127.0.0.1"));
+        final ServerSocket server = new ServerSocket();
+        server.setReuseAddress(true);
+        server.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), PORT), 4);
         server.setSoTimeout(15 * 60 * 1000);
         waiting = server;
+        android.util.Log.i("UnchartedAPK", "Dropbox OAuth loopback server listening on 127.0.0.1:" + PORT);
         new Thread(() -> {
             String error;
             try {
@@ -198,6 +206,7 @@ final class DropboxAuth {
                     String why = param(query, "error_description");
                     return why != null ? why : err;
                 }
+                android.util.Log.i("UnchartedAPK", "Dropbox OAuth callback received; returning to app");
                 reply(s.getOutputStream(), 200, back(app, game));
                 try {
                     s.close();
@@ -216,6 +225,7 @@ final class DropboxAuth {
                         } else {
                             prefs(app).edit().clear().apply();
                             Relay.signedIn(app);
+                            android.util.Log.i("UnchartedAPK", "Dropbox OAuth signInFinish succeeded");
                         }
                     } catch (Exception e) {
                         error = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -229,6 +239,9 @@ final class DropboxAuth {
                 }
                 if (error != null && Relay.lastHttpError != null) {
                     error += " [" + Relay.lastHttpError + "]";
+                }
+                if (error != null) {
+                    android.util.Log.e("UnchartedAPK", "Dropbox OAuth signInFinish failed: " + error);
                 }
                 return error;
             } catch (java.net.SocketTimeoutException ignored) {
@@ -263,16 +276,15 @@ final class DropboxAuth {
     }
 
     private static String back(Context app, GameInfo game) {
-        String intentUri = "intent://signed-in#Intent;scheme=" + game.scheme
-                + ";package=" + app.getPackageName() + ";end";
+        String deepLink = game.scheme + "://signed-in";
         return "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
                 + "<body style='font-family:sans-serif;padding:2em;background:#18202c;color:#f5f0e0;text-align:center'>"
                 + "<h2>Returning to " + game.title + "</h2>"
                 + "<p>Go back to the app to finish signing in.</p>"
-                + "<p><a href='" + intentUri + "' style='display:inline-block;padding:16px 28px;border-radius:26px;"
+                + "<p><a href='" + deepLink + "' style='display:inline-block;padding:16px 28px;border-radius:26px;"
                 + "background:#36985c;color:white;font-size:18px;text-decoration:none'>Back to "
                 + game.shortLabel + "</a></p>"
-                + "<script>location.replace('" + intentUri + "')</script>";
+                + "<script>window.location.href='" + deepLink + "';</script>";
     }
 
     private static String page(String title, String text) {

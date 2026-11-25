@@ -28,6 +28,14 @@
         android:name="android.hardware.gamepad"
         android:required="false" />
 
+    <queries>
+        <package android:name="org.uncharted.universal.u1" />
+        <package android:name="org.uncharted.universal.u2" />
+        <package android:name="org.uncharted.universal.u3" />
+        <package android:name="io.github.acnhrecomp" />
+        <package android:name="com.android.chrome" />
+    </queries>
+
     <!--
         android:extractNativeLibs="true" mirrors Gradle packaging.jniLibs.useLegacyPackaging=true,
         which android/driver_loader.cpp requires so libadrenotools can inject Turnip from
@@ -79,6 +87,11 @@
             android:name="org.uncharted.universal.GameDownloadJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <provider
+            android:name="org.uncharted.universal.SharedTokenProvider"
+            android:authorities="org.uncharted.universal.u2.saverelay.token"
+            android:exported="true" />
 
         <activity
             android:name="android.app.NativeActivity"
