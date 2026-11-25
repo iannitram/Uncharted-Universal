@@ -1,0 +1,6 @@
+// The runtime staticlib's C header (crates/runtime/include/uncharted_runtime.h) as a Swift module.
+// apple/build_ios.sh passes -I apple/Runtime and links libuncharted_runtime.a by full path.
+module UnchartedRuntimeC {
+    header "../../crates/runtime/include/uncharted_runtime.h"
+    export *
+}
