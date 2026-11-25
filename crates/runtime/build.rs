@@ -75,6 +75,7 @@ fn nid_table(root: &Path, out: &Path) {
 
 fn loader_cfg() {
     println!("cargo::rustc-check-cfg=cfg(uncharted_loader)");
+    println!("cargo::rustc-check-cfg=cfg(uncharted_gpu)");
     println!("cargo::rerun-if-env-changed=UNCHARTED_RUNTIME_LOADER");
     if env::var("UNCHARTED_RUNTIME_LOADER").as_deref() == Ok("1") {
         println!("cargo::rustc-cfg=uncharted_loader");
@@ -136,6 +137,83 @@ fn gpu(root: &Path) {
     }
     ninja.arg("-C").arg(&dir).arg("bbgpu");
     run(&mut ninja, "GPU library build", Some(&log));
+
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
+        let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
+        build_atrac9(root, &out);
+        println!("cargo::rustc-cfg=uncharted_gpu");
+        println!("cargo::rustc-link-search=native={}", dir.display());
+        println!("cargo::rustc-link-search=native={}", out.display());
+        println!("cargo::rustc-link-lib=dylib=bbgpu");
+        println!("cargo::rustc-link-lib=static=atrac9");
+        println!("cargo::rustc-link-lib=dylib=SDL3");
+        println!("cargo::rustc-link-arg-bin=uncharted-run=-rdynamic");
+        println!("cargo::rustc-link-arg-bin=uncharted-run=-Wl,-rpath,$ORIGIN/gpu");
+        println!("cargo::rustc-link-arg-bin=uncharted-run=-Wl,-rpath,$ORIGIN");
+        println!(
+            "cargo::rustc-link-arg-bin=uncharted-run=-Wl,-rpath,{}",
+            dir.display()
+        );
+        for sym in [
+            "runtime_map_guest_memory",
+            "runtime_memory_set_gpu_hooks",
+            "runtime_memory_write_backing",
+            "runtime_memory_read_backing",
+            "runtime_memory_clamp",
+            "runtime_memory_region",
+            "runtime_memory_gpu_protect",
+            "runtime_memory_is_mapped",
+            "runtime_disabled_optimizations",
+            "runtime_disabled_optimizations2",
+            "runtime_benchmark_active",
+            "runtime_benchmark_frame",
+            "runtime_errno",
+            "runtime_file_translate",
+            "runtime_process_time_counter",
+            "runtime_process_time_us",
+            "runtime_savedata_wait_idle",
+            "runtime_thread_attach_host",
+            "runtime_thread_join_spawned",
+            "runtime_thread_spawn",
+            "runtime_tsc_frequency",
+        ] {
+            println!("cargo::rustc-link-arg-bin=uncharted-run=-Wl,--undefined={sym}");
+        }
+    }
+}
+
+fn build_atrac9(root: &Path, out: &Path) {
+    let src_dir = root.join("third_party/LibAtrac9/C/src");
+    let lib = out.join("libatrac9.a");
+    let obj_dir = out.join("atrac9");
+    fs::create_dir_all(&obj_dir).expect("create atrac9 object dir");
+    let cc = env::var("CC").unwrap_or_else(|_| "cc".to_owned());
+    let ar = env::var("AR").unwrap_or_else(|_| "ar".to_owned());
+    let mut objs = Vec::new();
+    let entries = fs::read_dir(&src_dir).unwrap_or_else(|e| panic!("{}: {e}", src_dir.display()));
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("c") {
+            continue;
+        }
+        println!("cargo::rerun-if-changed={}", path.display());
+        let obj = obj_dir.join(format!(
+            "{}.o",
+            path.file_stem().expect("c stem").to_string_lossy()
+        ));
+        let mut cmd = Command::new(&cc);
+        cmd.args(["-std=c99", "-O2", "-g", "-w", "-c"])
+            .arg(&path)
+            .arg("-o")
+            .arg(&obj);
+        run(&mut cmd, "atrac9 compile", None);
+        objs.push(obj);
+    }
+    objs.sort();
+    let _ = fs::remove_file(&lib);
+    let mut cmd = Command::new(&ar);
+    cmd.arg("rcs").arg(&lib).args(&objs);
+    run(&mut cmd, "atrac9 archive", None);
 }
 
 fn run(command: &mut Command, what: &str, log: Option<&Path>) {
