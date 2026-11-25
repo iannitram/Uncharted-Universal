@@ -27,6 +27,7 @@ peer: bloodborne-native/bloodborne-launcher | GPL-2.0 | launcher profiles and se
 peer: eladharels/uncharted_android | GPL-2.0 | a second Android port (FEX JIT + Turnip): device notes
 peer: bloodborne-native/bloodborne-mac | GPL-2.0 | native Apple Silicon port of the same bbport family: the Mac base
 peer: bloodborne-native/bloodborne-ios | GPL-2.0 root | Bloodborne iOS proof-of-concept shell; study constraints, do not graft title-specific paths or memory plan (#211)
+peer: Huax-1839/bloodborne-macos | GPL-2.0-or-later | read-only peer; `mtl_index_expand` is the candidate for QuadList index expansion (#408); no code imported
 peer: Ryxm-a/uncharted-ios | GPL-2.0 | Uncharted iOS scaffold; default lite build does not run the engine; learn only
 peer: zorde23/Uncharted_Collection_PC | GPL-2.0 | independent Windows port of the collection: crash and rendering fixes to port with credit
 peer: iannitram/totk-native | MIT | our sibling: the same launcher, hubs, fleet, Steam and save-card modules in Rust, copied with credit
