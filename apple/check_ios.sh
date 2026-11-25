@@ -23,6 +23,7 @@ check_contents() { # <app dir> <executable name>
     while IFS= read -r rel; do
         case "$rel" in
             "$exe"|Info.plist|PkgInfo|components.lock.json) ;;
+            */*/*) bad="$bad $rel" ;; # nothing is allowed two folders deep
             licenses/*.txt|save-relay-manifests/*.json) ;;
             *) bad="$bad $rel" ;;
         esac
@@ -36,11 +37,13 @@ check_contents() { # <app dir> <executable name>
 }
 
 check_app() { # <app dir> <device|simulator>
-    local app=$1 kind=$2 exe archs platforms want symbol deps bad defined
+    local app=$1 kind=$2 exe build archs platforms want symbol deps bad defined
     [ -d "$app" ] && [ ! -L "$app" ] || fail "$app is not a directory"
     plutil -lint "$app/Info.plist" > /dev/null || fail "Info.plist does not lint"
     exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
     [ -f "$app/$exe" ] && [ ! -L "$app/$exe" ] || fail "executable $exe missing"
+    build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Info.plist")
+    [[ $build =~ ^[0-9]+(\.[0-9]+)*$ ]] || fail "CFBundleVersion '$build' is not dot-separated integers"
     archs=$(lipo -archs "$app/$exe")
     [ "$archs" = arm64 ] || fail "executable archs are '$archs', not arm64"
     ok "lipo: arm64"
@@ -64,7 +67,7 @@ check_app() { # <app dir> <device|simulator>
 }
 
 check_ipa() { # <ipa>
-    local ipa=$1 work list apps name app exe signature entitlements
+    local ipa=$1 work list apps app exe signature entitlements
     [ -f "$ipa" ] && [ ! -L "$ipa" ] || fail "$ipa is not a file"
     unzip -tq "$ipa" > /dev/null || fail "archive fails unzip -t"
     work=$(mktemp -d "${TMPDIR:-/tmp}/check-ipa.XXXXXXXX")

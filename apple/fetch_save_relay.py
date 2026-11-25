@@ -29,7 +29,10 @@ def log(message):
 
 def sha256(path):
     with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+        return digest.hexdigest()
 
 
 def fetch_release(component, cache):

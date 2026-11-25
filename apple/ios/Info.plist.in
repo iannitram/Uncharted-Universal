@@ -21,7 +21,7 @@
     <key>CFBundleShortVersionString</key>
     <string>@VERSION@</string>
     <key>CFBundleVersion</key>
-    <string>@VERSION@</string>
+    <string>@BUILD@</string>
     <key>CFBundleSupportedPlatforms</key>
     <array>
         <string>@PLATFORM@</string>

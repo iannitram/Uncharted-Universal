@@ -38,7 +38,7 @@ final class SettingsViewController: UIViewController {
         App version: \(game.version)
         Runtime ABI: \(uncharted_runtime_version())
         Save Relay: \(relay) (not signed in)
-        Log: Files > Uncharted > uncharted.log
+        Log: Files > On My iPhone > \(game.name) > uncharted.log
         """
         facts.accessibilityIdentifier = "facts"
 

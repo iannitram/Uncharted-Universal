@@ -29,6 +29,11 @@ out=${OUT:-$root/out/apple-ios}
 cache=${CACHE:-$out/cache}
 version=${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$root/Cargo.toml" | head -1)}
 [ -n "$version" ] || fail "no version: set VERSION"
+# CFBundleVersion must be integers separated by dots: 0.0.0-ci.7 becomes 0.0.0.7.
+build=$(printf '%s' "$version" | sed -E 's/-[A-Za-z]+\./\./')
+case "$build" in
+    ''|*[!0-9.]*|.*|*.|*..*) fail "VERSION $version has no numeric build form (got $build)" ;;
+esac
 case "$version" in *[!a-zA-Z0-9._-]*) fail "version has odd characters: $version" ;; esac
 
 sdk_path=$(xcrun --sdk "$sdk" --show-sdk-path)
@@ -74,7 +79,7 @@ for game in $games; do
         -o "$app/$app_name"
 
     sed -e "s|@NAME@|$display|g" -e "s|@APP@|$app_name|g" -e "s|@BUNDLE_ID@|$bundle_id|g" \
-        -e "s|@VERSION@|$version|g" -e "s|@PLATFORM@|$platform|g" -e "s|@GAME@|$game|g" \
+        -e "s|@VERSION@|$version|g" -e "s|@BUILD@|$build|g" -e "s|@PLATFORM@|$platform|g" -e "s|@GAME@|$game|g" \
         -e "s|@NUMBER@|$number|g" -e "s|@RELAY_MANIFEST@|$manifest|g" \
         "$here/ios/Info.plist.in" > "$app/Info.plist"
     plutil -lint "$app/Info.plist" >&2
