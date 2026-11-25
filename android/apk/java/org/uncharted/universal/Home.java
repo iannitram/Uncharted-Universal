@@ -38,6 +38,7 @@ public class Home extends Activity {
     private ProgressBar bar;
     private boolean busy;
     private boolean askedNotifications;
+    private boolean wasSignedIn;
     private final Handler ticks = new Handler(Looper.getMainLooper());
 
     @Override
@@ -45,13 +46,18 @@ public class Home extends Activity {
         super.onCreate(state);
         game = GameInfo.forContext(this);
         applyPixelFoldOrientation();
+        boolean imported = Relay.importSharedTokenIfNeeded(this);
         show(getIntent() != null ? getIntent().getStringExtra("error") : null);
+        if (imported) {
+            say("Using your existing Dropbox sign-in from another app.", false);
+        }
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        Relay.importSharedTokenIfNeeded(this);
         show(null);
     }
 
@@ -66,6 +72,13 @@ public class Home extends Activity {
     protected void onResume() {
         super.onResume();
         DropboxAuth.setForeground(true);
+        boolean imported = Relay.importSharedTokenIfNeeded(this);
+        if (imported || DropboxAuth.signedIn(this) != wasSignedIn) {
+            show(null);
+            if (imported) {
+                say("Using your existing Dropbox sign-in from another app.", false);
+            }
+        }
         ticks.removeCallbacksAndMessages(null);
         ticks.post(this::tick);
     }
@@ -135,23 +148,6 @@ public class Home extends Activity {
 
         showSyncSection();
 
-        if (DropboxAuth.signedIn(this)) {
-            box.addView(Screen.button(this,
-                    "Sign out of Dropbox (ends save sync & download)",
-                    Screen.SECONDARY,
-                    v -> {
-                        if (GameDownload.running) {
-                            say("Wait for the download to finish first.", true);
-                            return;
-                        }
-                        boolean done = DropboxAuth.signOutAll(this);
-                        show(null);
-                        say(done
-                                ? "Signed out of Dropbox on this device."
-                                : "Could not remove all Dropbox credentials. Try again.", !done);
-                    }));
-        }
-
         String ver = buildVersion();
         TextView footer = Screen.text(this,
                 getPackageName() + (ver.isEmpty() ? "" : " · " + ver),
@@ -162,36 +158,41 @@ public class Home extends Activity {
     }
 
     private void showSyncSection() {
+        wasSignedIn = DropboxAuth.signedIn(this);
         int state = Relay.state(this);
-        box.addView(Screen.heading(this, "Save Sync (Dropbox · Save Relay)"));
+        box.addView(Screen.heading(this, "Dropbox Account (Download & Save Sync)"));
         String desc;
-        if (state == Relay.ON) {
-            desc = "On: saves sync with your Dropbox via Save Relay before launch and on exit.";
-        } else if (state == Relay.SIGN_IN_AGAIN) {
-            desc = "Dropbox needs a fresh sign-in on this device before syncing saves.";
-        } else if (state == Relay.BROKEN) {
-            desc = "Save sync settings could not be read. Sign in again or turn save sync off.";
+        if (wasSignedIn && state == Relay.ON) {
+            String u = Relay.user(this);
+            desc = "Signed in" + (u != null ? " (" + u + ")" : "")
+                    + " · shared across Uncharted 1–3 & compatible apps for both game downloads and Save Relay.";
+        } else if (state == Relay.SIGN_IN_AGAIN || state == Relay.BROKEN) {
+            desc = "Dropbox needs a fresh sign-in on this device.";
         } else {
-            desc = "Off. Sign in with Dropbox to sync your Uncharted saves across devices.";
+            desc = "One Dropbox sign-in enables both game downloads and Save Relay cloud sync across Uncharted 1–3.";
         }
         box.addView(Screen.text(this, desc, 14, Screen.TEXT));
 
-        if (state == Relay.SIGN_IN_AGAIN || state == Relay.BROKEN) {
-            box.addView(Screen.button(this, "Sign in to Dropbox again", Screen.BLUE, v -> setUpSync()));
-        } else if (state == Relay.OFF) {
-            box.addView(Screen.button(this, "Set up save sync (Dropbox)", Screen.BLUE, v -> setUpSync()));
-        } else if (state == Relay.ON) {
-            box.addView(Screen.button(this, "Sync saves now", Screen.BLUE, v -> syncNow()));
-        }
-
-        if (state != Relay.OFF) {
+        if (!wasSignedIn || state == Relay.SIGN_IN_AGAIN || state == Relay.BROKEN) {
             box.addView(Screen.button(this,
-                    "Turn off save sync (keeps download sign-in)",
+                    "Sign in with Dropbox (Download & Save Sync)",
+                    Screen.BLUE,
+                    v -> setUpSync()));
+        } else {
+            box.addView(Screen.button(this, "Sync saves now", Screen.BLUE, v -> syncNow()));
+            box.addView(Screen.button(this,
+                    "Sign out of Dropbox",
                     Screen.SECONDARY,
                     v -> {
-                        boolean done = Relay.turnOff(this);
+                        if (GameDownload.running) {
+                            say("Wait for the download to finish first.", true);
+                            return;
+                        }
+                        boolean done = DropboxAuth.signOutAll(this);
                         show(null);
-                        say(done ? "Save sync is off." : "Could not remove all save sync settings.", !done);
+                        say(done
+                                ? "Signed out of Dropbox on this app."
+                                : "Could not remove all Dropbox credentials. Try again.", !done);
                     }));
         }
     }
@@ -256,6 +257,13 @@ public class Home extends Activity {
     }
 
     private void tick() {
+        boolean nowSignedIn = DropboxAuth.signedIn(this);
+        if (nowSignedIn != wasSignedIn) {
+            show(null);
+            if (nowSignedIn) {
+                say("Signed in to Dropbox (Download & Save Sync active).", false);
+            }
+        }
         if (progress != null) {
             String err = GameDownload.error;
             if (GameDownload.running) {
@@ -285,7 +293,11 @@ public class Home extends Activity {
         busy = true;
         try {
             String url = DropboxAuth.start(this);
-            say("Sign in to Dropbox in your browser, then return here to enable save sync.", false);
+            try {
+                GameDownload.startAuthKeepAlive(this);
+            } catch (Exception ignored) {
+            }
+            say("Sign in to Dropbox in your browser, then return here.", false);
             startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
             new Thread(() -> {
                 String err = DropboxAuth.await(DropboxAuth.current());
@@ -294,7 +306,7 @@ public class Home extends Activity {
                     if (isFinishing()) return;
                     show(null);
                     if (err == null) {
-                        say("Save sync is on!", false);
+                        say("Signed in to Dropbox! Download & Save Sync are ready.", false);
                     } else {
                         say("Dropbox sign-in: " + err, true);
                     }
