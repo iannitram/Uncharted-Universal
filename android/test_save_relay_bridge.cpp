@@ -21,9 +21,12 @@ struct MockRelayState {
     int setup_calls = 0;
     int sign_in_start_calls = 0;
     int sign_in_finish_calls = 0;
+    int download_game_files_calls = 0;
+    int game_files_status_calls = 0;
 
     std::string last_manifest;
     std::string last_saves_dir;
+    std::string last_dest_dir;
     std::string last_resolve;
     bool had_resolve = false;
     std::string last_setup_server;
@@ -37,6 +40,8 @@ struct MockRelayState {
     std::string next_setup_json = R"({"ok":true,"command":"setup","data":{}})";
     std::string next_sign_in_start_json;
     std::string next_sign_in_finish_json = R"({"ok":true,"command":"setup","data":{}})";
+    std::string next_download_game_files_json;
+    std::string next_game_files_status_json;
 };
 
 MockRelayState g_mock;
@@ -107,6 +112,20 @@ char* MockSignInFinish(const char*) {
     return DupResponse(g_mock.next_sign_in_finish_json);
 }
 
+char* MockDownloadGameFiles(const char* manifest_json, const char* dest_dir) {
+    ++g_mock.download_game_files_calls;
+    g_mock.last_manifest = manifest_json ? manifest_json : "";
+    g_mock.last_dest_dir = dest_dir ? dest_dir : "";
+    return DupResponse(g_mock.next_download_game_files_json);
+}
+
+char* MockGameFilesStatus(const char* manifest_json, const char* dest_dir) {
+    ++g_mock.game_files_status_calls;
+    g_mock.last_manifest = manifest_json ? manifest_json : "";
+    g_mock.last_dest_dir = dest_dir ? dest_dir : "";
+    return DupResponse(g_mock.next_game_files_status_json);
+}
+
 const BbSaveRelayCAbi kMockAbi = {
     MockInit,
     MockPull,
@@ -117,6 +136,8 @@ const BbSaveRelayCAbi kMockAbi = {
     MockSignInFinish,
     MockFree,
     nullptr,
+    MockDownloadGameFiles,
+    MockGameFilesStatus,
 };
 
 int DummyCredGet(void*, const char*, uint8_t*, size_t, size_t*) {
@@ -434,6 +455,70 @@ void TestStatusAndAuthFlows() {
     assert(g_mock.alloc_count == g_mock.free_count);
 }
 
+void TestGameFilesBridgeAndFallbacks() {
+    g_mock = MockRelayState{};
+    const char* manifest_u2 =
+        R"({"version":1,"game_id":"uncharted-2","files":[{"path":"u2data/a.psarc","size":4096,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]})";
+
+    BbSaveRelayGameFilesRequest req{};
+    req.game = BB_ANDROID_SAVE_GAME_U2;
+    req.dest_dir = "/data/user/0/org.uncharted.universal.u2/files/games/uncharted-2/";
+    req.manifest_json_override = manifest_u2;
+
+    // NULL-safe fallback when game-files function pointers are missing.
+    BbSaveRelayCAbi partial_abi = kMockAbi;
+    partial_abi.download_game_files = nullptr;
+    partial_abi.game_files_status = nullptr;
+    BbSaveRelayGameFilesResult res{};
+    assert(bb::android::saverelay::DownloadGameFiles(req, &partial_abi, res) ==
+           BB_SAVE_RELAY_OUTCOME_UNAVAILABLE);
+    assert(std::strcmp(res.error_code, "unavailable") == 0);
+    assert(bb::android::saverelay::GameFilesStatus(req, &partial_abi, res) ==
+           BB_SAVE_RELAY_OUTCOME_UNAVAILABLE);
+
+    // Path traversal rejection.
+    BbSaveRelayGameFilesRequest bad_req = req;
+    bad_req.dest_dir = "/data/user/0/../escape";
+    assert(bb::android::saverelay::DownloadGameFiles(bad_req, &kMockAbi, res) ==
+           BB_SAVE_RELAY_OUTCOME_ERROR);
+    assert(std::strcmp(res.error_code, "invalid_path") == 0);
+
+    // Partial `.part` status decoding.
+    g_mock.next_game_files_status_json =
+        R"({"ok":true,"command":"game-files-status","data":{"game_id":"uncharted-2","total_files":2,"completed_files":1,"partial_files":1,"bytes_on_disk":3072,"total_bytes":4096,"complete":false}})";
+    assert(bb::android::saverelay::GameFilesStatus(req, &kMockAbi, res) ==
+           BB_SAVE_RELAY_OUTCOME_DONE);
+    assert(res.complete == 0);
+    assert(res.completed_files == 1 && res.partial_files == 1);
+    assert(res.bytes_on_disk == 3072 && res.total_bytes == 4096);
+    assert(g_mock.last_dest_dir == "/data/user/0/org.uncharted.universal.u2/files/games/uncharted-2");
+
+    // Completed download with skipped file.
+    g_mock.next_download_game_files_json =
+        R"({"ok":true,"command":"game-files","data":{"game_id":"uncharted-2","total_files":2,"downloaded_files":1,"skipped_files":1,"bytes_downloaded":1024,"total_bytes":4096,"complete":true}})";
+    assert(bb::android::saverelay::DownloadGameFiles(req, &kMockAbi, res) ==
+           BB_SAVE_RELAY_OUTCOME_DONE);
+    assert(res.complete == 1);
+    assert(res.downloaded_files == 1 && res.skipped_files == 1);
+    assert(res.bytes_downloaded == 1024 && res.total_bytes == 4096);
+
+    // reauth_needed and offline error mapping.
+    g_mock.next_download_game_files_json =
+        R"({"ok":false,"command":"game-files","error":{"code":"reauth_needed","message":"Dropbox token expired"}})";
+    assert(bb::android::saverelay::DownloadGameFiles(req, &kMockAbi, res) ==
+           BB_SAVE_RELAY_OUTCOME_ERROR);
+    assert(res.reauth_needed == 1);
+    assert(std::strcmp(res.error_code, "reauth_needed") == 0);
+
+    g_mock.next_download_game_files_json =
+        R"({"ok":false,"command":"game-files","error":{"code":"server_unreachable","message":"offline"}})";
+    assert(bb::android::saverelay::DownloadGameFiles(req, &kMockAbi, res) ==
+           BB_SAVE_RELAY_OUTCOME_OFFLINE);
+    assert(res.reauth_needed == 0);
+    assert(std::strcmp(res.error_code, "server_unreachable") == 0);
+    assert(g_mock.alloc_count == g_mock.free_count);
+}
+
 } // namespace
 
 int main() {
@@ -442,6 +527,7 @@ int main() {
     TestPullBeforePlayAndPushAfterExit();
     TestConflictSurfacingAndResolution();
     TestStatusAndAuthFlows();
+    TestGameFilesBridgeAndFallbacks();
     std::printf("test_save_relay_bridge: all checks passed\n");
     return 0;
 }

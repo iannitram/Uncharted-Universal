@@ -542,10 +542,10 @@ fn resolve_pull_peer(
     use uncharted_core::hub;
 
     let peers = core("hub", hub::read_peers(&plan.peers))?;
-    let names: Vec<&str> = peers.iter().map(|peer| peer.device.as_str()).collect();
-    let chosen = choose_hub(&names, plan.from.as_deref())
-        .map_err(|problem| Outcome::error("hub", &uncharted_core::Error::Hub(problem)))?
-        .to_owned();
+    let names: Vec<String> = peers.iter().map(|peer| peer.device.clone()).collect();
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let chosen = choose_hub(&name_refs, plan.from.as_deref())
+        .map_err(|problem| Outcome::error("hub", &uncharted_core::Error::Hub(problem)))?;
     let peer = peers
         .into_iter()
         .find(|peer| peer.device == chosen)

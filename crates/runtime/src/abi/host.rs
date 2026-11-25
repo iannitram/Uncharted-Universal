@@ -178,6 +178,19 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     let fiber_hit = || crate::fiber::resolve(name);
     #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
     let fiber_hit = || None;
+    #[cfg(any(target_os = "linux", target_os = "android", windows))]
+    let memory_hit = || ask(crate::memory::abi::runtime_memory_resolve);
+    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
+    let memory_hit = || None;
+    #[cfg(uncharted_gpu)]
+    let gpu_hit = || {
+        extern "C" {
+            fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
+        }
+        ask(bbgpu_resolve)
+    };
+    #[cfg(not(uncharted_gpu))]
+    let gpu_hit = || None;
 
     ask(sync::runtime_mutex_resolve)
         .or_else(thread_hit)
@@ -185,14 +198,18 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| crate::time::resolve(name))
         .or_else(|| ask(sync::runtime_sema_resolve))
         .or_else(|| ask(sync::runtime_rwlock_resolve))
+        .or_else(memory_hit)
         .or_else(|| crate::kernel::resolve(name))
+        .or_else(|| ask(crate::trophy::runtime_trophy_resolve))
         .or_else(|| crate::services::resolve(name))
         .or_else(|| crate::ajm::resolve(name))
-        .or_else(|| crate::rtc::resolve(name))
         .or_else(|| crate::audio::resolve(name))
+        .or_else(|| ask(crate::pad::runtime_pad_resolve))
+        .or_else(|| crate::rtc::resolve(name))
         .or_else(|| ask(crate::savedata::runtime_savedata_resolve))
         .or_else(|| crate::file::resolve(name))
         .or_else(fiber_hit)
+        .or_else(gpu_hit)
 }
 
 /// The modules' report lines, in `runtime.c`'s order.
