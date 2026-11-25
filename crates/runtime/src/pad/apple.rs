@@ -6,10 +6,10 @@
 //! backend (iOS/iPadOS, or macOS with `SDL_HINT_JOYSTICK_HIDAPI` off). On macOS the HIDAPI driver
 //! usually takes Xbox, PS4, PS5, Switch Pro and Joy-Con pads first and sets its own element map and
 //! quirks (SDL_mfijoystick.m skips those devices); the SDL type, so the prompt family, comes out
-//! the same. This table models the wrapping so it can be tested in CI on every OS; it holds names and numbers only and links
-//! nothing from Apple. It is pinned to SDL 3.4.20 (`sdl3-sys 0.7.3`, `src/joystick/apple/
-//! SDL_mfijoystick.m`): an SDL bump must re-check it. It checks our model of SDL. Whether a real
-//! pad reports these categories and elements is checked on the owner's device.
+//! the same. This table models the wrapping so it can be tested in CI on every OS; it holds names
+//! and numbers only and links nothing from Apple. It is pinned to SDL 3.4.20 (`sdl3-sys 0.7.3`,
+//! `src/joystick/apple/SDL_mfijoystick.m`): an SDL bump must re-check it. It checks our model of
+//! SDL. Whether a real pad reports these categories and elements is checked on the owner's device.
 //!
 //! SDL decides a pad's type from `GCController.productCategory` alone. [`layout`] also falls back
 //! to the profile class, so a pad whose category SDL does not know can still be placed; that is the
@@ -480,27 +480,13 @@ const MFI: &[Mapping] = &[
     opt(ButtonHome, "guide"),
 ];
 
-// Unknown make: the MFi set, plus the buttons a newer pad may add.
-const GENERIC: &[Mapping] = &[
-    m(ButtonA, "a"),
-    m(ButtonB, "b"),
-    m(ButtonX, "x"),
-    m(ButtonY, "y"),
-    m(LeftShoulder, "leftshoulder"),
-    m(RightShoulder, "rightshoulder"),
-    m(LeftTrigger, "lefttrigger"),
-    m(RightTrigger, "righttrigger"),
-    opt(LeftThumbstickButton, "leftstick"),
-    opt(RightThumbstickButton, "rightstick"),
-    m(ButtonMenu, "start"),
-    opt(ButtonOptions, "back"),
-    opt(ButtonHome, "guide"),
-];
+// Unknown make: the same elements as the MFi set (SDL maps an unknown pad the same way).
+const GENERIC: &[Mapping] = MFI;
 
 /// The elements of a layout that map to the game's buttons, with the SDL input each becomes:
 /// buttons, triggers, both sticks and the d-pad where it has them. Elements the game does not bind
-/// are left out (Share on Series X|S pads, the Elite paddles, the extra DualSense inputs). A single Joy-Con lists one stick and no triggers or d-pad: the
-/// rest is in [`Coverage::missing`].
+/// are left out (Share on Series X|S pads, the Elite paddles, the extra DualSense inputs). A single
+/// Joy-Con lists one stick and no triggers or d-pad: the rest is in [`Coverage::missing`].
 pub fn elements(layout: Layout) -> Vec<Mapping> {
     let (base, with_sticks_dpad): (&[Mapping], bool) = match layout {
         Layout::Xbox => (XBOX, true),
@@ -644,14 +630,21 @@ mod tests {
 
     #[test]
     fn category_wins_over_class() {
+        let cases = [
+            (CATEGORY_SWITCH_PRO, Layout::SwitchPro),
+            (CATEGORY_JOYCON_PAIR, Layout::JoyConPair),
+        ];
         for class in [
             GcClass::Xbox,
             GcClass::DualShock,
             GcClass::DualSense,
+            GcClass::Extended,
             GcClass::Other,
         ] {
-            assert_eq!(layout(class, CATEGORY_SWITCH_PRO), Layout::SwitchPro);
-            assert_eq!(prompt_family(CATEGORY_JOYCON_PAIR), PromptFamily::Nintendo);
+            for (category, want) in cases {
+                assert_eq!(layout(class, category), want, "{class:?} {category}");
+                assert_eq!(prompt_family(category), PromptFamily::Nintendo);
+            }
         }
     }
 
