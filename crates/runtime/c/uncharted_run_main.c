@@ -12,7 +12,7 @@
 #include "../include/uncharted_runtime.h"
 #include "../../../gpu/bbgpu.h"
 
-int bbgpu_fault_recover(int code, void *context); /* gpu/shim/bbport_fault_recover.cpp */
+int bbgpu_fault_recover(int code, void *context); /* gpu/shim/common/assert.cpp */
 
 /* Keep in step with UnchartedRunHooks in crates/runtime/src/loader/cli.rs. */
 typedef struct {

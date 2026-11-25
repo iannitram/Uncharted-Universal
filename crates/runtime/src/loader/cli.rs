@@ -89,7 +89,7 @@ pub struct UnchartedRunHooks {
     /// `bbgpu_dump_guest_writes(context)`.
     pub gpu_dump_writes: Option<unsafe extern "C" fn(*mut c_void)>,
     /// `bbgpu_fault_recover(code, context)`: 1 when a speculative guest read's recovery point
-    /// took over the faulting thread (`gpu/shim/bbport_fault_recover.cpp`).
+    /// took over the faulting thread (`gpu/shim/common/assert.cpp`).
     pub fault_recover: Option<unsafe extern "C" fn(c_int, *mut c_void) -> c_int>,
 }
 
