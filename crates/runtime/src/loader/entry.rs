@@ -855,12 +855,11 @@ mod runtime_boot {
         crate::abi::libc::runtime_start(start_caps);
 
         let page_size = host_page_size();
-        let mapped = image::MappedImage::load_with_options(
+        let mapped = image::MappedImage::map_without_relocs(
             boot,
             payload,
             page_size,
             unresolved_import as *const () as usize,
-            opts.strict_imports,
         )
         .map_err(|e| (1, e))?;
 
@@ -949,6 +948,10 @@ mod runtime_boot {
                 bbgpu_symbol_count()
             );
         }
+
+        mapped
+            .apply_relocs(boot, opts.strict_imports)
+            .map_err(|e| (1, e))?;
 
         for patch_path in &opts.patch_files {
             // SAFETY: image is mapped and writable before `protect_segments`.

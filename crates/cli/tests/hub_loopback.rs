@@ -54,6 +54,17 @@ fn command(root: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// The per-user data folder `command` gives the binary under `root`: `XDG_DATA_HOME` on Linux,
+/// `<HOME>/Library/Application Support` on the Mac (`uncharted_core::platform`).
+#[cfg(not(windows))]
+fn user_data(root: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        root.join("home/Library/Application Support")
+    } else {
+        root.join("data")
+    }
+}
+
 /// Kills the hub when the test ends early, so a failed assertion leaves no listener behind.
 #[cfg(not(windows))]
 struct Running(std::process::Child);
@@ -271,9 +282,9 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     let hub_root = TempDir::new("hub-game");
     let device_root = TempDir::new("device-game");
     let game_data = hub_root.0.join("installs");
-    write(&game_data.join("u1/install.json"), b"{\"game\":\"u1\"}\n");
-    write(&game_data.join("u1/boot.bin"), b"BBPROBE2 u1");
-    write(&game_data.join("u1/saves/keep"), b"hub save");
+    write(&game_data, "u1/install.json", b"{\"game\":\"u1\"}\n");
+    write(&game_data, "u1/boot.bin", b"BBPROBE2 u1");
+    write(&game_data, "u1/saves/keep", b"hub save");
     let game_data_arg = game_data.display().to_string();
 
     let mut child = command(
@@ -345,9 +356,7 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     );
     assert_eq!(code(&pair), 0, "{}", stderr(&pair));
 
-    let device_save = device_root
-        .0
-        .join("data/uncharted-universal/installs/u1/saves/keep");
+    let device_save = user_data(&device_root.0).join("uncharted-universal/installs/u1/saves/keep");
     fs::create_dir_all(device_save.parent().unwrap()).unwrap();
     fs::write(&device_save, b"device save").unwrap();
 
@@ -366,12 +375,8 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     );
     assert_eq!(code(&pull), 0, "{}", stderr(&pull));
     assert_eq!(
-        fs::read(
-            device_root
-                .0
-                .join("data/uncharted-universal/installs/u1/boot.bin")
-        )
-        .unwrap(),
+        fs::read(user_data(&device_root.0).join("uncharted-universal/installs/u1/boot.bin"))
+            .unwrap(),
         b"BBPROBE2 u1"
     );
     assert_eq!(fs::read(&device_save).unwrap(), b"device save");

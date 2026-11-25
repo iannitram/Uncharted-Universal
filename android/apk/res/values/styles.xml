@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Full screen, drawn under the camera cutout too (always: on every edge), so the game fills the whole screen. -->
+    <style name="Game" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowLayoutInDisplayCutoutMode">always</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+</resources>

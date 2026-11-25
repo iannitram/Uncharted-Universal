@@ -90,6 +90,75 @@ pub fn link_libc(game: &Path, out: &Path) -> Result<Linked> {
     link_libc_with(&main, &libc, out)
 }
 
+/// An import slot of an executable: where a jump-slot or global-data relocation stores the
+/// import's address, and the import's NID. Slots are image offsets (`vaddr`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportSlot {
+    pub slot: u64,
+    pub nid: String,
+}
+
+/// What the ahead-of-time recompiler (`crates/recomp`) needs from an executable's dynamic data:
+/// the import slots (the generator leaves callers of `setjmp` to the interpreter, so it must
+/// know which stubs reach it) and the code addresses relocations put into data (vtables and
+/// function-pointer tables, which the function scan follows). Read-only; nothing in the link
+/// reads this.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RecompInputs {
+    /// False when the executable has no dynamic segment (a plain ELF): both lists are empty
+    /// and the generator cannot know its setjmp callers.
+    pub has_dynamic: bool,
+    /// Jump-slot and global-data relocations of named imports, by slot, then NID.
+    pub import_slots: Vec<ImportSlot>,
+    /// The distinct addends of base-relative relocations, sorted.
+    pub code_pointers: Vec<u64>,
+}
+
+/// Read `RecompInputs` from a SELF or plain ELF.
+pub fn recomp_inputs(source: &[u8]) -> Result<RecompInputs> {
+    let image = load_image(source)?;
+    if !image.program_headers.iter().any(|ph| ph.kind == PT_DYNAMIC) {
+        return Ok(RecompInputs::default());
+    }
+    Ok(recomp_inputs_of(&Module::read(source)?))
+}
+
+fn recomp_inputs_of(module: &Module) -> RecompInputs {
+    let mut import_slots = Vec::new();
+    let mut code_pointers = Vec::new();
+    for relocation in &module.relocations {
+        match relocation.kind {
+            R_X86_64_JUMP_SLOT | R_X86_64_GLOB_DAT => {
+                let identity = module
+                    .symbols
+                    .get(relocation.symbol as usize)
+                    .and_then(|symbol| symbol.identity.as_ref());
+                if let Some(identity) = identity {
+                    import_slots.push(ImportSlot {
+                        slot: relocation.target,
+                        nid: identity.nid.clone(),
+                    });
+                }
+            }
+            R_X86_64_RELATIVE => {
+                if let Ok(target) = u64::try_from(relocation.addend) {
+                    code_pointers.push(target);
+                }
+            }
+            _ => {}
+        }
+    }
+    import_slots.sort_by(|a, b| (a.slot, &a.nid).cmp(&(b.slot, &b.nid)));
+    import_slots.dedup();
+    code_pointers.sort_unstable();
+    code_pointers.dedup();
+    RecompInputs {
+        has_dynamic: true,
+        import_slots,
+        code_pointers,
+    }
+}
+
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_TLS: u32 = 7;
