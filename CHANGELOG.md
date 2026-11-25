@@ -2,6 +2,8 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-24 `uncharted-run` Windows link flags (#579 follow-up): `crates/runtime/build.rs` links the runner with no high-entropy ASLR and a 16 MiB committed main stack (MSVC `/HIGHENTROPYVA:NO /STACK`, gnullvm `--disable-high-entropy-va --stack`), as `gpu/CMakeLists.txt` links `bb-probe`. Without them the PS4 address-range reservation failed with exit 21 on Windows. `uncharted_run_rejects_invalid_bb_benchmark` runs on Windows again; it passes locally on msvc and gnullvm.
+
 - 2026-11-20 M21b safe area, `uncharted-run` tests, and Windows CI sync (3.19 #433, 3.16 #457, 6.01): added `uncharted_runtime_safe_area` / `bbgpu_safe_area` with 6:5/3:2/16:9/16:10 unit tests (`3.19`), added `crates/runtime/tests/uncharted_run.rs` covering `--probe`, `--force-fault` single `Crash:` line, `--list-missing`, and usage exit code (`3.16`), recorded `6.01` Windows CI (`check.yml`/`build.yml`), and fixed `fleet_record_persists_updates_and_reports_drift` OS assertion for macOS/Windows CI.
 
 - 2026-11-20 M21c/d/e resolution-independence hooks and tests (3.20 #434, 3.21 #435, 3.22 #436): added `uncharted_runtime_display_fov` / `bbgpu_fov_scale` (M21c), `uncharted_runtime_movie_fit_rect` / `bbgpu_movie_fit_rect` (M21d), and `uncharted_runtime_resize_needs_restart` / `bbgpu_notify_resize` wired from `vk_presenter.cpp` (M21e), with unit tests across 6:5, 3:2, 16:9, 16:10, and Fold cover->unfold. Physical device checks remain `needs-owner-device`.
