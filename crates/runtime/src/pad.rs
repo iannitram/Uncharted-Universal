@@ -15,6 +15,7 @@
 //! lead-in that gets from the title screen into the level before [`BenchmarkPath`] starts
 //! turning the camera; `benchmark_run` joins the two to the clock.
 
+pub mod apple;
 pub mod camera;
 #[cfg(target_arch = "x86_64")]
 pub mod hooks;

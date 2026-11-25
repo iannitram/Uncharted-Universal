@@ -1,0 +1,72 @@
+name: apple-gpu
+
+# The synthetic Metal probe (#408, docs/apple/feasibility-211.md step 4). Authored code only:
+# it renders and uploads synthetic textures and reads them back; no game data is involved.
+# This is a macOS runner, which is a virtual machine: Metal there is a paravirtual device that may
+# differ from real hardware (BC support, limits, speed), so the job records the device name and a
+# missing Metal device is a reported skip, not a failure. A pass here is not a device result.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tests/apple_metal/**'
+      - '.github/workflows/apple-gpu.yml'
+  pull_request:
+    paths:
+      - 'tests/apple_metal/**'
+      - '.github/workflows/apple-gpu.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  metal-probe:
+    name: Metal probe (macOS runner)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Run the probe on macOS
+        shell: bash
+        run: |
+          set -o pipefail
+          echo "runner architecture: $(uname -m)"
+          sh tests/apple_metal/run.sh macos "$RUNNER_TEMP/metal-probe-macos.json" || rc=$?
+          if [ ! -s "$RUNNER_TEMP/metal-probe-macos.json" ]; then
+            echo "::error::The probe wrote no JSON report (exit code ${rc:-0}); it likely crashed. See the log above."
+            exit "${rc:-1}"
+          fi
+          python3 - "$RUNNER_TEMP/metal-probe-macos.json" <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          r = json.load(open(sys.argv[1]))
+          print("### Metal probe (macOS runner)")
+          print("")
+          print("- result: **%s**" % r["result"])
+          print("- Metal device: `%s`" % r.get("device_name"))
+          print("- OS: %s; %s; %s" % (r["os"], r["xcode"], r["clang"]))
+          if r["result"] == "skipped":
+              print("- skipped: %s" % r.get("reason"))
+          for c in r["checks"]:
+              print("  - %s: %s" % (c["name"], c["status"]))
+          PY
+          if [ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["result"])' "$RUNNER_TEMP/metal-probe-macos.json")" = skipped ]; then
+            echo "::warning::No Metal device on this runner; the probe was skipped, not run."
+          fi
+          exit "${rc:-0}"
+      - name: Compile the probe for the iOS Simulator
+        # Compile only: the simulator run is local (tests/apple_metal/RESULTS.md).
+        run: sh tests/apple_metal/run.sh build-sim
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metal-probe-report
+          path: ${{ runner.temp }}/metal-probe-macos.json
+          if-no-files-found: ignore

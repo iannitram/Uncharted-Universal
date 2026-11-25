@@ -35,3 +35,6 @@ patches.json
 
 # Rust
 /target
+
+# Metal probe run record (written by tests/apple_metal/run.sh when given this path)
+metal-probe-report.json
