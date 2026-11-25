@@ -185,6 +185,8 @@ file, SPDX present).
 MSL tiling-header generator and its test, caps tables) where the adapter has holes, without
 reconciling the renderer. This is A with a donor.
 
+*Superseded by the revised order below and the 2026-11-24 amendment to ADR 0006, which choose route A.*
+
 **Recommendation: C, entered through A, with a hard stop.** Do the cheap first milestone before
 committing to either: vendor the adapter (new PR, owner decision), patch only the three hard
 asserts and the loader line in `vk_platform.cpp`, and get `Instance::CreateDevice` to complete on
