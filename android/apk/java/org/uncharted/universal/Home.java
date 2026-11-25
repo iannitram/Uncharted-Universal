@@ -204,12 +204,22 @@ public class Home extends Activity {
         message.setVisibility(View.VISIBLE);
     }
 
+    private void openOAuthBrowser(String url) {
+        Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+        Intent chrome = new Intent(i).setPackage("com.android.chrome");
+        if (getPackageManager().resolveActivity(chrome, 0) != null) {
+            startActivity(chrome);
+        } else {
+            startActivity(i);
+        }
+    }
+
     private void download() {
         if (GameDownload.running) {
             if (DropboxAuth.signedIn(this)) return;
             try {
                 String url = DropboxAuth.start(this);
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                openOAuthBrowser(url);
             } catch (Exception e) {
                 say("Dropbox sign-in could not start: " + e.getMessage(), true);
             }
@@ -243,7 +253,7 @@ public class Home extends Activity {
         }
         if (url != null) {
             say("Sign in to Dropbox in your browser, allow access, then return to " + game.shortLabel + ".", false);
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            openOAuthBrowser(url);
         }
         tick();
     }
@@ -298,7 +308,7 @@ public class Home extends Activity {
             } catch (Exception ignored) {
             }
             say("Sign in to Dropbox in your browser, then return here.", false);
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+            openOAuthBrowser(url);
             new Thread(() -> {
                 String err = DropboxAuth.await(DropboxAuth.current());
                 runOnUiThread(() -> {

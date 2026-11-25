@@ -33,6 +33,7 @@
         <package android:name="org.uncharted.universal.u2" />
         <package android:name="org.uncharted.universal.u3" />
         <package android:name="io.github.acnhrecomp" />
+        <package android:name="com.android.chrome" />
     </queries>
 
     <!--
