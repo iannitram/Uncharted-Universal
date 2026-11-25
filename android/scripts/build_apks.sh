@@ -118,11 +118,12 @@ PY
 fi
 
 # Debug keystore for local/CI thin APK signing unless overridden.
-KEYSTORE="${APK_KEYSTORE:-$WORK/debug.keystore}"
+KEYSTORE="${APK_KEYSTORE:-$HOME/.android/uncharted-universal-debug.keystore}"
 KEYSTORE_PASS="${APK_KEYSTORE_PASS:-android}"
 KEY_ALIAS="${APK_KEY_ALIAS:-androiddebugkey}"
 
 if [[ ! -f "$KEYSTORE" ]]; then
+    mkdir -p "$(dirname "$KEYSTORE")"
     keytool -genkeypair -v \
         -keystore "$KEYSTORE" \
         -storepass "$KEYSTORE_PASS" \

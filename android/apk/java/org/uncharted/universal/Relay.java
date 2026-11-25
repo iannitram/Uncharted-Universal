@@ -1,6 +1,8 @@
 package org.uncharted.universal;
 
 import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
 
 import org.json.JSONObject;
 import org.saverelay.SaveRelay;
@@ -108,17 +110,68 @@ final class Relay {
         return new File(files(c), "relay-config/save-relay/config.json");
     }
 
-    private static String account(Context c) {
+    static String user(Context c) {
         try {
             File f = configFile(c);
             if (!f.isFile()) return null;
             JSONObject config = new JSONObject(new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8));
             if (!"dropbox".equals(config.optString("server"))) return null;
             String user = config.optString("user");
-            return user.isEmpty() ? null : "dropbox:" + user;
+            return user.isEmpty() ? null : user;
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static String account(Context c) {
+        String u = user(c);
+        return (u == null || u.isEmpty()) ? null : "dropbox:" + u;
+    }
+
+    static boolean importSharedTokenIfNeeded(Context c) {
+        String existing = dropboxRefresh(c);
+        if (existing != null && !existing.isEmpty() && state(c) == ON) {
+            return false;
+        }
+        final String selfAuthority = c.getPackageName() + ".saverelay.token";
+        final String[] peerAuthorities = {
+                "org.uncharted.universal.u1.saverelay.token",
+                "org.uncharted.universal.u2.saverelay.token",
+                "org.uncharted.universal.u3.saverelay.token",
+                "io.github.acnhrecomp.saverelay.token",
+        };
+        for (String auth : peerAuthorities) {
+            if (selfAuthority.equals(auth)) continue;
+            Uri uri = Uri.parse("content://" + auth + "/dropbox");
+            try (Cursor cur = c.getContentResolver().query(uri, null, null, null, null)) {
+                if (cur != null && cur.moveToFirst()) {
+                    int userIdx = cur.getColumnIndex("user");
+                    int tokIdx = cur.getColumnIndex("refresh_token");
+                    String sharedUser = userIdx >= 0 ? cur.getString(userIdx) : "";
+                    String sharedRefresh = tokIdx >= 0 ? cur.getString(tokIdx) : "";
+                    if (sharedRefresh != null && !sharedRefresh.isEmpty()) {
+                        String effectiveUser = (sharedUser == null || sharedUser.isEmpty()) ? "shared" : sharedUser;
+                        File cfg = configFile(c);
+                        File parent = cfg.getParentFile();
+                        if (parent != null) parent.mkdirs();
+                        JSONObject json = new JSONObject();
+                        json.put("server", "dropbox");
+                        json.put("user", effectiveUser);
+                        json.put("device", "Android");
+                        try (FileOutputStream out = new FileOutputStream(cfg)) {
+                            out.write(json.toString().getBytes(StandardCharsets.UTF_8));
+                        }
+                        String f = files(c);
+                        credSet(f, "dropbox:" + effectiveUser, sharedRefresh);
+                        credSet(f, DOWNLOAD_ACCOUNT, sharedRefresh);
+                        android.util.Log.i("UnchartedAPK", "Imported shared Dropbox token from " + auth);
+                        return true;
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        return false;
     }
 
     static int state(Context c) {

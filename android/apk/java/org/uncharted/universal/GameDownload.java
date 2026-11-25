@@ -29,6 +29,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 public class GameDownload extends Service {
+    static final String EXTRA_AUTH_ONLY = "auth_only";
     static final String CHANNEL = "download";
     static final int NOTE = 1;
     static final int DONE_NOTE = 2;
@@ -69,18 +70,11 @@ public class GameDownload extends Service {
     }
 
     static void start(Context c) {
-        if (Build.VERSION.SDK_INT >= 34) {
-            JobScheduler js = c.getSystemService(JobScheduler.class);
-            JobInfo job = new JobInfo.Builder(JOB_ID, new ComponentName(c, GameDownloadJob.class))
-                    .setUserInitiated(true)
-                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_UNMETERED)
-                    .setPersisted(true)
-                    .build();
-            if (js != null && js.schedule(job) == JobScheduler.RESULT_SUCCESS) {
-                return;
-            }
-        }
         c.startForegroundService(new Intent(c, GameDownload.class));
+    }
+
+    static void startAuthKeepAlive(Context c) {
+        c.startForegroundService(new Intent(c, GameDownload.class).putExtra(EXTRA_AUTH_ONLY, true));
     }
 
     static void startWorker(Context c, ProgressSink sink) {
@@ -319,11 +313,23 @@ public class GameDownload extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         ensureChannel(this);
+        boolean authOnly = intent != null && intent.getBooleanExtra(EXTRA_AUTH_ONLY, false);
+        String msg = authOnly
+                ? "Waiting for Dropbox sign-in..."
+                : (status.isEmpty() ? "Starting download" : status);
         if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTE, buildNote(this, status.isEmpty() ? "Starting download" : status, done, total),
+            startForeground(NOTE, buildNote(this, msg, done, total),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
-            startForeground(NOTE, buildNote(this, status.isEmpty() ? "Starting download" : status, done, total));
+            startForeground(NOTE, buildNote(this, msg, done, total));
+        }
+        if (authOnly) {
+            final int gen = DropboxAuth.current();
+            new Thread(() -> {
+                DropboxAuth.await(gen);
+                stopSelf(startId);
+            }, "dropbox-auth-keepalive").start();
+            return START_NOT_STICKY;
         }
         startWorker(this, new ProgressSink() {
             @Override
