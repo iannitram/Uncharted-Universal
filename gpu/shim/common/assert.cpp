@@ -2,6 +2,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <csignal>
+#endif
 #include "bbport_toggles.h"
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -42,4 +47,32 @@ void assert_fail_impl() {
 void assert_fail_debug_msg(const char* msg) {
     LOG_CRITICAL(Debug, "Assertion Failed!\n{}", msg);
     assert_fail_impl();
+}
+
+extern "C" int bbgpu_fault_recover(int sig_or_code, void* context) {
+#ifdef _WIN32
+    if (static_cast<DWORD>(sig_or_code) == EXCEPTION_ACCESS_VIOLATION && runtime_fault_recover) {
+        unsigned long long* buffer = *runtime_fault_recover;
+        runtime_fault_recover = nullptr;
+        auto* info = static_cast<EXCEPTION_POINTERS*>(context);
+        CONTEXT* c = info->ContextRecord;
+        c->Rsp = ((c->Rsp - 128) & ~static_cast<DWORD64>(15)) - 40;
+        c->Rcx = reinterpret_cast<DWORD64>(buffer);
+        c->Rdx = 1;
+        c->Rip = reinterpret_cast<DWORD64>(&bb_longjmp);
+        return 1;
+    }
+#else
+    (void)context;
+    if ((sig_or_code == SIGSEGV || sig_or_code == SIGBUS) && runtime_fault_recover) {
+        sigjmp_buf* recover = runtime_fault_recover;
+        runtime_fault_recover = nullptr;
+        sigset_t unblock;
+        sigemptyset(&unblock);
+        sigaddset(&unblock, sig_or_code);
+        pthread_sigmask(SIG_UNBLOCK, &unblock, nullptr);
+        siglongjmp(*recover, 1);
+    }
+#endif
+    return 0;
 }

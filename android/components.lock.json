@@ -39,5 +39,14 @@
       "license": "Zlib",
       "build": "Android arm64 shared library"
     }
-  ]
+  ],
+  "save-relay": {
+    "version": "v1.0.0-rc.2",
+    "source_commit": "7bfe1dff0602dc355cb6b8df691c943a90e1151c",
+    "asset": "libsave_relay-v1.0.0-rc.2-aarch64-linux-android.a",
+    "sha256": "0879c6c6616685ad84993e81d22d316dce4390c52b434716651453b34502c195",
+    "source": "https://github.com/iannitram/save-relay",
+    "license": "MIT",
+    "license_source": "https://github.com/iannitram/save-relay/blob/961513cb9ef56253970ee67b5b6febe2c2f0349d/LICENSE"
+  }
 }
