@@ -346,3 +346,46 @@ These are aggregates only, from local runs on the Windows 3090 machine, reported
 - Each would push A toward the high end of its range. None favours B, which shares the recompiler and also lacks QuadList support.
 
 Nothing in this round ran on a Mac, an iPhone or through the adapter.
+
+## Step 1a results: Metal-shaped profile (2026-11-24)
+
+These counts are aggregates only, from the Windows 3090 machine. They use the same scenes as step 1, with a cold shader cache.
+
+The profile was forced locally and not committed:
+- barycentrics off;
+- no AMD explicit vertex parameter;
+- manual interpolation off;
+- `support_float64=false`;
+- `max_shared_memory_size=32768`;
+- `subgroup_size=32`.
+
+| Item | U1 | U2 |
+| --- | --- | --- |
+| Pipelines / modules | 88 / 123 | 262 / 364 |
+| `PerVertexKHR` emitted | 0 | 0 |
+| V_INTERP_MOV P10/P20 on a non-flat attribute | 0 of 57 fs | 0 of 168 fs |
+| SPIRV-Cross `--msl --msl-version 20300` | 123/123 | 364/364 |
+| SPIRV-Cross `--msl --msl-ios --msl-version 20300` | 123/123 | 364/364 |
+| SPIRV-Cross `--msl --msl-ios --msl-version 20300 --msl-ios-use-simdgroup-functions` | 123/123 | 364/364 |
+| Subgroup ops, compute | Broadcast 1, BroadcastFirst 2, ShuffleXor 2 | Broadcast 1, BroadcastFirst 3, ShuffleXor 2 |
+| Subgroup ops, fragment | BroadcastFirst 1, QuadBroadcast 2 | Ballot 1, BroadcastFirst 2, QuadBroadcast 2 |
+| Subgroup ops, vertex | none | none |
+| QuadList draws | 234,442 of about 500,000 draws | 350,231 of about 11.38 M draws |
+| QuadList draw kinds | all direct indexed | all direct indexed |
+
+**What this settles:**
+- **The P10/P20 tail risk (5–15 days) did not appear.** The profile cost stays at the low end of 3–8 days.
+- **MSL 2.3 and iOS conversion pass everywhere.** That includes the adapter's own setting, `ios_use_simdgroup_functions` unset. Setting it is still right, because Ballot and ShuffleXor are only correct with simdgroup functions.
+- **No subgroup ops appear in vertex shaders.**
+- **QuadList needs indexed expansion only.** There are no indirect or non-indexed QuadList draws, so the conversion is at the low end of 2–5 days.
+
+QuadList is about half of U1's draws in these scenes, so the expansion has to be fast. Two options:
+- expand on the GPU;
+- expand on the CPU and cache by index-buffer range.
+
+Measure it on the 3090 build before the Mac.
+
+**Caveats:**
+- The draw counters were sampled every 20,000 draws, so the tail of each run is missing.
+- The aux TCS/TES are still not in the dump. This no longer matters once QuadList is converted.
+- There is no per-call count of flat or selector-2 V_INTERP_MOV.
