@@ -165,8 +165,9 @@ impl AppleHost {
     /// template rebased onto it. Nothing already mapped (the dyld shared cache, the
     /// executable, the heap) can be inside the block, so the host's `MAP_FIXED` maps within
     /// it replace only the host's own reservation. Once claimed, `map` refuses addresses
-    /// outside the block. The block is released when the host drops, and a second claim
-    /// returns the first one's layout only when the template is the same.
+    /// outside the block. The block is released when the host drops. A second claim does not
+    /// reserve again: for any valid template whose span fits the block already held it
+    /// returns that template rebased onto the first block, and otherwise it returns `None`.
     pub fn claim(&mut self, template: Layout) -> Option<Layout> {
         if !template.is_valid() {
             return None;
@@ -273,7 +274,10 @@ impl Host for AppleHost {
         let (at, size) = (Some(address as usize), size as usize);
         if let Some((base, held)) = self.claimed {
             // Only the block this host reserved may be replaced.
-            if (address as usize) < base || address as usize + size > base + held {
+            let Some(end) = (address as usize).checked_add(size) else {
+                return false;
+            };
+            if (address as usize) < base || end > base + held {
                 return false;
             }
         }

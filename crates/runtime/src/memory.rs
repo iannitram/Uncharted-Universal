@@ -184,6 +184,9 @@ impl Layout {
     }
 
     /// The profile this build starts with: iOS on iOS, the default elsewhere.
+    ///
+    /// On iOS this is a base-0 template, whose addresses fall inside `__PAGEZERO`. It must
+    /// go through `AppleHost::claim` (or `Layout::rebased`) before it is used.
     pub const fn host_default() -> Layout {
         if cfg!(target_os = "ios") {
             Layout::IOS
@@ -552,6 +555,7 @@ impl<H: Host> Space<H> {
 
     /// An empty address space laid out as `layout` (its `pool_size` is the direct pool).
     pub fn with_layout(layout: Layout, host: H) -> Self {
+        debug_assert!(layout.is_valid(), "invalid memory layout");
         Self {
             host,
             layout,
