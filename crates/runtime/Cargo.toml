@@ -54,3 +54,8 @@ iced-x86 = { version = "1.21", default-features = false, features = ["std", "dec
 # MIT or Apache-2.0.
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 libc = "0.2"
+
+# mmap, mprotect and the file-backed guest pool for macOS and iOS (`memory::apple`). MIT or
+# Apache-2.0.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+libc = "0.2"

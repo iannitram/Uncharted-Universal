@@ -105,5 +105,72 @@ class LookupTest(unittest.TestCase):
             self.assertEqual(licence_check.check_ffmpeg_compatibility(good), [])
 
 
+class AppleTreeTest(unittest.TestCase):
+    """check_apple_tree: the tree vendored for the Apple build (ADR 0006, #396)."""
+
+    def tree(self, files):
+        import tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name) / 'apple'
+        for name, text in files.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return root
+
+    GOOD = {'vendor/bbcpu/VENDOR.txt': 'Vendored from x\n', 'vendor/bbcpu/LICENSE': 'GNU GENERAL PUBLIC LICENSE Version 2',
+            'vendor/bbcpu/src/cpu.c': '/* SPDX-License-Identifier: GPL-2.0-or-later */\nint x;\n'}
+
+    def test_the_real_apple_tree_is_allowed(self):
+        self.assertEqual(licence_check.check_apple_tree(ROOT / 'apple'), [])
+
+    def test_a_clean_tree_passes(self):
+        self.assertEqual(licence_check.check_apple_tree(self.tree(self.GOOD)), [])
+
+    def test_a_bbnet20_path_fails(self):
+        for name in ('vendor/bbcpu/bbnet20/a.c', 'vendor/bbnet20/VENDOR.txt', 'vendor/bbcpu/BBNET20.h'):
+            problems = licence_check.check_apple_tree(self.tree({**self.GOOD, name: 'int y;\n'}))
+            self.assertTrue(any('bbnet20' in p.lower() for p in problems), (name, problems))
+
+    def test_a_gpl3_file_name_fails(self):
+        for name in ('vendor/bbcpu/LICENSE.GPL-3.0', 'vendor/bbcpu/COPYING.GPLv3', 'vendor/bbcpu/AGPL-3.0.txt'):
+            problems = licence_check.check_apple_tree(self.tree({**self.GOOD, name: 'text'}))
+            self.assertEqual(len(problems), 1, (name, problems))
+            self.assertIn('GPL-3.0 or bbnet20 path', problems[0])
+
+    def test_gpl3_and_apache_text_fails_even_in_an_innocent_name(self):
+        for text in ('/* SPDX-License-Identifier: GPL-3.0-or-later */', '/* SPDX-License-Identifier: Apache-2.0 */',
+                     'GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007',
+                     'uses bbnet20 code'):
+            problems = licence_check.check_apple_tree(self.tree({**self.GOOD, 'vendor/bbcpu/src/net.c': text}))
+            self.assertEqual(len(problems), 1, (text, problems))
+            self.assertIn('src/net.c', problems[0])
+
+    def test_a_vendor_file_may_name_what_it_leaves_out(self):
+        files = {**self.GOOD, 'vendor/bbcpu/VENDOR.txt': 'Not vendored: gpu/bbnet20 (GPL-3.0).\n'}
+        self.assertEqual(licence_check.check_apple_tree(self.tree(files)), [])
+
+    def test_a_component_needs_vendor_txt_and_a_licence(self):
+        problems = licence_check.check_apple_tree(self.tree({'vendor/zydis/src/a.c': 'int a;\n'}))
+        self.assertEqual(len(problems), 2)
+        self.assertTrue(any('no VENDOR.txt' in p for p in problems))
+        self.assertTrue(any('no LICENSE' in p for p in problems))
+
+    def test_a_missing_folder_is_a_problem(self):
+        self.assertEqual(len(licence_check.check_apple_tree('/nonexistent-apple-dir')), 1)
+
+    def test_main_exit_status(self):
+        import subprocess, sys
+        script = str(ROOT / 'packaging' / 'licence_check.py')
+        ok = subprocess.run([sys.executable, script, 'apple', str(self.tree(self.GOOD))], capture_output=True)
+        self.assertEqual(ok.returncode, 0)
+        root = self.tree({**self.GOOD, 'vendor/bbcpu/LICENSE.GPL-3.0': 'x'})
+        bad = subprocess.run([sys.executable, script, 'apple', str(root)], capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn('GPL-3.0 or bbnet20 path', bad.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

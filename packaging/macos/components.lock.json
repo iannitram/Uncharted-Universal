@@ -1,0 +1,11 @@
+{
+  "save-relay": {
+    "version": "v1.0.0-rc.2",
+    "source_commit": "961513cb9ef56253970ee67b5b6febe2c2f0349d",
+    "asset": "save-relay-1.0.0-rc.2-aarch64-apple-darwin",
+    "sha256": "542d5dcd864a4f01c3ed973f7bfa9512b1016ac71e4f1b4c7660cad4858c9f5f",
+    "source": "https://github.com/iannitram/save-relay",
+    "license": "MIT",
+    "license_source": "https://github.com/iannitram/save-relay/blob/961513cb9ef56253970ee67b5b6febe2c2f0349d/LICENSE"
+  }
+}
