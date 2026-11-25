@@ -54,6 +54,8 @@ typedef struct BbSaveRelayCAbi {
     void (*free_str)(char* pointer);
     int (*http_respond)(SaveRelayHttpSink* sink, uint16_t status, const char* headers,
                         const uint8_t* body, size_t body_len);
+    char* (*download_game_files)(const char* manifest_json, const char* dest_dir);
+    char* (*game_files_status)(const char* manifest_json, const char* dest_dir);
 } BbSaveRelayCAbi;
 
 typedef enum BbAndroidSaveGame {
@@ -129,6 +131,30 @@ typedef struct BbSaveRelaySignInChallenge {
     char message[512];
 } BbSaveRelaySignInChallenge;
 
+typedef struct BbSaveRelayGameFilesRequest {
+    uint32_t game;
+    const char* dest_dir;
+    const char* manifest_path;
+    const char* manifest_json_override;
+} BbSaveRelayGameFilesRequest;
+
+typedef struct BbSaveRelayGameFilesResult {
+    int32_t outcome;
+    char game_id[80];
+    uint64_t total_files;
+    uint64_t completed_files;
+    uint64_t downloaded_files;
+    uint64_t skipped_files;
+    uint64_t partial_files;
+    uint64_t bytes_on_disk;
+    uint64_t bytes_downloaded;
+    uint64_t total_bytes;
+    int complete;
+    int reauth_needed;
+    char error_code[64];
+    char message[512];
+} BbSaveRelayGameFilesResult;
+
 /// Writes the canonical game id ("uncharted-1", "uncharted-2", "uncharted-3") for `game`.
 /// Returns 0 on success, < 0 on invalid game or small buffer.
 int bb_android_save_relay_game_id(uint32_t game, char* out_id, size_t out_cap);
@@ -198,6 +224,18 @@ int bb_android_save_relay_sign_in_start(const char* service, const char* redirec
 int bb_android_save_relay_sign_in_finish(const char* redirect_url, const BbSaveRelayCAbi* abi,
                                          char* err_buf, size_t err_cap);
 
+/// Downloads per-game asset files resumably through save-relay (Dropbox App folder, save-relay#305).
+/// Returns >= 0 for handled outcomes (DONE=0, OFFLINE=1, LOCAL_ONLY=2), or < 0 on error/unavailable.
+int bb_android_save_relay_download_game_files(const BbSaveRelayGameFilesRequest* req,
+                                              const BbSaveRelayCAbi* abi,
+                                              BbSaveRelayGameFilesResult* out_result);
+
+/// Inspects local completion and `.part` resume progress for per-game assets without network I/O.
+/// Returns >= 0 on success (DONE=0) or < 0 on error/unavailable.
+int bb_android_save_relay_game_files_status(const BbSaveRelayGameFilesRequest* req,
+                                            const BbSaveRelayCAbi* abi,
+                                            BbSaveRelayGameFilesResult* out_result);
+
 #ifdef __cplusplus
 } // extern "C"
 
@@ -225,6 +263,16 @@ inline int PushAfterExit(const BbSaveRelaySyncRequest& req, const BbSaveRelayCAb
 inline int Status(const BbSaveRelaySyncRequest& req, const BbSaveRelayCAbi* abi,
                   BbSaveRelaySyncResult& out) {
     return bb_android_save_relay_status(&req, abi, &out);
+}
+
+inline int DownloadGameFiles(const BbSaveRelayGameFilesRequest& req, const BbSaveRelayCAbi* abi,
+                             BbSaveRelayGameFilesResult& out) {
+    return bb_android_save_relay_download_game_files(&req, abi, &out);
+}
+
+inline int GameFilesStatus(const BbSaveRelayGameFilesRequest& req, const BbSaveRelayCAbi* abi,
+                           BbSaveRelayGameFilesResult& out) {
+    return bb_android_save_relay_game_files_status(&req, abi, &out);
 }
 
 } // namespace bb::android::saverelay

@@ -5117,6 +5117,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "uncharted_recomp"
+version = "0.3.15"
+dependencies = [
+ "cc",
+ "serde_json",
+ "uncharted_core",
+]
+
+[[package]]
 name = "uncharted_runtime"
 version = "0.3.15"
 dependencies = [
