@@ -77,6 +77,7 @@ APPLE_FORBIDDEN_TEXT = ('spdx-license-identifier: gpl-3', 'spdx-license-identifi
                         'licence: lgpl-3', 'license: lgpl-3', 'licence: apache', 'license: apache',
                         'gnu general public license\n                       version 3', 'version 3, 29 june 2007',
                         'apache license\n                           version 2.0', 'bbnet20')
+APPLE_TEXT_CAP = 4_000_000
 APPLE_TEXT_SUFFIXES = ('.c', '.h', '.inc', '.s', '.m', '.mm', '.rs', '.txt', '.md', '.toml', '.py', '.sh', '')
 
 
@@ -105,7 +106,9 @@ def check_apple_tree(root):
                 (path.is_file() and any(mark in path.name.lower() for mark in APPLE_FORBIDDEN_NAMES)):
             problems.append(f'{relative}: GPL-3.0 or bbnet20 path under apple/')
             continue
-        if path.is_file() and path.suffix.lower() in APPLE_TEXT_SUFFIXES and path.stat().st_size < 4_000_000:
+        if path.is_file() and path.suffix.lower() in APPLE_TEXT_SUFFIXES and path.stat().st_size >= APPLE_TEXT_CAP:
+            print(f'warning: {relative}: text file of {APPLE_TEXT_CAP} bytes or more not scanned', file=sys.stderr)
+        if path.is_file() and path.suffix.lower() in APPLE_TEXT_SUFFIXES and path.stat().st_size < APPLE_TEXT_CAP:
             text = path.read_text(encoding='utf-8', errors='ignore').lower()
             if path.name == 'VENDOR.txt':
                 text = _without_exclusions(text)
