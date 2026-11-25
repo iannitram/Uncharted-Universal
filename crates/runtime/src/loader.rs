@@ -586,7 +586,7 @@ pub(crate) const CONVOY_SINK_PATCH: [u8; 20] = [
     0x00, 0x00, 0x00, 0x90,
 ];
 
-#[cfg(any(target_arch = "x86_64", test))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) fn convoy_sink_enabled() -> bool {
     !std::env::var("BB_CONVOY_SINK").is_ok_and(|v| v.starts_with('0'))
 }

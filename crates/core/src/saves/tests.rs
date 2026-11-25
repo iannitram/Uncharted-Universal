@@ -540,12 +540,14 @@ fn write_fake_relay(dir: &Path, steps: &[(i32, Value)]) -> crate::relay::Desktop
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
         script
     };
+    // System32 find.exe by full path: under Git Bash or MSYS2, a bare `find` is the Unix one,
+    // which reads `/c` as a folder and walks the whole drive, so the test never ends.
     #[cfg(windows)]
     let program = {
         let script = dir.join("save-relay.cmd");
         let dir_str = dir.to_string_lossy();
         let body = format!(
-            "@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"dir={dir_str}\"\r\nset \"calls=%dir%\\calls.txt\"\r\nset /a step=0\r\nif exist \"%calls%\" (\r\n    for /f %%A in ('type \"%calls%\" ^| find /c /v \"\"') do set \"step=%%A\"\r\n)\r\necho %*>>\"%calls%\"\r\ntype \"%dir%\\!step!.json\"\r\nset /p code=<\"%dir%\\!step!.code\"\r\nexit /b %code%\r\n"
+            "@echo off\r\nsetlocal enabledelayedexpansion\r\nset \"dir={dir_str}\"\r\nset \"calls=%dir%\\calls.txt\"\r\nset /a step=0\r\nif exist \"%calls%\" (\r\n    for /f %%A in ('type \"%calls%\" ^| %SystemRoot%\\System32\\find.exe /c /v \"\"') do set \"step=%%A\"\r\n)\r\necho %*>>\"%calls%\"\r\ntype \"%dir%\\!step!.json\"\r\nset /p code=<\"%dir%\\!step!.code\"\r\nexit /b %code%\r\n"
         );
         fs::write(&script, body).unwrap();
         script
