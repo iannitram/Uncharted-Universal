@@ -44,7 +44,7 @@ make_app() {
     if [ "$sdk" = iphoneos ]; then platform=iPhoneOS; min_flag=-miphoneos-version-min=15.0
     else platform=iPhoneSimulator; min_flag=-mios-simulator-version-min=15.0; fi
     xcrun --sdk "$sdk" clang -arch arm64 "$min_flag" -Wno-everything -o "$app/$exe" "$work/fake-$game.c"
-    sed -e "s|@NAME@|Fake $game|g" -e "s|@APP@|$exe|g" -e "s|@BUNDLE_ID@|test.$game|g" -e "s|@VERSION@|9.9.9|g" \
+    sed -e "s|@NAME@|Fake $game|g" -e "s|@APP@|$exe|g" -e "s|@BUNDLE_ID@|test.$game|g" -e "s|@VERSION@|9.9.9|g" -e "s|@BUILD@|9.9.9|g" \
         -e "s|@PLATFORM@|$platform|g" -e "s|@GAME@|$game|g" -e "s|@NUMBER@|1|g" -e "s|@RELAY_MANIFEST@|uncharted-1.json|g" \
         "$template" > "$app/Info.plist"
     echo '{}' > "$app/save-relay-manifests/uncharted-1.json"
