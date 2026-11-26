@@ -9,6 +9,7 @@
 
 #include <vk_mem_alloc.h>
 
+#include "bbport_dlss_policy.h"
 #include "bbport_settings.h"
 #include "ffx_vk_fsr3_3_1_5_bridge.h"
 #include "video_core/host_shaders/frame_gen_inputs_comp.h"
@@ -108,6 +109,16 @@ FrameGenerator::FrameGenerator(const Instance& instance_, Scheduler& scheduler_)
 #endif
         settings.frame_gen_problem = "DLSS Frame Generation needs a GeForce RTX 40 or newer";
         settings.frame_gen = BbSettings::FrameGenFsr3;
+    }
+    if (BbDlssPolicy::ForceFrameGen(std::getenv("BB_FORCE_FRAME_GEN"))) {
+        // dlss_max >= 1 means the bridge offers 2x (NGX's own yes or the override); feature
+        // creation still decides and falls over to FSR 3.1 on a refusal.
+        std::printf("Frame generation: WARNING BB_FORCE_FRAME_GEN=1 is set: DLSS Frame Generation "
+                    "is tried even where the NVIDIA SDK does not list the GPU (testing only; "
+                    "%s)\n",
+                    dlss_max >= 1 ? "offered, feature creation decides"
+                                  : "not offered (DLSS unavailable, an older bbport_dlss.dll or "
+                                    "no extension list from NGX), FSR 3.1 is used");
     }
     if (settings.frame_gen != BbSettings::FrameGenOff) {
         const int max = settings.frame_gen == BbSettings::FrameGenDlss ? dlss_max + 1 : 2;
@@ -665,6 +676,18 @@ u32 FrameGenerator::GenerateDlss(vk::CommandBuffer cmdbuf, vk::Image color,
         return 0;
     }
     const Dlss::FrameGenDesc desc{width, height, ColorFormat, input_width, input_height};
+    if (const char* problem =
+            BbDlssPolicy::FrameGenSizeProblem(width, height, input_width, input_height)) {
+        // Sizes the NVIDIA driver may not take (#155; Generate already skips larger inputs, this
+        // also covers zero and oversized ones): this frame only, no switch of provider.
+        static int noted = 0;
+        if (noted++ < 3) {
+            std::printf("Frame generation: skipped a frame (%s: %ux%u, depth and motion %ux%u)\n",
+                        problem, width, height, input_width, input_height);
+        }
+        reset = true;
+        return 0;
+    }
     if (!dlss->HasFrameGen(desc)) {
         // The previous feature may still be used by submitted work; `cmdbuf` stays open.
         scheduler.WaitSubmitted();

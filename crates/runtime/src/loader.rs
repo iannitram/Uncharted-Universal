@@ -1,10 +1,11 @@
 //! Boot image parser, CLI option parser, and byte-pattern scanner for `uncharted-run`
 //! (roadmap 3.16, #457: porting `src/probe.c` into Rust).
 //!
-//! Full guest execution (mmap/VirtualAlloc image mapping, signal/VEH fault handlers,
-//! `bbgpu_init`, and `enter_on_stack`) remains in `src/probe.c` until C/GPU linkage moves
-//! to `uncharted-run` in 3.17.
+//! Full guest execution (image mapping, signal/VEH fault handlers, `bbgpu_init`, and
+//! `enter_on_stack`) is in the submodules below; `cli` is the command flow `uncharted-run` runs.
+//! `src/probe.c` stays until `bb-probe` is retired (3.17e).
 
+pub mod cli;
 pub mod entry;
 #[cfg(all(
     target_arch = "x86_64",

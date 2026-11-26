@@ -42,6 +42,7 @@ inline constexpr const char* const AllowedShimHeaders[] = {
     "bbport_copy.h",
     "bbport_core_boundary.h",
     "bbport_diag.h",
+    "bbport_dlss_policy.h",
     "bbport_focus_fix.h",
     "bbport_movie.h",
     "bbport_nan_guard.h",

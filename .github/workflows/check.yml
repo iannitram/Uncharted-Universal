@@ -76,7 +76,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Lint crates/runtime as the loader links it (cfg(uncharted_loader), crates/runtime/build.rs)
-        run: UNCHARTED_RUNTIME_LOADER=1 cargo clippy -p uncharted_runtime --lib -- -D warnings
+        # The cfg alone: UNCHARTED_GPU_BUILD would also build gpu/, which this job does not.
+        run: cargo clippy -p uncharted_runtime --lib -- -D warnings --cfg uncharted_loader
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
@@ -156,12 +157,17 @@ jobs:
             mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
             mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
             mingw-w64-clang-x86_64-{protobuf,openssl,zlib,miniupnpc,nlohmann-json}
-      - name: Add the Rust target that matches CLANG64 (bb-probe links crates/runtime)
+      - name: Add the Rust target that matches CLANG64 (bb-probe and uncharted-run link crates/runtime)
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
-      - name: Run the runtime's Windows shim tests (os, 3.15)
-        run: 'cargo test -p uncharted_runtime --lib os::'
+      - name: Test the whole Rust workspace on the CLANG64 target (6.01, x86_64-pc-windows-gnullvm)
+        # The release zip is built for this target (build.yml), so the workspace is tested on it too;
+        # this covers the runtime's Windows shims (os, 3.15) and every other crate. Each step is a
+        # new shell: msys2-env.sh puts CLANG64's linker and runtime DLLs on PATH for this target.
+        run: |
+          source ./msys2-env.sh
+          cargo test --workspace --target x86_64-pc-windows-gnullvm
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no

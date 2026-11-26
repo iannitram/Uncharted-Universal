@@ -2,15 +2,17 @@
 //!
 //! - the NID table: `src/import_names.inc` (written by `tools/import_names.py`) becomes
 //!   `$OUT_DIR/nid_table.rs`, sorted by NID so `abi::nid_name` can bisect;
-//! - `cfg(uncharted_loader)`: set when `UNCHARTED_RUNTIME_LOADER=1`, for the static library that
-//!   is linked into the C loader. Only then does the Rust side call the C modules that are still
-//!   C (their resolvers and reports, `runtime_quit`); `cargo test` and the mobile builds link
-//!   no C;
-//! - the GPU library: with `UNCHARTED_GPU_BUILD=<build dir>`, CMake and Ninja build `gpu/` (the
-//!   `bbgpu` target) there before the crate is compiled. `build.sh` sets it on Linux; on Windows
-//!   CMake builds `gpu/` and the loader and runs cargo itself, so this step is not used there.
-//!   Apple targets (macOS, iOS) never build `gpu/`: CI leaves the variable unset and this script
-//!   refuses it for them (8.02; the Apple renderer is Metal, 8.04);
+//! - the GPU library and `cfg(uncharted_loader)`: `UNCHARTED_GPU_BUILD=<build dir>` says this
+//!   build is linked with the GPU library (`gpu/`, `bbgpu`), as the loader is. Only then does the
+//!   Rust side call it and the C code linked with it (its resolver, SDL3, LibAtrac9, the
+//!   loader's `runtime_quit`); `cargo test`, the packaged Rust faces and the mobile builds leave
+//!   the variable unset and link no C. On Linux CMake and Ninja build `gpu/` there before the
+//!   crate is compiled and the binary links `libbbgpu.so` (`build.sh` sets the variable). On
+//!   Windows CMake builds `gpu/` and links `uncharted-run.exe` itself (`gpu/CMakeLists.txt` runs
+//!   cargo with the variable set to its own build directory), so nothing is built here. Apple
+//!   targets (macOS, iOS) never build `gpu/`: CI leaves the variable unset and this script
+//!   refuses it for them (8.02; the Apple renderer is Metal, 8.04). `cargo clippy -- --cfg
+//!   uncharted_loader` lints the loader build without the GPU library (`check.yml`);
 //! - the Windows link flags of `uncharted-run`: no high-entropy ASLR and a 16 MiB committed main
 //!   stack, as `gpu/CMakeLists.txt` gives `bb-probe` (see `windows_bin_link_args`).
 
@@ -26,7 +28,7 @@ fn main() {
     let root = manifest.join("../..");
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
     nid_table(&root, &out);
-    loader_cfg();
+    println!("cargo::rustc-check-cfg=cfg(uncharted_loader)");
     windows_bin_link_args();
     gpu(&root);
 }
@@ -102,20 +104,12 @@ fn nid_table(root: &Path, out: &Path) {
     fs::write(out.join("nid_table.rs"), table).expect("write nid_table.rs");
 }
 
-fn loader_cfg() {
-    println!("cargo::rustc-check-cfg=cfg(uncharted_loader)");
-    println!("cargo::rustc-check-cfg=cfg(uncharted_gpu)");
-    println!("cargo::rerun-if-env-changed=UNCHARTED_RUNTIME_LOADER");
-    if env::var("UNCHARTED_RUNTIME_LOADER").as_deref() == Ok("1") {
-        println!("cargo::rustc-cfg=uncharted_loader");
-    }
-}
-
-/// `cmake -S gpu -B <dir> -G Ninja <args>` then `ninja -C <dir> bbgpu`, as `build.sh` did. The
-/// CMake arguments come in `UNCHARTED_GPU_CMAKE_ARGS`, separated by the unit separator (0x1f),
-/// so a value can hold spaces. Ninja's output goes to `UNCHARTED_GPU_LOG` (default
-/// `<dir>/gpu-build.log`); a failure prints the last 40 lines that are not progress lines and
-/// stops the build, so an older library is never used silently.
+/// With `UNCHARTED_GPU_BUILD=<dir>`: `cfg(uncharted_loader)`, and on Linux `cmake -S gpu -B <dir>
+/// -G Ninja <args>` then `ninja -C <dir> bbgpu`, as `build.sh` did, and the link of the GPU
+/// library into the binary. The CMake arguments come in `UNCHARTED_GPU_CMAKE_ARGS`, separated by
+/// the unit separator (0x1f), so a value can hold spaces. Ninja's output goes to
+/// `UNCHARTED_GPU_LOG` (default `<dir>/gpu-build.log`); a failure prints the last 40 lines that
+/// are not progress lines and stops the build, so an older library is never used silently.
 fn gpu(root: &Path) {
     for name in [
         "UNCHARTED_GPU_BUILD",
@@ -135,16 +129,21 @@ fn gpu(root: &Path) {
             "UNCHARTED_GPU_BUILD is set for an Apple target: gpu/ is not built there (8.04 Metal)"
         );
     }
+    println!("cargo::rustc-cfg=uncharted_loader");
+    // Windows: gpu/CMakeLists.txt runs this build from inside its own Ninja build of `dir`, then
+    // links the static library with libbbgpu.a; a second Ninja on the same directory would race
+    // it.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        return;
+    }
     let gpu = root.join("gpu");
     // The sources, and the library itself (a deleted build directory builds again). Ninja does
     // not touch an up-to-date library, so this does not rerun on every build.
     println!("cargo::rerun-if-changed={}", gpu.display());
-    let library = if cfg!(windows) {
-        "libbbgpu.a"
-    } else {
-        "libbbgpu.so"
-    };
-    println!("cargo::rerun-if-changed={}", dir.join(library).display());
+    println!(
+        "cargo::rerun-if-changed={}",
+        dir.join("libbbgpu.so").display()
+    );
     let log =
         env::var_os("UNCHARTED_GPU_LOG").map_or_else(|| dir.join("gpu-build.log"), PathBuf::from);
     let mut cmake = Command::new("cmake");
@@ -170,7 +169,6 @@ fn gpu(root: &Path) {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         let out = PathBuf::from(env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
         build_atrac9(root, &out);
-        println!("cargo::rustc-cfg=uncharted_gpu");
         println!("cargo::rustc-link-search=native={}", dir.display());
         println!("cargo::rustc-link-search=native={}", out.display());
         println!("cargo::rustc-link-lib=dylib=bbgpu");
