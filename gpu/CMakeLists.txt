@@ -430,6 +430,10 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
+add_executable(dlss-policy-test EXCLUDE_FROM_ALL ../tests/test_dlss_policy.cpp)
+target_compile_options(dlss-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(dlss-policy-test PRIVATE shim)
+
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
