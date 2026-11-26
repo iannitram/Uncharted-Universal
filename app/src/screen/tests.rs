@@ -589,12 +589,46 @@ fn not_set_up_shows_set_up_only() {
 fn b_asks_to_quit() {
     let mut screen = Screen::new(three([0, 0, 0]), None, "");
     screen.handle(Input::Back);
-    assert_eq!(screen.view(&clock()).overlay, OverlayView::Quit);
+    assert_eq!(
+        screen.view(&clock()).overlay,
+        OverlayView::Quit { stay: false }
+    );
     // B stays.
     screen.handle(Input::Back);
     assert_eq!(screen.view(&clock()).overlay, OverlayView::None);
     screen.handle(Input::Back);
     assert_eq!(screen.handle(Input::NextGame), Command::None);
+    assert_eq!(screen.handle(Input::Activate), Command::Quit);
+}
+
+#[test]
+fn quit_prompt_focus_moves_to_stay() {
+    let mut screen = Screen::new(three([0, 0, 0]), None, "");
+    screen.handle(Input::Back);
+    // Right moves the focus from Quit to Stay; A on Stay closes the prompt.
+    screen.handle(Input::Move(Nav::Right));
+    assert_eq!(
+        screen.view(&clock()).overlay,
+        OverlayView::Quit { stay: true }
+    );
+    assert_eq!(screen.handle(Input::Activate), Command::None);
+    assert_eq!(screen.view(&clock()).overlay, OverlayView::None);
+    // Left goes back to Quit; Tab and Shift+Tab move it the same way.
+    screen.handle(Input::Back);
+    screen.handle(Input::Move(Nav::Right));
+    screen.handle(Input::Move(Nav::Left));
+    assert_eq!(
+        screen.view(&clock()).overlay,
+        OverlayView::Quit { stay: false }
+    );
+    screen.handle(Input::Tab { back: false });
+    assert_eq!(
+        screen.view(&clock()).overlay,
+        OverlayView::Quit { stay: true }
+    );
+    // Clicking Quit quits even while Stay has the focus.
+    assert_eq!(screen.click(5, 0), Command::Quit);
+    screen.handle(Input::Tab { back: true });
     assert_eq!(screen.handle(Input::Activate), Command::Quit);
 }
 

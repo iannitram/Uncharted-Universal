@@ -315,7 +315,8 @@ fn apply(window: &AppWindow, view: &View, pictures: &mut Pictures, style: prompt
     window.set_status(view.status.as_str().into());
     window.set_overlay(view.overlay.code());
     match &view.overlay {
-        OverlayView::None | OverlayView::Quit => {}
+        OverlayView::None => {}
+        OverlayView::Quit { stay } => window.set_quit_stay(*stay),
         OverlayView::Warning(text) | OverlayView::Running(text) => {
             window.set_overlay_text(text.as_str().into());
         }
