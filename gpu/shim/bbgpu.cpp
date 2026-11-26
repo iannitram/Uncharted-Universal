@@ -253,9 +253,6 @@ extern "C" BbMovieRect bbgpu_safe_area(uint32_t screen_w, uint32_t screen_h) {
 extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
     static std::mutex resize_mutex;
     static BbResizeTracker tracker{kBbResizeDebounceMs};
-    const BbRenderSize active = ActiveRenderSize();
-    const u32 sw = active.width;
-    const u32 sh = active.height;
     const u64 now_ms = u64(std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now().time_since_epoch())
                               .count());
@@ -264,7 +261,9 @@ extern "C" int bbgpu_notify_resize(uint32_t width, uint32_t height) {
     {
         std::scoped_lock lock{resize_mutex};
         const bool prev_restart = tracker.State().needs_restart;
-        state = tracker.Observe(sw, sh, width, height, now_ms);
+        // Baseline is the startup swapchain extent, not ActiveRenderSize(): a render size that
+        // differs from the window is presenter-scaled and is not a resize (#640).
+        state = tracker.ObserveExtent(width, height, now_ms);
         notify_overlay = state.just_settled || (prev_restart && !state.needs_restart);
     }
     if (state.just_settled) {

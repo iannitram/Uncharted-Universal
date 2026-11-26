@@ -63,6 +63,28 @@ int main() {
     assert(!s.just_settled);
     assert(s.settled_width == 2092 && s.settled_height == 1080);
 
+    // 3. Startup baseline is the first swapchain extent (#640): no prompt at startup when the
+    // render size differs from the window (3328x1396 render in 3440x1440, 2560x1440 in 1600x900).
+    BbResizeTracker startup(250);
+    s = startup.ObserveExtent(0, 0, 0); // minimized before the first frame: no baseline yet
+    assert(!s.needs_restart && startup.StartWidth() == 0);
+    s = startup.ObserveExtent(1600, 900, 10);
+    assert(startup.StartWidth() == 1600 && startup.StartHeight() == 900);
+    s = startup.ObserveExtent(1600, 900, 300);
+    assert(!s.needs_restart && !s.just_settled);
+    s = startup.ObserveExtent(1600, 900, 5000);
+    assert(!s.needs_restart && !s.just_settled);
+
+    // A real resize still prompts once debounced, and resizing back clears it.
+    assert(!startup.ObserveExtent(2560, 1440, 6000).needs_restart);
+    s = startup.ObserveExtent(2560, 1440, 6250);
+    assert(s.needs_restart && s.just_settled);
+    assert(s.settled_width == 2560 && s.settled_height == 1440);
+    assert(startup.StartWidth() == 1600 && startup.StartHeight() == 900);
+    startup.ObserveExtent(1600, 900, 7000);
+    s = startup.ObserveExtent(1600, 900, 7250);
+    assert(!s.needs_restart && !s.just_settled);
+
     std::printf("runtime-resize-test: all assertions passed\n");
     return 0;
 }
