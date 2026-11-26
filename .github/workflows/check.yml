@@ -76,7 +76,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - name: Lint crates/runtime as the loader links it (cfg(uncharted_loader), crates/runtime/build.rs)
-        run: UNCHARTED_RUNTIME_LOADER=1 cargo clippy -p uncharted_runtime --lib -- -D warnings
+        # The cfg alone: UNCHARTED_GPU_BUILD would also build gpu/, which this job does not.
+        run: cargo clippy -p uncharted_runtime --lib -- -D warnings --cfg uncharted_loader
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features

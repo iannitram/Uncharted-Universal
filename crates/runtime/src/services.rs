@@ -1817,7 +1817,7 @@ mod guest {
     }
 
     /// Co-op (`BB_ONLINE=1`): the GPU library's online version of `name` when it has one.
-    #[cfg(any(uncharted_loader, uncharted_gpu))]
+    #[cfg(uncharted_loader)]
     fn online(name: &CStr, symbol: &str) -> Option<usize> {
         extern "C" {
             fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
@@ -1838,7 +1838,7 @@ mod guest {
     }
 
     /// Without the loader there is no GPU library and no co-op.
-    #[cfg(not(any(uncharted_loader, uncharted_gpu)))]
+    #[cfg(not(uncharted_loader))]
     fn online(_name: &CStr, _symbol: &str) -> Option<usize> {
         None
     }

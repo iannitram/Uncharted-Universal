@@ -173,14 +173,14 @@ done
 # and the benchmark mode, a static library linked into the loader. Its build script builds the
 # GPU library first (CMake over gpu/ into out/gpu/libbbgpu.so, crates/runtime/build.rs) with the
 # CMake arguments below, joined by the unit separator. A failed GPU build stops the build there:
-# an older libbbgpu.so would otherwise be used silently. UNCHARTED_RUNTIME_LOADER=1 lets the
-# Rust side call the C modules that remain.
+# an older libbbgpu.so would otherwise be used silently. The same variable gives the Rust side
+# the loader build, cfg(uncharted_loader), which calls the GPU library.
 command -v cargo >/dev/null || { echo 'Need cargo (rustup): crates/runtime is part of the loader.' >&2; exit 1; }
 gpu_cmake=(-DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo"
     -DVulkan_INCLUDE_DIR="$vulkan_headers")
 echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf '%s' "${gpu_cmake[*]}") \
-    UNCHARTED_GPU_LOG=$PWD/out/gpu-build.log UNCHARTED_RUNTIME_LOADER=1 \
+    UNCHARTED_GPU_LOG=$PWD/out/gpu-build.log \
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)

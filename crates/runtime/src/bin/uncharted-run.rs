@@ -1,9 +1,9 @@
 //! `uncharted-run`: the desktop runner (docs/code-map.md "Modules: crates/runtime").
 //! Supports `--probe` (#171), `--force-fault` (#168), controller tools, `--list-missing`, and
 //! Rust loader guest execution (`crates/runtime/src/loader/`, #457). The flow is
-//! `loader::cli::run`. On Linux with `uncharted_gpu` this binary links `libbbgpu.so` and installs
-//! its hooks below; the Windows build with the GPU is linked by CMake from
-//! `crates/runtime/c/uncharted_run_main.c` instead (see `loader::cli`).
+//! `loader::cli::run`. On Linux with `uncharted_loader` (`UNCHARTED_GPU_BUILD`, `build.rs`) this
+//! binary links `libbbgpu.so` and installs its hooks below; the Windows build with the GPU is
+//! linked by CMake from `crates/runtime/c/uncharted_run_main.c` instead (see `loader::cli`).
 
 use std::process::ExitCode;
 use uncharted_runtime::loader::entry;
@@ -18,19 +18,19 @@ pub extern "C" fn runtime_restart() -> ! {
     entry::runtime_restart()
 }
 
-#[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
 #[no_mangle]
 pub extern "C" fn runtime_benchmark_active() -> std::ffi::c_int {
     uncharted_runtime::benchmark_run::uncharted_benchmark_active()
 }
 
-#[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
 #[no_mangle]
 pub extern "C" fn runtime_benchmark_frame(vram_mib: u64) -> std::ffi::c_int {
     uncharted_runtime::benchmark_run::uncharted_benchmark_frame(vram_mib)
 }
 
-#[cfg(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux"))]
+#[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
 fn configure_gpu_and_fault_hooks() {
     use std::ffi::{c_char, c_int, c_void};
     use uncharted_runtime::loader::{entry::BbGpuConfig, fault};
@@ -74,7 +74,7 @@ fn configure_gpu_and_fault_hooks() {
     });
 }
 
-#[cfg(not(all(uncharted_gpu, target_arch = "x86_64", target_os = "linux")))]
+#[cfg(not(all(uncharted_loader, target_arch = "x86_64", target_os = "linux")))]
 fn configure_gpu_and_fault_hooks() {}
 
 fn main() -> ExitCode {

@@ -349,9 +349,10 @@ if (WIN32)
     target_link_libraries(bb-probe PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread)
     # crates/runtime (piece 3.01): the runtime modules ported to Rust (src/runtime.c is now its
     # `abi`) and the benchmark mode (#173/#242), a static library linked into bb-probe. It needs
-    # cargo with the x86_64-pc-windows-gnullvm target. UNCHARTED_RUNTIME_LOADER=1 lets it call the
-    # C modules that remain (crates/runtime/build.rs). Here CMake builds gpu/ and runs cargo; on
-    # Linux the crate's build script builds gpu/ instead (build.sh).
+    # cargo with the x86_64-pc-windows-gnullvm target. UNCHARTED_GPU_BUILD (this build directory)
+    # tells the crate it is linked with libbbgpu.a here (cfg(uncharted_loader),
+    # crates/runtime/build.rs), which builds nothing itself on Windows: CMake builds gpu/ and runs
+    # cargo; on Linux the crate's build script builds gpu/ instead (build.sh).
     find_program(BB_CARGO cargo)
     if (NOT BB_CARGO)
         message(FATAL_ERROR "bb-probe needs cargo (rustup target add x86_64-pc-windows-gnullvm): crates/runtime is part of the loader")
@@ -359,7 +360,8 @@ if (WIN32)
     set(bb_rust_dir "${CMAKE_CURRENT_BINARY_DIR}/rust")
     set(bb_rust_lib "${bb_rust_dir}/x86_64-pc-windows-gnullvm/release/libuncharted_runtime.a")
     add_custom_target(uncharted_runtime_rust
-        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}" UNCHARTED_RUNTIME_LOADER=1
+        COMMAND ${CMAKE_COMMAND} -E env "CARGO_TARGET_DIR=${bb_rust_dir}"
+                "UNCHARTED_GPU_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
                 ${BB_CARGO} build -p uncharted_runtime --lib --release --target x86_64-pc-windows-gnullvm
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/.."
         BYPRODUCTS "${bb_rust_lib}"
