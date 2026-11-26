@@ -1,10 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <iterator>
 #include <limits>
+#include <thread>
 #include <vector>
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -28,6 +31,7 @@ void (*g_gpu_crash_context)() = nullptr;
 // bbport: the draws and dispatches the GPU last reached (BB_GPU_CHECKPOINTS=1).
 void (*g_gpu_checkpoint_report)() = nullptr;
 extern bool g_device_fault_ext;
+extern VkDevice g_crash_device;
 } // namespace Vulkan
 namespace VideoCore {
 void DumpBuffersNear(u64 address);
@@ -38,6 +42,14 @@ namespace Vulkan {
 // the game ends: every later GPU wait would fail the same way (it used to wait forever).
 // Also called where a submission or present reports the loss (vk_semaphore.h).
 [[noreturn]] void DeviceLost(vk::Device device) {
+    // bbport: one report. Another thread that sees the loss (a side-queue submit, a fence wait)
+    // waits here while the first one prints and ends the process.
+    static std::atomic_flag reporting = ATOMIC_FLAG_INIT;
+    if (reporting.test_and_set()) {
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
     std::printf("GPU crash: the graphics device was lost\n");
     if (g_device_fault_ext && VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT) {
         const auto get = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceFaultInfoEXT;
@@ -95,6 +107,10 @@ namespace Vulkan {
     TerminateProcess(GetCurrentProcess(), 5);
 #endif
     std::_Exit(5);
+}
+
+[[noreturn]] void DeviceLostAnywhere() {
+    DeviceLost(vk::Device{g_crash_device});
 }
 
 Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {

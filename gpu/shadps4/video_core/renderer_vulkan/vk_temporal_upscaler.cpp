@@ -1138,6 +1138,8 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
     const auto& settings = BbSettings::Get();
     const std::array<float, 3> params{settings.reactive_scale, settings.reactive_max,
                                       settings.reactive_threshold};
+    // bbport: binds its own compute pipeline (see TileManager::RecordTilingDispatch, #155).
+    scheduler.GetBindState().ForgetCompute();
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         const vk::ImageMemoryBarrier2 to_write{
             .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,

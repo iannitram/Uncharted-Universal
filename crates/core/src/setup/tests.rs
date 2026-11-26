@@ -616,14 +616,8 @@ mod hub_client {
             b"my save"
         );
         assert!(!client::staging(&dirs).exists());
-        if cfg!(windows) {
-            // No protected peer storage on Windows yet: paired for this pull only.
-            assert!(pulled.peer_note.is_some());
-            assert!(!is_first_run(&dirs));
-        } else {
-            assert_eq!(pulled.peer_note, None);
-            assert!(has_peers(&dirs));
-        }
+        assert_eq!(pulled.peer_note, None);
+        assert!(has_peers(&dirs));
     }
 
     #[test]
@@ -649,7 +643,6 @@ mod hub_client {
         assert!(!has_peers(&dirs));
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn pair_and_pull_service_installs_from_hub_service() {
         use crate::hub::{HubService, PairingServer};
