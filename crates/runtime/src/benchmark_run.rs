@@ -3,8 +3,10 @@
 //! [`Session`] is the whole run as a pure state machine over a microsecond clock that its
 //! caller supplies: the pad schedule (the title-screen lead-in, then the camera path), the frame
 //! samples, the expiry and the report. The `uncharted_benchmark_*` functions at the bottom hold
-//! one session in a global, read the real clock and are what the C loader and the GPU library
-//! call (`src/runtime_benchmark.c`); nothing else in the runtime knows about benchmarks.
+//! one session in a global, read the real clock and are what the loaders call; the
+//! `runtime_benchmark_*` exports below (3.17e, the former `src/runtime_benchmark.c`) are the
+//! names the C loader (`src/probe.c`) and the GPU library (`videoout/driver.cpp`) link against.
+//! Nothing else in the runtime knows about benchmarks.
 //!
 //! The run is off unless `BB_BENCHMARK` is set: [`uncharted_benchmark_pad`] and
 //! [`uncharted_benchmark_frame`] then return 0 after one atomic load and touch nothing.
@@ -358,6 +360,47 @@ pub extern "C" fn uncharted_benchmark_crash() {
     if let Some(run) = guard.as_mut() {
         // Best effort: the process is dying and there is no one to tell.
         let _ = run.crash();
+    }
+}
+
+/// The loader's names for the functions above (roadmap 3.17e: the former
+/// `src/runtime_benchmark.c`, declared for C in `src/runtime.h`). Only in the loader build, which
+/// links a `runtime_quit` (`bb-probe`'s `probe.c`, `uncharted-run`'s main).
+#[cfg(all(uncharted_loader, target_arch = "x86_64"))]
+mod loader_glue {
+    use std::ffi::{c_char, c_int};
+
+    /// `uncharted_benchmark_start` for `probe.c`'s `main`.
+    ///
+    /// # Safety
+    /// As [`super::uncharted_benchmark_start`].
+    #[no_mangle]
+    pub unsafe extern "C" fn runtime_benchmark_start(saves_dir: *const c_char) -> c_int {
+        // SAFETY: the caller's contract is the one forwarded.
+        unsafe { super::uncharted_benchmark_start(saves_dir) }
+    }
+
+    /// 1 while a benchmark run is on (the GPU library's video-out driver asks once).
+    #[no_mangle]
+    pub extern "C" fn runtime_benchmark_active() -> c_int {
+        super::uncharted_benchmark_active()
+    }
+
+    /// A game frame was presented (the GPU library's video-out driver): ends the process with
+    /// code 0 once the report is written, or 3 when the run ended without one.
+    #[no_mangle]
+    pub extern "C" fn runtime_benchmark_frame(vram_mib: u64) {
+        match super::uncharted_benchmark_frame(vram_mib) {
+            super::RUNNING => {}
+            super::FINISHED => crate::abi::host::quit(0),
+            _ => crate::abi::host::quit(3),
+        }
+    }
+
+    /// A fatal fault (`probe.c`'s fault handlers): the report with `ended: "crash"`.
+    #[no_mangle]
+    pub extern "C" fn runtime_benchmark_crash() {
+        super::uncharted_benchmark_crash();
     }
 }
 

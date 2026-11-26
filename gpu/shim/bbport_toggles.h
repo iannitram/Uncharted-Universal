@@ -1,5 +1,5 @@
 // bbport: optimizations that can be switched off while the game runs (BB_TOGGLE_FILE,
-// see runtime_memory.c), to find which one changes rendering without restarting.
+// see crates/runtime/src/memory.rs), to find which one changes rendering without restarting.
 #pragma once
 #include <atomic>
 #include <csetjmp>
@@ -8,7 +8,7 @@
 #include <cstdlib>
 #ifdef _WIN32
 // bbport (Windows): no signals. The loader's exception handler resumes the faulting thread
-// in bb_longjmp (src/compat_win.c: no unwinding through the faulting frames).
+// in bb_longjmp (crates/runtime/src/os.rs: no unwinding through the faulting frames).
 typedef unsigned long long sigjmp_buf[32];
 extern "C" __attribute__((returns_twice)) int bb_setjmp(sigjmp_buf buffer);
 #define sigsetjmp(buffer, save) bb_setjmp(buffer)

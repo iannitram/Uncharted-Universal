@@ -12,9 +12,9 @@
 //! On Linux (and Android) `linux` adds the host: one sparse memfd backs the whole direct pool
 //! and the flexible span after it, so any mapping of any physical range aliases the same
 //! storage, and a second view of it lets the host write past guest and GPU page protection.
-//! It also exports the C symbols `runtime_memory.c` exported. Windows keeps
-//! `src/runtime_memory.c` (views of a pagefile-backed section in one placeholder) until the
-//! Windows shims move (3.15); macOS and iOS build the table only, as a CI build check.
+//! It also exports the C symbols `runtime_memory.c` exported. Windows has its own host
+//! (`windows`, 3.17 phase 1a: views of a pagefile-backed section in one placeholder) and the
+//! C file is deleted (3.17e); macOS and iOS build the table only, as a CI build check.
 //!
 //! Guest addresses are placed below 1 TiB (the PS4 user range): GPU descriptors encode 40-bit
 //! addresses, so host-default `0x7f...` addresses would not fit. The port changes no behaviour:
