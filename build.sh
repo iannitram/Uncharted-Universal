@@ -115,8 +115,9 @@ MINGW*|MSYS*)
         # smoke checks only (no game, no Vulkan driver on the CI runner): --help and a bad
         # argument. --probe needs a Vulkan instance, so it is not run here.
         out/uncharted-run.exe --help > /dev/null
-        if out/uncharted-run.exe --no-such-option > /dev/null 2>&1; then
-            echo 'uncharted-run accepted an unknown option' >&2; exit 1
+        rc=0; out/uncharted-run.exe --no-such-option > /dev/null 2>&1 || rc=$?
+        if [[ $rc != 2 ]]; then
+            echo "uncharted-run: an unknown option exited $rc, not 2 (usage error)" >&2; exit 1
         fi
         BB_BUTTON_PROMPTS=nintendo "out/gpu/button-prompts-test.exe" --forced-nintendo
         # The file module is Rust now (crates/runtime/src/file.rs, piece 3.09): its Windows

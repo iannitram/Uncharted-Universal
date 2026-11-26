@@ -383,7 +383,6 @@ if (WIN32)
     target_link_libraries(uncharted-run PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread
         "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
     add_dependencies(uncharted-run uncharted_runtime_rust)
-    set_source_files_properties(../src/runtime_benchmark.c PROPERTIES COMPILE_DEFINITIONS BB_RUST_BENCHMARK)
     target_link_options(uncharted-run PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
     add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/bb-gpu-capabilities.rc)
     target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan)
