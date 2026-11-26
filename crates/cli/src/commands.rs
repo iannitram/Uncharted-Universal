@@ -5,6 +5,7 @@
 use crate::args::{self, Parsed};
 use crate::{Ctx, Outcome, FAILED};
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use uncharted_core::artwork::{self, Art};
 use uncharted_core::dump::{self, DumpReport};
 use uncharted_core::fleet::{self, DeviceRecord, Drift};
 use uncharted_core::games::Game;
-use uncharted_core::launch::{self, Keep, Paths, Relay, Runner, Session, Sync};
+use uncharted_core::launch::{self, ChildRunner, Keep, Paths, Relay, Runner, Session, Sync};
 use uncharted_core::patches::{self, Patch, Selection, Target};
 use uncharted_core::platform::{AppDirs, Os, Vars};
 use uncharted_core::prepare::{self, PrepareOptions};
@@ -168,6 +169,10 @@ fn prepare(args: &[String], ctx: &Ctx) -> Done {
         ..PrepareOptions::default()
     };
     let manifest = core("prepare", prepare::prepare(&dump, &install, game, &options))?;
+    // Play finds the dump (`--app0`) through this note when no BB_GAME_DIR is set, as after
+    // the launcher's first run (#666). Best effort: an unwritable config only loses the note.
+    let _ =
+        uncharted_core::setup::remember_dump(&AppDirs::new(&core("prepare", vars(ctx))?), &dump);
     if let Ok(key) = uncharted_core::trophies::TrophyKey::from_env(|name| ctx.var(name)) {
         let trophy_dir = install.join("trophy");
         if let Err(err) =
@@ -205,6 +210,10 @@ pub struct PlayPlan {
     pub settings: Settings,
     /// `BB_RUNTIME`, else `uncharted-run` beside this program.
     pub program: PathBuf,
+    /// The loader command line of the prepared installs (`loader_args`): every game with an
+    /// `install.json`, its dump folder and the user folder. `None` when the game asked for has
+    /// no install (then only a `BB_RUNTIME` the player chose starts, as before #666).
+    pub loader: Option<ChildRunner>,
 }
 
 pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
@@ -251,6 +260,10 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
         .unwrap_or_else(|| resolve_runtime(&ctx.exe, ctx.os));
     let resolved =
         uncharted_core::launch_settings::load_for_launch(&AppDirs::new(&vars).settings(), device);
+    let loader = install
+        .join(prepare::MANIFEST_FILE)
+        .is_file()
+        .then(|| loader_args(&AppDirs::new(&vars), &paths, ctx));
     Ok(PlayPlan {
         install,
         paths,
@@ -258,7 +271,40 @@ pub fn play_plan(game: Game, ctx: &Ctx) -> Result<PlayPlan> {
         player_env,
         settings: resolved.settings,
         program,
+        loader,
     })
+}
+
+/// The runtime's command line for the prepared installs (`launch::ChildRunner::args`, #666):
+/// each game whose install holds `install.json` reads `boot-linked.bin` and `content.bin`
+/// from that install (`prepare` writes them at its top, not in `out/<stem>`), `--app0` is the
+/// game's dump folder (`setup::dump_folder`: `BB_GAME_DIR_U1..3`, `BB_GAME_DIR`, else the
+/// folder `prepare` noted), `--user` the play user folder (`BB_USER_DIR` when set) and
+/// `--timeout` is `BB_TIMEOUT`, else `0` (no watchdog). The player's arguments are added by
+/// `RuntimeRunner`, so `extra_args` stays empty.
+fn loader_args(dirs: &AppDirs, paths: &Paths, ctx: &Ctx) -> ChildRunner {
+    let mut game_dirs = BTreeMap::new();
+    let mut prepared_dirs = BTreeMap::new();
+    for game in Game::ALL {
+        let install = dirs.install(game.key());
+        if install.join(prepare::MANIFEST_FILE).is_file() {
+            prepared_dirs.insert(game, install);
+        }
+        if let Some(dump) = uncharted_core::setup::dump_folder(game, |n| ctx.var(n), Some(dirs)) {
+            game_dirs.insert(game, dump);
+        }
+    }
+    ChildRunner {
+        program: PathBuf::new(),
+        game_dirs,
+        prepared_dirs,
+        paths: paths.clone(),
+        timeout: ctx
+            .var("BB_TIMEOUT")
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "0".to_owned()),
+        extra_args: Vec::new(),
+    }
 }
 
 impl PlayPlan {
@@ -346,6 +392,9 @@ impl Relay for UnbundledRelay {
 /// repeats it for the child so a runner built elsewhere (the tests) is cleaned too.
 pub struct RuntimeRunner {
     pub program: PathBuf,
+    /// The prepared installs' loader arguments (`PlayPlan::loader`), put before
+    /// `--guest-argv` and the player's arguments; `None` passes only those two.
+    pub loader: Option<ChildRunner>,
     pub extra_args: Vec<String>,
     pub relay_prompt_stdio: bool,
     /// `host_env::changes` for this machine.
@@ -353,15 +402,51 @@ pub struct RuntimeRunner {
 }
 
 impl RuntimeRunner {
-    /// `guest_argv`: the `--guest-argv` file after a LoadExec switch, before the player's
-    /// arguments (`run.py` `main`).
-    pub fn command(&self, env: &[(String, String)], guest_argv: Option<&Path>) -> Command {
-        let mut command = Command::new(&self.program);
-        if let Some(file) = guest_argv {
-            command.arg("--guest-argv").arg(file);
+    /// The command for one start of `game`: with `loader`, its arguments for `game` (the boot
+    /// image first, as `src/probe.c` reads it; `ChildRunner::args`, which adds `--guest-argv`
+    /// after a LoadExec switch), then the player's arguments. A game the loader has no install
+    /// or dump folder for (a LoadExec switch to it) is a launch error, not a runtime started
+    /// without a boot image.
+    pub fn command_for(
+        &self,
+        game: Game,
+        env: &[(String, String)],
+        guest_argv: Option<&Path>,
+    ) -> Result<Command> {
+        let Some(loader) = &self.loader else {
+            return Ok(self.command(env, guest_argv));
+        };
+        if !loader.prepared_dirs.contains_key(&game) {
+            return Err(Error::Launch(format!(
+                "{} is not prepared yet. Run `uncharted-universal prepare {}` first.",
+                game.name(),
+                game.key()
+            )));
         }
+        if !loader.game_dirs.contains_key(&game) {
+            return Err(no_dump_folder(game));
+        }
+        let mut args = loader.args(game, guest_argv)?;
+        args.extend(self.extra_args.iter().map(Into::into));
+        Ok(self.with_args(args, env))
+    }
+
+    /// The command without loader arguments: `guest_argv`, the `--guest-argv` file after a
+    /// LoadExec switch, before the player's arguments (`run.py` `main`).
+    pub fn command(&self, env: &[(String, String)], guest_argv: Option<&Path>) -> Command {
+        let mut args: Vec<OsString> = Vec::new();
+        if let Some(file) = guest_argv {
+            args.push("--guest-argv".into());
+            args.push(file.into());
+        }
+        args.extend(self.extra_args.iter().map(Into::into));
+        self.with_args(args, env)
+    }
+
+    fn with_args(&self, args: Vec<OsString>, env: &[(String, String)]) -> Command {
+        let mut command = Command::new(&self.program);
         command
-            .args(&self.extra_args)
+            .args(args)
             .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null());
         if self.relay_prompt_stdio {
@@ -373,13 +458,16 @@ impl RuntimeRunner {
 }
 
 impl Runner for RuntimeRunner {
-    fn run(&self, _game: Game, env: &[(String, String)], guest_argv: Option<&Path>) -> Result<i32> {
-        let status = self.command(env, guest_argv).status().map_err(|error| {
-            Error::Launch(format!(
-                "could not start {}: {error}",
-                self.program.display()
-            ))
-        })?;
+    fn run(&self, game: Game, env: &[(String, String)], guest_argv: Option<&Path>) -> Result<i32> {
+        let status = self
+            .command_for(game, env, guest_argv)?
+            .status()
+            .map_err(|error| {
+                Error::Launch(format!(
+                    "could not start {}: {error}",
+                    self.program.display()
+                ))
+            })?;
         // A process ended by a signal has no code: count it as a failure.
         Ok(status.code().unwrap_or(1))
     }
@@ -490,8 +578,17 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
     if ctx.os == Os::Windows && !plan.player_env.contains_key("BB_SAVEDATA_DIRS") {
         core("play", saves::migrate_windows_slots(&plan.paths.user_dir))?;
     }
+    // A prepared game without a known dump folder stops here, before the save sync.
+    if plan
+        .loader
+        .as_ref()
+        .is_some_and(|loader| !loader.game_dirs.contains_key(&game))
+    {
+        return Err(Outcome::error("play", &no_dump_folder(game)));
+    }
     let runner = RuntimeRunner {
         program: plan.program.clone(),
+        loader: plan.loader.clone(),
         extra_args: p.rest,
         relay_prompt_stdio: stdio,
         host: host_env::changes(ctx.os, |name| ctx.var(name)),
@@ -534,6 +631,16 @@ fn require_prepared(game: Game, install: &Path, ctx: &Ctx) -> Result<()> {
         install.display(),
         game.key()
     )))
+}
+
+/// A prepared game whose dump folder play cannot find: the runtime needs it as `--app0`.
+fn no_dump_folder(game: Game) -> Error {
+    Error::Launch(format!(
+        "{} is prepared, but its dump folder is not known on this device. Set BB_GAME_DIR (or BB_GAME_DIR_{}) to the dump folder, or run `uncharted-universal prepare {}` again.",
+        game.name(),
+        game.key().to_ascii_uppercase(),
+        game.key()
+    ))
 }
 
 // ---- steam-add ----

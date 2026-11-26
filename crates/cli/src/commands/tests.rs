@@ -5,7 +5,7 @@ use super::*;
 use crate::fixtures::{self, TempDir};
 use crate::tests::{args, ctx};
 use crate::{run, Ctx, NOT_BUILT, OK, USAGE};
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use uncharted_core::platform::Os;
 
 fn exec(list: &[&str], ctx: &Ctx) -> Outcome {
@@ -169,6 +169,173 @@ fn play_without_a_prepared_install_says_to_run_prepare_and_starts_nothing() {
     let ctx = set(ctx, "BB_RUNTIME", bin.join("custom-runtime"));
     let out = exec(&["play", "u2"], &ctx);
     assert!(!out.stderr.contains("not prepared yet"), "{}", out.stderr);
+}
+
+/// A home under `dir` with `games` prepared (`install.json` in each install), on Windows as
+/// the packaged loader sees it.
+fn prepared(dir: &Path, games: &[Game]) -> (Ctx, AppDirs) {
+    let mut ctx = home(dir);
+    ctx.os = Os::Windows;
+    let dirs = AppDirs::new(&vars(&ctx).unwrap());
+    for game in games {
+        let install = dirs.install(game.key());
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join(prepare::MANIFEST_FILE), "{}").unwrap();
+    }
+    (ctx, dirs)
+}
+
+fn runner_for(plan: &PlayPlan, extra: &[&str]) -> RuntimeRunner {
+    RuntimeRunner {
+        program: plan.program.clone(),
+        loader: plan.loader.clone(),
+        extra_args: extra.iter().map(|arg| (*arg).to_owned()).collect(),
+        relay_prompt_stdio: false,
+        host: Vec::new(),
+    }
+}
+
+fn args_of(command: &Command) -> Vec<OsString> {
+    command.get_args().map(OsStr::to_os_string).collect()
+}
+
+#[test]
+fn play_of_a_prepared_install_starts_the_runtime_with_its_boot_image_and_loader_args() {
+    // #666: bb-probe got only --guest-argv and the player's arguments, printed its usage line
+    // and quit with 1. The boot image is argv[1] (src/probe.c), then the loader options.
+    let dir = TempDir::new("play-loader-args");
+    let (ctx, dirs) = prepared(dir.path(), &[Game::U2]);
+    let dump = dir.path().join("dump folder");
+    let user = dir.path().join("user dir");
+    let ctx = set(ctx, "BB_GAME_DIR", &dump);
+    let ctx = set(ctx, "BB_USER_DIR", &user);
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    let install = dirs.install("u2");
+    let loader = plan
+        .loader
+        .as_ref()
+        .expect("a prepared install has loader args");
+    assert_eq!(loader.prepared_dirs.get(&Game::U2), Some(&install));
+    assert!(!loader.prepared_dirs.contains_key(&Game::U3));
+
+    let runner = runner_for(&plan, &["--flag"]);
+    let command = runner.command_for(Game::U2, &[], None).unwrap();
+    let want: Vec<OsString> = vec![
+        install.join("boot-linked.bin").into(),
+        "--content-profile".into(),
+        install.join("content.bin").into(),
+        "--app0".into(),
+        dump.clone().into(),
+        "--user".into(),
+        user.clone().into(),
+        "--timeout".into(),
+        "0".into(),
+        "--flag".into(),
+    ];
+    assert_eq!(args_of(&command), want);
+
+    // After a LoadExec switch: --guest-argv after the loader options, before the player's.
+    let guest = plan.paths.guest_argv_file();
+    let command = runner.command_for(Game::U2, &[], Some(&guest)).unwrap();
+    let args = args_of(&command);
+    assert_eq!(args[..9], want[..9]);
+    assert_eq!(
+        args[9..],
+        [
+            OsString::from("--guest-argv"),
+            guest.into(),
+            "--flag".into()
+        ]
+    );
+
+    // The trophies prepare wrote into the install are passed; BB_TIMEOUT sets the watchdog.
+    let trophy = install.join("trophy");
+    fs::create_dir_all(&trophy).unwrap();
+    fs::write(
+        trophy.join(uncharted_core::trophies::CACHE_FILE),
+        "format\t2\n",
+    )
+    .unwrap();
+    let plan = play_plan(Game::U2, &set(ctx, "BB_TIMEOUT", "30")).unwrap();
+    let args = args_of(
+        &runner_for(&plan, &[])
+            .command_for(Game::U2, &[], None)
+            .unwrap(),
+    );
+    assert_eq!(args[7..9], [OsString::from("--timeout"), "30".into()]);
+    assert_eq!(args[9..], [OsString::from("--trophies"), trophy.into()]);
+}
+
+#[test]
+fn play_finds_the_dump_folder_prepare_noted_and_the_games_own_folder() {
+    let dir = TempDir::new("play-noted-dump");
+    let (ctx, dirs) = prepared(dir.path(), &[Game::U2, Game::U3]);
+    let noted = dir.path().join("noted dump");
+    uncharted_core::setup::remember_dump(&dirs, &noted).unwrap();
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    let loader = plan.loader.as_ref().unwrap();
+    assert_eq!(loader.game_dirs.get(&Game::U2), Some(&noted));
+    // Without BB_USER_DIR the user folder is the one play already uses.
+    assert_eq!(loader.paths.user_dir, plan.paths.user_dir);
+
+    // BB_GAME_DIR_U3 wins for that game only.
+    let own = dir.path().join("u3 alone");
+    let plan = play_plan(Game::U2, &set(ctx, "BB_GAME_DIR_U3", &own)).unwrap();
+    let loader = plan.loader.as_ref().unwrap();
+    assert_eq!(loader.game_dirs.get(&Game::U2), Some(&noted));
+    assert_eq!(loader.game_dirs.get(&Game::U3), Some(&own));
+    let args = args_of(
+        &runner_for(&plan, &[])
+            .command_for(Game::U3, &[], None)
+            .unwrap(),
+    );
+    assert_eq!(
+        args[0],
+        dirs.install("u3").join("boot-linked.bin").into_os_string()
+    );
+    assert_eq!(args[3..5], [OsString::from("--app0"), own.into()]);
+
+    // A LoadExec switch to a game that was never prepared is a plain error.
+    let err = runner_for(&plan, &[])
+        .command_for(Game::U1, &[], None)
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("Uncharted 1 is not prepared yet"),
+        "{err}"
+    );
+}
+
+#[test]
+fn play_of_a_prepared_install_without_a_dump_folder_stops_before_the_save_sync() {
+    let dir = TempDir::new("play-no-dump");
+    let (mut ctx, _) = prepared(dir.path(), &[Game::U2]);
+    let bin = dir.path().join("bundle");
+    fs::create_dir_all(&bin).unwrap();
+    ctx.exe = bin.join("uncharted-universal.exe");
+    let out = exec(&["play", "u2"], &ctx);
+    assert_eq!(out.code, FAILED, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("its dump folder is not known") && out.stderr.contains("BB_GAME_DIR"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stdout.contains("before play"), "{}", out.stdout);
+}
+
+#[test]
+fn play_without_an_install_keeps_the_plain_command_line_for_a_chosen_runtime() {
+    // #644's case: nothing prepared, a BB_RUNTIME the player chose gets only its own arguments.
+    let dir = TempDir::new("play-no-install");
+    let (ctx, _) = prepared(dir.path(), &[]);
+    let ctx = set(ctx, "BB_RUNTIME", dir.path().join("my-run"));
+    let plan = play_plan(Game::U2, &ctx).unwrap();
+    assert!(plan.loader.is_none());
+    let args = args_of(
+        &runner_for(&plan, &["--flag"])
+            .command_for(Game::U2, &[], None)
+            .unwrap(),
+    );
+    assert_eq!(args, [OsString::from("--flag")]);
 }
 
 #[test]
@@ -354,6 +521,7 @@ fn runtime_runner_missing_loader_fails_actionably_and_preserves_guest_argv() {
     let guest_argv = dir.path().join("guest argv.txt");
     let runner = RuntimeRunner {
         program: missing.clone(),
+        loader: None,
         extra_args: vec!["--flag".into()],
         relay_prompt_stdio: false,
         host: Vec::new(),
@@ -412,6 +580,7 @@ fn the_runner_clears_ld_preload_and_passes_extra_arguments() {
         .insert("LD_LIBRARY_PATH".into(), "/steam/runtime/lib".into());
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
+        loader: None,
         extra_args: vec!["--timeout".into(), "5".into()],
         relay_prompt_stdio: false,
         host: host_env::changes(steam.os, |name| steam.var(name)),
@@ -451,6 +620,7 @@ fn off_linux_the_runner_leaves_the_environment_alone() {
         .insert("LD_PRELOAD".into(), "/steam/overlay.so".into());
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
+        loader: None,
         extra_args: Vec::new(),
         relay_prompt_stdio: false,
         host: host_env::changes(windows.os, |name| windows.var(name)),
@@ -465,6 +635,7 @@ fn off_linux_the_runner_leaves_the_environment_alone() {
 fn the_runner_passes_the_guest_argv_file_before_the_extra_arguments() {
     let runner = RuntimeRunner {
         program: PathBuf::from("uncharted-run"),
+        loader: None,
         extra_args: vec!["--timeout".into(), "5".into()],
         relay_prompt_stdio: false,
         host: Vec::new(),
@@ -488,6 +659,7 @@ fn a_missing_runtime_is_a_launch_error() {
     let dir = TempDir::new("no-runtime");
     let runner = RuntimeRunner {
         program: dir.path().join("missing-runtime"),
+        loader: None,
         extra_args: Vec::new(),
         relay_prompt_stdio: false,
         host: Vec::new(),
@@ -1160,6 +1332,7 @@ fn direct_play_passes_saved_prompt_choices_to_the_runtime_child() {
         let env = plan.session(Os::Windows).env(Game::U2).unwrap();
         let runner = RuntimeRunner {
             program: "synthetic-runtime".into(),
+            loader: None,
             extra_args: vec![],
             relay_prompt_stdio: false,
             host: vec![],
@@ -1229,6 +1402,8 @@ fn play_uses_bundled_save_relay_beside_executable() {
             let install = AppDirs::new(&vars(&ctx).unwrap()).install(Game::U2.key());
             fs::create_dir_all(&install).unwrap();
             fs::write(install.join(prepare::MANIFEST_FILE), "{}").unwrap();
+            // A prepared game starts with its dump folder as --app0 (#666).
+            let ctx = set(ctx, "BB_GAME_DIR", dir.path().join("dump"));
             let out = exec(&["play", "u2"], &ctx);
             assert_eq!(out.code, OK, "{}", out.stderr);
             assert!(out.stdout.contains("before play: downloaded saves"));

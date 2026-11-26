@@ -9,9 +9,10 @@
 //! `docs/code-map.md` calls the second trait `Game`; it is `Runner` here because `games::Game`
 //! is the enum of the three games.
 //!
-//! Not here yet: `run.py`'s preparation inside the loop (boot image, render-size patch, content
-//! profile, trophies, patch files, cheats: their modules are stubs), `BB_RESTART_COMMAND`, and
-//! the Windows no-console flag (`std::os` stays out of this module; the app is a window app).
+//! `ChildRunner::args` passes the prepared boot image, content profile and trophies (the CLI's
+//! `RuntimeRunner` uses it, #666). Not here yet: `run.py`'s render-size image, patch files and
+//! cheats, `BB_RESTART_COMMAND`, and the Windows no-console flag (`std::os` stays out of this
+//! module; the app is a window app).
 
 use crate::error::{Error, Result};
 use crate::games::Game;
@@ -367,6 +368,10 @@ pub struct ChildRunner {
     pub program: PathBuf,
     /// Each game's dump folder (`--app0`; `run.py` `locate`: `BB_GAME_DIR[_U1..]`).
     pub game_dirs: BTreeMap<Game, PathBuf>,
+    /// Each game's prepared folder, the one `prepare::prepare` wrote `boot-linked.bin` and
+    /// `content.bin` into (the desktop CLI: the game's own install, `AppDirs::install`). A
+    /// game not listed uses `run.py`'s layout, `Paths::game_out_dir`.
+    pub prepared_dirs: BTreeMap<Game, PathBuf>,
     pub paths: Paths,
     /// `BB_TIMEOUT`: seconds until the runtime stops the game, `0` for none.
     pub timeout: String,
@@ -375,15 +380,25 @@ pub struct ChildRunner {
 }
 
 impl ChildRunner {
-    /// The command line after the program for one start of `game` (`run.py` `main`): the
-    /// linked boot image, `--content-profile`, `--app0`, `--user`, `--timeout`, then
+    /// The folder holding `game`'s `boot-linked.bin` and `content.bin`: its entry in
+    /// `prepared_dirs`, else `Paths::game_out_dir`.
+    pub fn prepared_dir(&self, game: Game) -> PathBuf {
+        self.prepared_dirs
+            .get(&game)
+            .cloned()
+            .unwrap_or_else(|| self.paths.game_out_dir(game))
+    }
+
+    /// The command line after the program for one start of `game` (`run.py` `main`, the order
+    /// `src/probe.c` reads: the boot image first, then options): the linked boot image,
+    /// `--content-profile`, `--app0`, `--user`, `--timeout`, `--trophies` when cached, then
     /// `--guest-argv` after a switch, then the player's arguments.
     pub fn args(&self, game: Game, guest_argv: Option<&Path>) -> Result<Vec<OsString>> {
         let app0 = self
             .game_dirs
             .get(&game)
             .ok_or_else(|| Error::Launch(format!("no game folder is set for {}", game.name())))?;
-        let out = self.paths.game_out_dir(game);
+        let out = self.prepared_dir(game);
         let mut args: Vec<OsString> = vec![
             out.join("boot-linked.bin").into(),
             "--content-profile".into(),
