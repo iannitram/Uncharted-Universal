@@ -1,7 +1,7 @@
 //! The early check on the player's dump, before any prepare (SPEC.md M11; issue #172 folds in):
-//! folder layout, whether it is decrypted, which games and revisions it holds. Only file names
-//! and `param.sfo` are read; nothing is copied, uploaded or logged (M9). Replaces the checks
-//! scattered through `run.py` (`locate`, `find_executable`) and `launcher/` start-up code.
+//! folder layout, whether it is decrypted, which games and revisions it holds. Only file names,
+//! `param.sfo` and each executable's header (a SELF's entry table) are read; nothing is copied,
+//! uploaded or logged (M9). Replaces the checks scattered through `run.py` (`locate`, `find_executable`) and `launcher/` start-up code.
 
 use crate::error::{Error, Result};
 use crate::games::Game;
@@ -23,6 +23,31 @@ pub struct FoundGame {
 
 /// First four bytes of a PS4 SELF container (an executable that is not a plain ELF).
 const PS4_SELF_MAGIC: [u8; 4] = [0x4f, 0x15, 0x3d, 0x1d];
+
+/// SELF entry flag: the entry holds a segment (`prepare::load_image` skips entries without it).
+const SELF_ENTRY_SEGMENT: u64 = 0x800;
+/// SELF entry flags: encrypted (0x2) or compressed (0x8), which `prepare::load_image` refuses.
+const SELF_ENTRY_ENCRYPTED_OR_COMPRESSED: u64 = 0x2 | 0x8;
+
+/// After the 4-byte magic, read a SELF's entry table (count at offset 24, 32-byte entries from
+/// offset 32) and say whether no segment entry is encrypted or compressed. A table cut short
+/// counts as not plain.
+fn self_is_plain(file: &mut File) -> bool {
+    let mut head = [0; 28];
+    if file.read_exact(&mut head).is_err() {
+        return false;
+    }
+    // `head` starts at file offset 4, so the u16 entry count at offset 24 is head[20..22].
+    let count = u16::from_le_bytes([head[20], head[21]]) as usize;
+    let mut table = vec![0; count * 32];
+    if file.read_exact(&mut table).is_err() {
+        return false;
+    }
+    table.as_chunks::<32>().0.iter().all(|entry| {
+        let flags = u64::from_le_bytes(entry[..8].try_into().expect("eight byte range"));
+        flags & SELF_ENTRY_SEGMENT == 0 || flags & SELF_ENTRY_ENCRYPTED_OR_COMPRESSED == 0
+    })
+}
 
 /// What `check` found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,13 +102,18 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
             continue;
         }
         let mut header = [0; 4];
-        let count = File::open(&path)?.read(&mut header)?;
+        let mut file = File::open(&path)?;
+        let count = file.read(&mut header)?;
         if count == 4 && header == PS4_SELF_MAGIC {
-            decrypted = false;
-            problems.push(format!(
-                "{} is still an encrypted PS4 SELF; use a decrypted ELF dump.",
-                game.executable()
-            ));
+            // A fake-signed SELF (fSELF) stores every segment plain, and `prepare::load_image`
+            // reads it like an ELF; only a SELF with an encrypted or compressed segment fails.
+            if !self_is_plain(&mut file) {
+                decrypted = false;
+                problems.push(format!(
+                    "{} is still an encrypted PS4 SELF; use a decrypted ELF dump.",
+                    game.executable()
+                ));
+            }
         } else if count != 4 || &header != b"\x7fELF" {
             decrypted = false;
             problems.push(format!("{} is not a decrypted ELF.", game.executable()));
@@ -180,6 +210,19 @@ mod tests {
         fs::write(dir.join("sce_sys/param.sfo"), data).unwrap();
     }
 
+    /// A SELF header with one 32-byte entry per flag value (count at offset 24, table at 32).
+    fn tiny_self(entry_flags: &[u64]) -> Vec<u8> {
+        let mut data = PS4_SELF_MAGIC.to_vec();
+        data.resize(24, 0);
+        data.extend_from_slice(&(entry_flags.len() as u16).to_le_bytes());
+        data.resize(32, 0);
+        for flags in entry_flags {
+            data.extend_from_slice(&flags.to_le_bytes());
+            data.extend_from_slice(&[0; 24]);
+        }
+        data
+    }
+
     fn good(label: &str, version: &str) -> TempDir {
         let dir = TempDir::new(label);
         fs::create_dir(dir.0.join("sce_sys")).unwrap();
@@ -216,6 +259,36 @@ mod tests {
             .problems
             .iter()
             .any(|p| p.contains("encrypted PS4 SELF")));
+
+        let fself_dir = good("fself", "01.00");
+        for game in Game::ALL {
+            fs::write(
+                fself_dir.0.join(game.executable()),
+                tiny_self(&[0x800, 0x801, 0x0]),
+            )
+            .unwrap();
+        }
+        let report = check(&fself_dir.0).unwrap();
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+        assert!(report.decrypted);
+
+        for (label, flags) in [("enc", 0x802u64), ("cmp", 0x808u64)] {
+            let dir = good(label, "01.00");
+            fs::write(dir.0.join("eboot.bin"), tiny_self(&[0x800, flags])).unwrap();
+            let report = check(&dir.0).unwrap();
+            assert!(!report.decrypted, "{label}");
+            assert_eq!(
+                report.problems,
+                ["eboot.bin is still an encrypted PS4 SELF; use a decrypted ELF dump."],
+                "{label}"
+            );
+        }
+
+        let cut = good("cut", "01.00");
+        let mut short = tiny_self(&[0x800, 0x800]);
+        short.truncate(32 + 40);
+        fs::write(cut.0.join("eboot.bin"), short).unwrap();
+        assert!(!check(&cut.0).unwrap().decrypted);
 
         let version_dir = good("version", "01.02");
         assert!(check(&version_dir.0)
