@@ -1,4 +1,5 @@
-/* Guest instructions the host CPU lacks (cpu_patch.c). */
+/* Guest instructions the host CPU lacks: Rust (crates/runtime/src/cpu_patch.rs, 3.14); src/cpu_patch.c
+ * was deleted in 3.17e. Declared here for src/probe.c until bb-probe is retired (3.16, #443). */
 #ifndef CPU_PATCH_H
 #define CPU_PATCH_H
 #include <stddef.h>

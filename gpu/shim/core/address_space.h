@@ -1,5 +1,5 @@
-// bbport: address-space operations the video core needs, backed by the C
-// runtime's VMA table (runtime_memory.c).
+// bbport: address-space operations the video core needs, backed by the
+// runtime's VMA table (crates/runtime/src/memory.rs).
 #pragma once
 #include <boost/icl/interval_set.hpp>
 #include "common/enum.h"

@@ -103,7 +103,7 @@ MINGW*|MSYS*)
     fi
     echo "Built $PWD/out/bb-probe.exe and $PWD/out/uncharted-run.exe"
     if [[ ${1:-} == --test ]]; then
-        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test resolve-overlap-test upscaler-latch-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test clear-state-and-submit-waits-test signal-flip-gate-test u2-stall-guards-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test settings-roundtrip-test gfx-menu-profiles-test stereo-test)
+        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test button-prompts-test ui-composition-test upscaler-support-test dlss-policy-test expand-image-test resolve-overlap-test upscaler-latch-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test clear-state-and-submit-waits-test signal-flip-gate-test flip-handback-test u2-stall-guards-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test settings-roundtrip-test gfx-menu-profiles-test stereo-test)
         ninja_jobs=()
         if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
         if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
@@ -185,20 +185,11 @@ UNCHARTED_GPU_BUILD=$PWD/out/gpu UNCHARTED_GPU_CMAKE_ARGS=$(IFS=$'\x1f'; printf 
     cargo build -q -p uncharted_runtime --lib --release --target-dir out/rust
 # $ORIGIN/gpu: packaged copies keep the library next to the binary without patching it.
 gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdynamic)
-# Linux and Android build memory (3.12) and Linux x86-64 builds fiber and thread (3.13)
-# from crates/runtime, so those C files are Windows only.
-runtime=()
-for source in src/runtime*.c; do
-    case "$source" in
-        src/runtime_memory.c|src/runtime_fiber.c|src/runtime_thread.c) ;;
-        *) runtime+=("$source") ;;
-    esac
-done
 # Right after the C sources that call it and ahead of the GPU library it calls (bbgpu_resolve),
 # with the system libraries Rust's std needs (rustc --print native-static-libs). Symbols only
 # libbbgpu.so asks for (memory's): --undefined makes the linker take them from the archive.
 rust=(out/rust/release/libuncharted_runtime.a)
-for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing runtime_memory_read_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2; do
+for symbol in runtime_map_guest_memory runtime_memory_set_gpu_hooks runtime_memory_write_backing runtime_memory_read_backing     runtime_memory_clamp runtime_memory_region runtime_memory_gpu_protect runtime_memory_is_mapped     runtime_disabled_optimizations runtime_disabled_optimizations2 runtime_benchmark_active runtime_benchmark_frame; do
     rust+=(-Wl,--undefined="$symbol")
 done
 rust+=(-lgcc_s -lutil -lrt -lpthread -lm -ldl)
@@ -209,21 +200,21 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
     for source in "${atrac9[@]}"; do "$CC" -std=c99 -O2 -g -w -c "$source" -o "out/atrac9/$(basename "${source%.c}").o"; done
     ar rcs out/libatrac9.a out/atrac9/*.o
 fi
-# BB_BENCHMARK=<seconds> (#173/#242): BB_RUST_BENCHMARK sends the glue to the Rust benchmark in
-# bb-probe only; the C unit tests below keep the no-op glue.
-"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie -DBB_RUST_BENCHMARK "${includes[@]}" -I. -Isrc src/probe.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
+# bb-probe: the C loader src/probe.c and nothing else from src/ (3.17e); every runtime module and
+# the benchmark glue (BB_BENCHMARK=<seconds>, #173/#242) come from crates/runtime.
+"$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc src/probe.c "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/bb-probe
 echo "Built $PWD/out/bb-probe"
 # GPU check (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test stage-specialization-start-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test vram-probation-test clear-state-and-submit-waits-test bind-state-cache-test nv-perf-diag-test signal-flip-gate-test u2-stall-guards-test resolve-overlap-test upscaler-latch-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test settings-roundtrip-test gfx-menu-profiles-test stereo-test)
+    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test stage-specialization-start-test button-prompts-test ui-composition-test upscaler-support-test dlss-policy-test expand-image-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test vram-probation-test clear-state-and-submit-waits-test bind-state-cache-test nv-perf-diag-test signal-flip-gate-test flip-handback-test u2-stall-guards-test resolve-overlap-test upscaler-latch-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test settings-roundtrip-test gfx-menu-profiles-test stereo-test)
     ninja_jobs=()
     if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
     if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
         tail -40 out/gpu-tests-build.log >&2
         echo 'GPU test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
     fi
-    for test in "${tests[@]:0:13}" resolve-overlap-test upscaler-latch-test; do "out/gpu/$test"; done
+    for test in "${tests[@]:0:13}" resolve-overlap-test upscaler-latch-test flip-handback-test; do "out/gpu/$test"; done
     BB_BUTTON_PROMPTS=nintendo "out/gpu/button-prompts-test" --forced-nintendo
     for candidate in /run/opengl-driver/share/vulkan/icd.d/lvp_icd*.json /usr/share/vulkan/icd.d/lvp_icd*.json; do
         if [[ -f $candidate ]]; then export VK_ICD_FILENAMES=$candidate; break; fi
@@ -232,11 +223,11 @@ if [[ ${1:-} == --test ]]; then
     for test in scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test; do "out/gpu/$test"; done
     # Settings file round-trip (#153), per-device profiles (#10), stereo mode (#19): no GPU needed.
     for test in settings-roundtrip-test gfx-menu-profiles-test stereo-test; do "out/gpu/$test"; done
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_runtime.c "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/runtime-test
     out/runtime-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/file-mods-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -I. -Isrc tests/test_file_mods.c "${rust[@]}" out/libatrac9.a -lm "${gpu[@]}" "${libraries[@]}" -o out/file-mods-test
     out/file-mods-test
-    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c "${runtime[@]}" "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
+    "$CC" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -no-pie "${includes[@]}" -I. -Isrc tests/test_eop_matcher.c "${rust[@]}" out/libatrac9.a -lm -lZydis "${gpu[@]}" "${libraries[@]}" -o out/eop-matcher-test
     out/eop-matcher-test
     "${CXX:-c++}" -std=c++20 -O2 -g -Wall -Wextra -Werror -I. tests/test_settings_default.cpp gpu/shim/bbport_settings.cpp -o out/settings-default-test
     out/settings-default-test

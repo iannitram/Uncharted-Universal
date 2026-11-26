@@ -1,4 +1,5 @@
-/* Guest leaf functions' red zone on Windows (red_zone.c). */
+/* Guest leaf functions' red zone on Windows: Rust (crates/runtime/src/red_zone.rs, 3.14); src/red_zone.c
+ * was deleted in 3.17e. Declared here for src/probe.c until bb-probe is retired (3.16, #443). */
 #ifndef RED_ZONE_H
 #define RED_ZONE_H
 #include <stddef.h>
