@@ -74,7 +74,7 @@ std::mutex imgui_mutex; // the ImGui context: window thread (input) and present 
 bool initialized = false;
 std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
-bool dirty = false; // settings changed while open: saved on close
+bool dirty = false; // settings changed while open: saved once no widget is being dragged, and on close
 // The game's text dialog (SetTextEntry), guarded by imgui_mutex.
 bool text_entry_active = false;
 std::string text_entry_prompt, text_entry_text;
@@ -773,6 +773,12 @@ void Menu() {
         }
         ImGui::SetItemDefaultFocus();
         ImGui::EndPopup();
+    }
+    // Saved as soon as the change is made (a click, or a slider let go), not only when the menu
+    // closes: closing the game window with the menu open must not lose the change (#153).
+    if (dirty && !ImGui::IsAnyItemActive()) {
+        dirty = false;
+        BbSettings::Save();
     }
     ImGui::End();
     if (!keep_open) {
