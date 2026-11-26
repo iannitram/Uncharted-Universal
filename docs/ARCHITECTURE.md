@@ -165,8 +165,9 @@ The launcher compiles the patches and passes `--patches` to the loader.
 ## Two platforms, one codebase
 
 The C runtime is built for both Linux and MSYS2/CLANG64 (MinGW + winpthreads),
-with `_WIN32` branches throughout and `src/compat_win.c` covering the POSIX
-calls that MinGW lacks. The differences are documented in a table in
+with `_WIN32` branches throughout. The POSIX calls that MinGW lacks are
+`cfg(windows)` code in `crates/runtime/src/os.rs` (`src/compat_win.c` until 3.17e);
+`src/compat_win.h` keeps the CRT macros for `src/probe.c` until `bb-probe` retires. The differences are documented in a table in
 [packaging/windows/README.md](../packaging/windows/README.md). Notable ones:
 
 - `libbbgpu.so` on Linux, but a **static** library on Windows, so the loader can
