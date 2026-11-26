@@ -91,336 +91,391 @@ fn code(result: &Result<u64, i32>) -> i32 {
     }
 }
 
-extern "C" fn direct_size() -> u64 {
-    pool()
-}
-
-unsafe extern "C" fn direct_allocate(
-    low: i64,
-    high: i64,
-    size: u64,
-    alignment: u64,
-    memory_type: c_int,
-    out: *mut i64,
-) -> i32 {
-    if out.is_null() {
-        return INVALID;
-    }
-    let (low_start, end, alignment) =
-        match direct_window(pool(), low, high, size, alignment, memory_type) {
-            Ok(window) => window,
-            Err(NO_SPACE) => {
-                say(&refusal_line(pool(), low, high, size));
-                return NO_SPACE;
-            }
-            Err(error) => return error,
-        };
-    let start =
-        match memory().write(|s| s.allocate_direct(low_start, end, size, alignment, memory_type)) {
-            Ok(start) => start,
-            Err(error) => return error,
-        };
-    // SAFETY: the guest's output, checked non-null above.
-    unsafe { put(out, start as i64) };
-    say(&format!(
-        "Runtime: direct allocation offset=0x{start:x}, size={size} bytes, type={memory_type}"
-    ));
-    0
-}
-
-unsafe extern "C" fn direct_map(
-    out: *mut u64,
-    size: u64,
-    prot: c_int,
-    flags: c_int,
-    physical: i64,
-    alignment: u64,
-) -> i32 {
-    // SAFETY: the guest's in-out address, or null.
-    let requested = unsafe { get(out) };
-    let result = if out.is_null() {
-        Err(INVALID)
-    } else {
-        memory().write(|s| s.map_direct(requested, size, prot, flags, physical, alignment))
+/// The guest calls the [`function`] table with the System V ABI (`ABI` in `src/runtime.h`) on
+/// every host OS. On Windows `extern "C"` is the Win64 ABI (arguments in rcx, rdx, r8, r9 and on
+/// the stack), so x86-64 builds declare them `sysv64`; elsewhere (the Android FEX bridge) they
+/// are plain C functions. Same pattern as `trophy.rs`.
+macro_rules! guest {
+    ($(#[$meta:meta])* unsafe fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty $body:block) => {
+        $(#[$meta])*
+        #[cfg(target_arch = "x86_64")]
+        unsafe extern "sysv64" fn $name($($arg: $ty),*) -> $ret $body
+        $(#[$meta])*
+        #[cfg(not(target_arch = "x86_64"))]
+        unsafe extern "C" fn $name($($arg: $ty),*) -> $ret $body
     };
-    if let Ok(address) = result {
-        // SAFETY: the guest's in-out address, non-null here.
-        unsafe { put(out, address) };
-    }
-    memory().flush_hooks();
-    // SAFETY: as above.
-    let mapped = unsafe { get(out) };
-    if trace() {
-        say(&format!(
-            "Memory: map direct want={} size=0x{size:x} prot=0x{:x} flags=0x{:x} phys=0x{:x} align=0x{alignment:x} -> {} result=0x{:x}",
-            pointer(requested),
-            prot as u32,
-            flags as u32,
-            physical as u64,
-            pointer(mapped),
-            code(&result) as u32
-        ));
-    } else if result.is_ok() {
-        say(&format!(
-            "Runtime: mapped direct memory {}, size={size}, prot=0x{:x}",
-            pointer(mapped),
-            prot as u32
-        ));
-    }
-    code(&result)
-}
-
-unsafe extern "C" fn direct_map_named(
-    out: *mut u64,
-    size: u64,
-    prot: c_int,
-    flags: c_int,
-    physical: i64,
-    alignment: u64,
-    _name: *const c_char,
-) -> i32 {
-    // SAFETY: the same arguments, from the guest.
-    unsafe { direct_map(out, size, prot, flags, physical, alignment) }
-}
-
-extern "C" fn direct_unmap(address: u64, size: u64) -> i32 {
-    // The GPU forgets the range before it disappears (as shadPS4's early GPU unmap).
-    if let Some(hook) = memory().read(Space::unmap_hook) {
-        if address.is_multiple_of(PAGE) && size != 0 {
-            hook(address as usize, align_up(size, PAGE));
-        }
-    }
-    let result = memory().write(|s| {
-        let before = s.pending_hooks();
-        let result = s.unmap(address, size);
-        s.forget_hooks_after(before); // already notified above
-        result
-    });
-    if trace() {
-        say(&format!(
-            "Memory: unmap {} size=0x{size:x} result=0x{:x}",
-            pointer(address),
-            result as u32
-        ));
-    }
-    result
-}
-
-extern "C" fn direct_release(start: u64, size: u64) -> i32 {
-    let result = memory().write(|s| s.release_direct(start, size));
-    if result != 0 || size == 0 {
-        return result;
-    }
-    memory().flush_hooks();
-    if trace() {
-        say(&format!(
-            "Memory: release direct phys=0x{start:x} size=0x{size:x}"
-        ));
-    }
-    0
-}
-
-unsafe extern "C" fn map_flexible(inout: *mut u64, size: u64, prot: c_int, flags: c_int) -> i32 {
-    // SAFETY: the guest's in-out address, or null.
-    let want = unsafe { get(inout) };
-    if trace() {
-        say(&format!(
-            "Memory: map flexible want={} size=0x{size:x} prot=0x{:x} flags=0x{:x}",
-            pointer(want),
-            prot as u32,
-            flags as u32
-        ));
-    }
-    let result = if inout.is_null() {
-        Err(INVALID)
-    } else {
-        memory().write(|s| s.map_flexible(want, size, prot, flags))
+    ($(#[$meta:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty $body:block) => {
+        $(#[$meta])*
+        #[cfg(target_arch = "x86_64")]
+        extern "sysv64" fn $name($($arg: $ty),*) -> $ret $body
+        $(#[$meta])*
+        #[cfg(not(target_arch = "x86_64"))]
+        extern "C" fn $name($($arg: $ty),*) -> $ret $body
     };
-    if let Ok(address) = result {
-        // SAFETY: the guest's in-out address, non-null here.
-        unsafe { put(inout, address) };
-    }
-    memory().flush_hooks();
-    match result {
-        Ok(address) => say(&format!(
-            "Runtime: mapped flexible memory {}, size={size}, prot=0x{:x}",
-            pointer(address),
-            prot as u32
-        )),
-        Err(error) => eprintln!(
-            "Runtime: flexible map of {size} bytes failed (0x{:x}), in use={}",
-            error as u32,
-            memory().read(|s| s.stats().flexible_bytes)
-        ),
-    }
-    code(&result)
 }
 
-unsafe extern "C" fn map_flexible_named(
-    inout: *mut u64,
-    size: u64,
-    prot: c_int,
-    flags: c_int,
-    _name: *const c_char,
-) -> i32 {
-    // SAFETY: the same arguments, from the guest.
-    unsafe { map_flexible(inout, size, prot, flags) }
-}
-
-extern "C" fn release_flexible(address: u64, size: u64) -> i32 {
-    direct_unmap(address, size)
-}
-
-unsafe extern "C" fn reserve_range(
-    inout: *mut u64,
-    size: u64,
-    flags: c_int,
-    alignment: u64,
-) -> i32 {
-    if inout.is_null() {
-        return INVALID;
+guest! {
+    fn direct_size() -> u64 {
+        pool()
     }
-    // SAFETY: the guest's in-out address, non-null.
-    let want = unsafe { get(inout) };
-    match memory().write(|s| s.reserve(want, size, flags, alignment)) {
-        Ok(address) => {
-            // SAFETY: as above.
-            unsafe { put(inout, address) };
-            say(&format!(
-                "Runtime: reserved virtual range {}, size={size}",
-                pointer(address)
-            ));
-            0
+}
+
+guest! {
+    unsafe fn direct_allocate(
+        low: i64,
+        high: i64,
+        size: u64,
+        alignment: u64,
+        memory_type: c_int,
+        out: *mut i64,
+    ) -> i32 {
+        if out.is_null() {
+            return INVALID;
         }
-        Err(error) => error,
-    }
-}
-
-extern "C" fn kernel_mprotect(address: u64, size: u64, prot: c_int) -> i32 {
-    let result = memory().write(|s| s.protect(address, size, prot, -1));
-    memory().flush_hooks();
-    if trace() {
-        say(&format!(
-            "Memory: mprotect {} size=0x{size:x} prot=0x{:x} result=0x{:x}",
-            pointer(address),
-            prot as u32,
-            result as u32
-        ));
-    }
-    result
-}
-
-unsafe extern "C" fn query_protection(
-    address: u64,
-    start: *mut u64,
-    end: *mut u64,
-    prot: *mut u32,
-) -> i32 {
-    match memory().read(|s| s.query_protection(address)) {
-        Ok((first, last, protection)) => {
-            // SAFETY: the guest's outputs, each null or writable.
-            unsafe {
-                put(start, first);
-                put(end, last);
-                put(prot, protection);
-            }
-            0
-        }
-        Err(error) => error,
-    }
-}
-
-unsafe extern "C" fn virtual_query(
-    address: u64,
-    flags: c_int,
-    info: *mut VirtualQueryInfo,
-    info_size: u64,
-) -> i32 {
-    if info.is_null() || info_size != std::mem::size_of::<VirtualQueryInfo>() as u64 {
-        return INVALID;
-    }
-    match memory().read(|s| s.virtual_query(address, flags)) {
-        Ok(result) => {
-            // SAFETY: the guest's output, non-null and `info_size` bytes long.
-            unsafe { put(info, result) };
-            0
-        }
-        Err(error) => error,
-    }
-}
-
-unsafe extern "C" fn direct_memory_type(
-    phys: u64,
-    memory_type: *mut c_int,
-    start: *mut u64,
-    end: *mut u64,
-) -> i32 {
-    match memory().read(|s| s.direct_memory_type(phys)) {
-        Ok((found, first, last)) => {
-            // SAFETY: the guest's outputs, each null or writable.
-            unsafe {
-                put(memory_type, found);
-                put(start, first);
-                put(end, last);
-            }
-            0
-        }
-        Err(error) => error,
-    }
-}
-
-unsafe extern "C" fn batch_map2(
-    entries: *mut BatchEntry,
-    count: c_int,
-    processed: *mut c_int,
-    flags: c_int,
-) -> i32 {
-    if entries.is_null() || count < 0 {
-        return INVALID;
-    }
-    // The mapped addresses are written to the guest's entries after the lock is released (a
-    // write to a GPU-tracked page faults, and the fault handler must not wait behind this lock).
-    let mut starts = Vec::with_capacity(count as usize);
-    let result = memory().write(|s| {
-        while starts.len() < count as usize {
-            // SAFETY: the guest passed `count` entries; each is read as the loop reaches it.
-            let entry = unsafe { entries.add(starts.len()).read_unaligned() };
-            if s.trace() {
-                say(&format!(
-                    "Memory: batch op={} start={} length=0x{:x} offset=0x{:x} prot=0x{:x} type={} flags=0x{:x}",
-                    entry.operation,
-                    pointer(entry.start),
-                    entry.length,
-                    entry.offset,
-                    entry.prot as u8,
-                    entry.memory_type,
-                    flags as u32
-                ));
-            }
-            match s.batch_entry(&entry, flags) {
-                Ok(address) => starts.push(address),
+        let (low_start, end, alignment) =
+            match direct_window(pool(), low, high, size, alignment, memory_type) {
+                Ok(window) => window,
+                Err(NO_SPACE) => {
+                    say(&refusal_line(pool(), low, high, size));
+                    return NO_SPACE;
+                }
                 Err(error) => return error,
+            };
+        let start =
+            match memory().write(|s| s.allocate_direct(low_start, end, size, alignment, memory_type)) {
+                Ok(start) => start,
+                Err(error) => return error,
+            };
+        // SAFETY: the guest's output, checked non-null above.
+        unsafe { put(out, start as i64) };
+        say(&format!(
+            "Runtime: direct allocation offset=0x{start:x}, size={size} bytes, type={memory_type}"
+        ));
+        0
+    }
+}
+
+guest! {
+    unsafe fn direct_map(
+        out: *mut u64,
+        size: u64,
+        prot: c_int,
+        flags: c_int,
+        physical: i64,
+        alignment: u64,
+    ) -> i32 {
+        // SAFETY: the guest's in-out address, or null.
+        let requested = unsafe { get(out) };
+        let result = if out.is_null() {
+            Err(INVALID)
+        } else {
+            memory().write(|s| s.map_direct(requested, size, prot, flags, physical, alignment))
+        };
+        if let Ok(address) = result {
+            // SAFETY: the guest's in-out address, non-null here.
+            unsafe { put(out, address) };
+        }
+        memory().flush_hooks();
+        // SAFETY: as above.
+        let mapped = unsafe { get(out) };
+        if trace() {
+            say(&format!(
+                "Memory: map direct want={} size=0x{size:x} prot=0x{:x} flags=0x{:x} phys=0x{:x} align=0x{alignment:x} -> {} result=0x{:x}",
+                pointer(requested),
+                prot as u32,
+                flags as u32,
+                physical as u64,
+                pointer(mapped),
+                code(&result) as u32
+            ));
+        } else if result.is_ok() {
+            say(&format!(
+                "Runtime: mapped direct memory {}, size={size}, prot=0x{:x}",
+                pointer(mapped),
+                prot as u32
+            ));
+        }
+        code(&result)
+    }
+}
+
+guest! {
+    unsafe fn direct_map_named(
+        out: *mut u64,
+        size: u64,
+        prot: c_int,
+        flags: c_int,
+        physical: i64,
+        alignment: u64,
+        _name: *const c_char,
+    ) -> i32 {
+        // SAFETY: the same arguments, from the guest.
+        unsafe { direct_map(out, size, prot, flags, physical, alignment) }
+    }
+}
+
+guest! {
+    fn direct_unmap(address: u64, size: u64) -> i32 {
+        // The GPU forgets the range before it disappears (as shadPS4's early GPU unmap).
+        if let Some(hook) = memory().read(Space::unmap_hook) {
+            if address.is_multiple_of(PAGE) && size != 0 {
+                hook(address as usize, align_up(size, PAGE));
             }
+        }
+        let result = memory().write(|s| {
+            let before = s.pending_hooks();
+            let result = s.unmap(address, size);
+            s.forget_hooks_after(before); // already notified above
+            result
+        });
+        if trace() {
+            say(&format!(
+                "Memory: unmap {} size=0x{size:x} result=0x{:x}",
+                pointer(address),
+                result as u32
+            ));
+        }
+        result
+    }
+}
+
+guest! {
+    fn direct_release(start: u64, size: u64) -> i32 {
+        let result = memory().write(|s| s.release_direct(start, size));
+        if result != 0 || size == 0 {
+            return result;
+        }
+        memory().flush_hooks();
+        if trace() {
+            say(&format!(
+                "Memory: release direct phys=0x{start:x} size=0x{size:x}"
+            ));
         }
         0
-    });
-    for (i, &address) in starts.iter().enumerate() {
-        // SAFETY: entry `i` was read above; its `start` field is written back.
-        unsafe { put(ptr::addr_of_mut!((*entries.add(i)).start), address) };
     }
-    memory().flush_hooks();
-    // SAFETY: the guest's output, null or writable.
-    unsafe { put(processed, starts.len() as c_int) };
-    result
 }
 
-unsafe extern "C" fn batch_map(
-    entries: *mut BatchEntry,
-    count: c_int,
-    processed: *mut c_int,
-) -> i32 {
-    // SAFETY: the same arguments, from the guest.
-    unsafe { batch_map2(entries, count, processed, MAP_FIXED) }
+guest! {
+    unsafe fn map_flexible(inout: *mut u64, size: u64, prot: c_int, flags: c_int) -> i32 {
+        // SAFETY: the guest's in-out address, or null.
+        let want = unsafe { get(inout) };
+        if trace() {
+            say(&format!(
+                "Memory: map flexible want={} size=0x{size:x} prot=0x{:x} flags=0x{:x}",
+                pointer(want),
+                prot as u32,
+                flags as u32
+            ));
+        }
+        let result = if inout.is_null() {
+            Err(INVALID)
+        } else {
+            memory().write(|s| s.map_flexible(want, size, prot, flags))
+        };
+        if let Ok(address) = result {
+            // SAFETY: the guest's in-out address, non-null here.
+            unsafe { put(inout, address) };
+        }
+        memory().flush_hooks();
+        match result {
+            Ok(address) => say(&format!(
+                "Runtime: mapped flexible memory {}, size={size}, prot=0x{:x}",
+                pointer(address),
+                prot as u32
+            )),
+            Err(error) => eprintln!(
+                "Runtime: flexible map of {size} bytes failed (0x{:x}), in use={}",
+                error as u32,
+                memory().read(|s| s.stats().flexible_bytes)
+            ),
+        }
+        code(&result)
+    }
+}
+
+guest! {
+    unsafe fn map_flexible_named(
+        inout: *mut u64,
+        size: u64,
+        prot: c_int,
+        flags: c_int,
+        _name: *const c_char,
+    ) -> i32 {
+        // SAFETY: the same arguments, from the guest.
+        unsafe { map_flexible(inout, size, prot, flags) }
+    }
+}
+
+guest! {
+    fn release_flexible(address: u64, size: u64) -> i32 {
+        direct_unmap(address, size)
+    }
+}
+
+guest! {
+    unsafe fn reserve_range(
+        inout: *mut u64,
+        size: u64,
+        flags: c_int,
+        alignment: u64,
+    ) -> i32 {
+        if inout.is_null() {
+            return INVALID;
+        }
+        // SAFETY: the guest's in-out address, non-null.
+        let want = unsafe { get(inout) };
+        match memory().write(|s| s.reserve(want, size, flags, alignment)) {
+            Ok(address) => {
+                // SAFETY: as above.
+                unsafe { put(inout, address) };
+                say(&format!(
+                    "Runtime: reserved virtual range {}, size={size}",
+                    pointer(address)
+                ));
+                0
+            }
+            Err(error) => error,
+        }
+    }
+}
+
+guest! {
+    fn kernel_mprotect(address: u64, size: u64, prot: c_int) -> i32 {
+        let result = memory().write(|s| s.protect(address, size, prot, -1));
+        memory().flush_hooks();
+        if trace() {
+            say(&format!(
+                "Memory: mprotect {} size=0x{size:x} prot=0x{:x} result=0x{:x}",
+                pointer(address),
+                prot as u32,
+                result as u32
+            ));
+        }
+        result
+    }
+}
+
+guest! {
+    unsafe fn query_protection(
+        address: u64,
+        start: *mut u64,
+        end: *mut u64,
+        prot: *mut u32,
+    ) -> i32 {
+        match memory().read(|s| s.query_protection(address)) {
+            Ok((first, last, protection)) => {
+                // SAFETY: the guest's outputs, each null or writable.
+                unsafe {
+                    put(start, first);
+                    put(end, last);
+                    put(prot, protection);
+                }
+                0
+            }
+            Err(error) => error,
+        }
+    }
+}
+
+guest! {
+    unsafe fn virtual_query(
+        address: u64,
+        flags: c_int,
+        info: *mut VirtualQueryInfo,
+        info_size: u64,
+    ) -> i32 {
+        if info.is_null() || info_size != std::mem::size_of::<VirtualQueryInfo>() as u64 {
+            return INVALID;
+        }
+        match memory().read(|s| s.virtual_query(address, flags)) {
+            Ok(result) => {
+                // SAFETY: the guest's output, non-null and `info_size` bytes long.
+                unsafe { put(info, result) };
+                0
+            }
+            Err(error) => error,
+        }
+    }
+}
+
+guest! {
+    unsafe fn direct_memory_type(
+        phys: u64,
+        memory_type: *mut c_int,
+        start: *mut u64,
+        end: *mut u64,
+    ) -> i32 {
+        match memory().read(|s| s.direct_memory_type(phys)) {
+            Ok((found, first, last)) => {
+                // SAFETY: the guest's outputs, each null or writable.
+                unsafe {
+                    put(memory_type, found);
+                    put(start, first);
+                    put(end, last);
+                }
+                0
+            }
+            Err(error) => error,
+        }
+    }
+}
+
+guest! {
+    unsafe fn batch_map2(
+        entries: *mut BatchEntry,
+        count: c_int,
+        processed: *mut c_int,
+        flags: c_int,
+    ) -> i32 {
+        if entries.is_null() || count < 0 {
+            return INVALID;
+        }
+        // The mapped addresses are written to the guest's entries after the lock is released (a
+        // write to a GPU-tracked page faults, and the fault handler must not wait behind this lock).
+        let mut starts = Vec::with_capacity(count as usize);
+        let result = memory().write(|s| {
+            while starts.len() < count as usize {
+                // SAFETY: the guest passed `count` entries; each is read as the loop reaches it.
+                let entry = unsafe { entries.add(starts.len()).read_unaligned() };
+                if s.trace() {
+                    say(&format!(
+                        "Memory: batch op={} start={} length=0x{:x} offset=0x{:x} prot=0x{:x} type={} flags=0x{:x}",
+                        entry.operation,
+                        pointer(entry.start),
+                        entry.length,
+                        entry.offset,
+                        entry.prot as u8,
+                        entry.memory_type,
+                        flags as u32
+                    ));
+                }
+                match s.batch_entry(&entry, flags) {
+                    Ok(address) => starts.push(address),
+                    Err(error) => return error,
+                }
+            }
+            0
+        });
+        for (i, &address) in starts.iter().enumerate() {
+            // SAFETY: entry `i` was read above; its `start` field is written back.
+            unsafe { put(ptr::addr_of_mut!((*entries.add(i)).start), address) };
+        }
+        memory().flush_hooks();
+        // SAFETY: the guest's output, null or writable.
+        unsafe { put(processed, starts.len() as c_int) };
+        result
+    }
+}
+
+guest! {
+    unsafe fn batch_map(
+        entries: *mut BatchEntry,
+        count: c_int,
+        processed: *mut c_int,
+    ) -> i32 {
+        // SAFETY: the same arguments, from the guest.
+        unsafe { batch_map2(entries, count, processed, MAP_FIXED) }
+    }
 }
 
 /// The guest function a symbol of [`SYMBOLS`] names (the C `exports` table).
@@ -443,6 +498,48 @@ fn function(symbol: &str) -> usize {
         "sceKernelBatchMap" => batch_map as *const () as usize,
         "sceKernelBatchMap2" => batch_map2 as *const () as usize,
         _ => 0,
+    }
+}
+
+/// Every guest entry point keeps the System V ABI on every x86-64 host. The coercions below
+/// only compile if each function is `extern "sysv64"`, so Windows CI catches a regression to
+/// `extern "C"` (Win64 there), which made U2 fault at boot.
+#[cfg(all(test, target_arch = "x86_64"))]
+mod guest_abi {
+    use super::*;
+
+    #[test]
+    fn guest_functions_are_sysv64() {
+        let _: extern "sysv64" fn() -> u64 = direct_size;
+        let _: unsafe extern "sysv64" fn(i64, i64, u64, u64, c_int, *mut i64) -> i32 =
+            direct_allocate;
+        let _: unsafe extern "sysv64" fn(*mut u64, u64, c_int, c_int, i64, u64) -> i32 = direct_map;
+        let _: unsafe extern "sysv64" fn(
+            *mut u64,
+            u64,
+            c_int,
+            c_int,
+            i64,
+            u64,
+            *const c_char,
+        ) -> i32 = direct_map_named;
+        let _: extern "sysv64" fn(u64, u64) -> i32 = direct_unmap;
+        let _: extern "sysv64" fn(u64, u64) -> i32 = direct_release;
+        let _: unsafe extern "sysv64" fn(*mut u64, u64, c_int, c_int) -> i32 = map_flexible;
+        let _: unsafe extern "sysv64" fn(*mut u64, u64, c_int, c_int, *const c_char) -> i32 =
+            map_flexible_named;
+        let _: extern "sysv64" fn(u64, u64) -> i32 = release_flexible;
+        let _: unsafe extern "sysv64" fn(*mut u64, u64, c_int, u64) -> i32 = reserve_range;
+        let _: extern "sysv64" fn(u64, u64, c_int) -> i32 = kernel_mprotect;
+        let _: unsafe extern "sysv64" fn(u64, *mut u64, *mut u64, *mut u32) -> i32 =
+            query_protection;
+        let _: unsafe extern "sysv64" fn(u64, c_int, *mut VirtualQueryInfo, u64) -> i32 =
+            virtual_query;
+        let _: unsafe extern "sysv64" fn(u64, *mut c_int, *mut u64, *mut u64) -> i32 =
+            direct_memory_type;
+        let _: unsafe extern "sysv64" fn(*mut BatchEntry, c_int, *mut c_int, c_int) -> i32 =
+            batch_map2;
+        let _: unsafe extern "sysv64" fn(*mut BatchEntry, c_int, *mut c_int) -> i32 = batch_map;
     }
 }
 
@@ -679,9 +776,21 @@ mod tests {
         address
     }
 
+    #[cfg(target_arch = "x86_64")]
+    type Allocate = unsafe extern "sysv64" fn(i64, i64, u64, u64, c_int, *mut i64) -> i32;
+    #[cfg(target_arch = "x86_64")]
+    type Map = unsafe extern "sysv64" fn(*mut u64, u64, c_int, c_int, i64, u64) -> i32;
+    #[cfg(target_arch = "x86_64")]
+    type Unmap = extern "sysv64" fn(u64, u64) -> i32;
+    #[cfg(target_arch = "x86_64")]
+    type Release = extern "sysv64" fn(u64, u64) -> i32;
+    #[cfg(not(target_arch = "x86_64"))]
     type Allocate = unsafe extern "C" fn(i64, i64, u64, u64, c_int, *mut i64) -> i32;
+    #[cfg(not(target_arch = "x86_64"))]
     type Map = unsafe extern "C" fn(*mut u64, u64, c_int, c_int, i64, u64) -> i32;
+    #[cfg(not(target_arch = "x86_64"))]
     type Unmap = extern "C" fn(u64, u64) -> i32;
+    #[cfg(not(target_arch = "x86_64"))]
     type Release = extern "C" fn(u64, u64) -> i32;
 
     /// `test_runtime.c` `direct_memory`, through the resolver as the guest calls it: the
