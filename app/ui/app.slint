@@ -819,8 +819,10 @@ export component AppWindow inherits Window {
                     min-height: root.unit * 2;
                     border-radius: root.unit * 0.3;
                     background: i == root.current-game ? Theme.button-focused : transparent;
+                    // The chosen game is not a focus stop (LB / RB change it), so its ring is
+                    // the plain edge colour: the accent ring is only ever on the focused control.
                     border-width: i == root.current-game ? 2px : 0px;
-                    border-color: Theme.accent;
+                    border-color: Theme.edge;
                     Text {
                         text: name;
                         color: i == root.current-game ? Theme.text : Theme.dim;
@@ -964,8 +966,9 @@ export component AppWindow inherits Window {
                         min-height: root.unit * 2;
                         border-radius: root.unit * 0.3;
                         background: i == root.page-game ? Theme.button-focused : transparent;
+                        // Not a focus stop either: edge colour, as on the Continue screen.
                         border-width: i == root.page-game ? 2px : 0px;
-                        border-color: Theme.accent;
+                        border-color: Theme.edge;
                         Text {
                             text: name;
                             color: i == root.page-game ? Theme.text : Theme.dim;
