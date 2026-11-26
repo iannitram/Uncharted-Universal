@@ -9,7 +9,7 @@ This fork has its own pipeline files beside upstream's. README.md describes Unch
 5. **Check that it builds** (`bash build.sh`), then open the PR. CI and a review do the rest.
 6. **Label the PR** `by:<machine>` and `model:<model>`, and write `Closes #N`.
 7. **A failed job** gets a comment on the issue and the issue moves up one size.
-8. **No game files, ever** (#23). No private details in code, commits or PR text. Commit as the no-reply identity.
+8. **No game files, ever** (#23). The one exception is the downloaded test save folders in `tests/fixtures/saves/` (owner ruling 2026-11-24, save data only; its `README.md`). No private details in code, commits or PR text. Commit as the no-reply identity.
 9. **Upstream:** bug reports for solid findings are fine and say they are AI-assisted; code PRs to upstream need the owner's word. Nothing goes to shadPS4 (anti-AI).
 
 ## Save Relay fixes (owner instruction, 2026-11-20)
