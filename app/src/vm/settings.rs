@@ -357,6 +357,9 @@ pub struct SettingsVm {
     focus: Grid,
     tuning: bool,
     status: String,
+    /// The card last picked on this page, so it alone shows "In use" when two cards are the
+    /// same (Balanced 60 and Max quality before a tune).
+    picked: Option<usize>,
 }
 
 impl SettingsVm {
@@ -379,13 +382,10 @@ impl SettingsVm {
             focus: Grid::default(),
             tuning: false,
             status: String::new(),
+            picked: None,
         };
         vm.fit();
-        let cards = vm.cards();
-        let col = [&cards.handheld30, &cards.balanced60, &cards.max]
-            .iter()
-            .position(|card| vm.stored.matches(card))
-            .unwrap_or(0);
+        let col = vm.in_use(&vm.cards()).unwrap_or(0);
         vm.focus = Grid::at(0, col);
         vm
     }
@@ -429,6 +429,16 @@ impl SettingsVm {
             }
         }
         cards
+    }
+
+    /// The one card in use: the card picked on this page while the stored values still match
+    /// it, else the first card that matches them.
+    fn in_use(&self, cards: &Cards) -> Option<usize> {
+        let all = [&cards.handheld30, &cards.balanced60, &cards.max];
+        match self.picked {
+            Some(i) if all.get(i).is_some_and(|card| self.stored.matches(card)) => Some(i),
+            _ => all.iter().position(|card| self.stored.matches(card)),
+        }
     }
 
     /// The values a choice row offers, with their labels, in order.
@@ -627,6 +637,7 @@ impl SettingsVm {
                 let card =
                     [&cards.handheld30, &cards.balanced60, &cards.max][self.focus.col.min(2)];
                 self.stored = self.stored.with_card(card);
+                self.picked = Some(self.focus.col.min(2));
                 self.status = format!("{} is in use.", CARD_NAMES[self.focus.col.min(2)]);
                 SettingsCommand::Save(self.stored.clone())
             }
@@ -664,6 +675,7 @@ impl SettingsVm {
     /// What to draw now.
     pub fn view(&self) -> SettingsView {
         let cards = self.cards();
+        let in_use = self.in_use(&cards);
         let bench = [self.bench.handheld30, self.bench.balanced60, self.bench.max];
         let targets = ["30", "60", "60"];
         let card_views = [&cards.handheld30, &cards.balanced60, &cards.max]
@@ -704,7 +716,7 @@ impl SettingsVm {
                 TuneCard {
                     title: CARD_NAMES[i].to_owned(),
                     lines,
-                    in_use: self.stored.matches(card),
+                    in_use: in_use == Some(i),
                 }
             })
             .collect();
@@ -782,6 +794,15 @@ impl SettingsVm {
                 "Not tuned yet: Tune this device reads the GPU, then the cards and choices fit it."
                     .into(),
             ),
+        }
+        let cards = self.cards();
+        if self.stored.with_card(&cards.max) == self.stored.with_card(&cards.balanced60) {
+            notes.push(if self.report.is_some() {
+                "Max quality is the same as Balanced 60 on this device.".into()
+            } else {
+                "Max quality is the same as Balanced 60 until Tune this device reads the GPU."
+                    .into()
+            });
         }
         if self.stored.anti_aliasing == "off" {
             notes.push(
