@@ -586,19 +586,6 @@ pub fn remove_peer(path: &Path, device: &str) -> Result<bool> {
 /// Load paired devices from a protected `peers.json` file. Callers should normally pass
 /// `<AppDirs.config>/peers.json`; the format contains secrets and is never suitable for logs.
 pub fn read_peers(path: &Path) -> Result<Vec<Peer>> {
-    #[cfg(windows)]
-    {
-        let _ = path;
-        Err(Error::Hub(
-            "protected paired-device storage is not implemented on Windows".into(),
-        ))
-    }
-    #[cfg(not(windows))]
-    read_peers_impl(path)
-}
-
-#[cfg(not(windows))]
-fn read_peers_impl(path: &Path) -> Result<Vec<Peer>> {
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -663,23 +650,12 @@ fn read_peers_impl(path: &Path) -> Result<Vec<Peer>> {
     Ok(peers)
 }
 
-/// Atomically replace the per-user paired-device file. On Unix the new file is created mode
-/// 0600 before rename. On Windows the destination ACL is inherited from the app's protected
-/// configuration directory; replacement of an existing file may be unavailable in this build.
+/// Atomically replace the per-user paired-device file. The new file is created in the same
+/// folder as owner-only (Unix mode 0600; on Windows a protected DACL with one allow entry for
+/// the current user, see `platform`), written and synced, then renamed over the old one
+/// (`std::fs::rename` replaces an existing file on both Unix and Windows). An existing file
+/// that is not owner-only is refused rather than replaced.
 pub fn write_peers(path: &Path, peers: &[Peer]) -> Result<()> {
-    #[cfg(windows)]
-    {
-        let _ = (path, peers);
-        Err(Error::Hub(
-            "protected paired-device storage is not implemented on Windows".into(),
-        ))
-    }
-    #[cfg(not(windows))]
-    write_peers_impl(path, peers)
-}
-
-#[cfg(not(windows))]
-fn write_peers_impl(path: &Path, peers: &[Peer]) -> Result<()> {
     if peers.len() > 256 {
         return Err(Error::Hub(
             "paired-device storage has too many peers".into(),
@@ -2434,9 +2410,8 @@ mod tests {
         assert_eq!(limiter.failures, 0);
     }
 
-    #[cfg(unix)]
     #[test]
-    fn peer_storage_round_trips_with_owner_only_unix_mode_and_redacted_debug() {
+    fn peer_storage_round_trips_owner_only_and_redacted_debug() {
         let root = std::env::temp_dir().join(format!("uu-peers-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
@@ -2449,6 +2424,7 @@ mod tests {
         let peers = read_peers(&path).unwrap();
         assert_eq!(peers, vec![peer.clone()]);
         assert!(!format!("{peer:?}").contains(&peer.key_hex));
+        assert!(crate::platform::private_file_permissions(&path).unwrap());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -2457,34 +2433,72 @@ mod tests {
                 0o600
             );
         }
+        // Replacing an existing file keeps it private and leaves no temporary file behind.
+        let other = Peer {
+            device: "tablet".into(),
+            key_hex: "5a".repeat(32),
+        };
+        write_peers(&path, &[peer.clone(), other.clone()]).unwrap();
+        assert_eq!(read_peers(&path).unwrap(), vec![peer, other]);
+        assert!(crate::platform::private_file_permissions(&path).unwrap());
+        let names: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("peers.json")]);
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// On Windows the file must not stay open to the groups its folder grants (a real ACL
+    /// check through `icacls`), and a file someone else could read is refused, not replaced.
     #[cfg(windows)]
     #[test]
-    fn peer_storage_fails_closed_when_protected_storage_is_unavailable() {
-        let path = std::env::temp_dir().join(format!("uu-peers-{}", std::process::id()));
-        assert!(matches!(
-            read_peers(&path),
-            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
-        ));
-        assert!(matches!(
-            write_peers(&path, &[]),
-            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
-        ));
+    fn windows_peer_file_is_owner_only_and_a_widened_one_is_refused() {
+        let root = fresh_root("peers-acl");
+        let path = root.join("peers.json");
         let peer = Peer {
-            device: "synthetic handheld".into(),
+            device: "handheld".into(),
             key_hex: "a5".repeat(32),
         };
+        remember_peer(&path, &peer).unwrap();
+        let icacls = std::path::Path::new(&std::env::var_os("SystemRoot").unwrap())
+            .join("System32")
+            .join("icacls.exe");
+        let listing = |file: &Path| {
+            let out = std::process::Command::new(&icacls)
+                .arg(file)
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let before = listing(&path);
+        assert!(!before.contains("BUILTIN\\Users"), "{before}");
+        assert!(!before.contains("Everyone"), "{before}");
+        assert!(!before.contains("Authenticated Users"), "{before}");
+        assert_eq!(before.matches(":(").count(), 1, "one entry only: {before}");
+
+        // Re-enable inheritance: the folder's entries come back, and the file is refused.
+        let status = std::process::Command::new(&icacls)
+            .arg(&path)
+            .arg("/inheritance:e")
+            .output()
+            .unwrap()
+            .status;
+        assert!(status.success());
+        assert!(!crate::platform::private_file_permissions(&path).unwrap());
+        assert!(matches!(
+            read_peers(&path),
+            Err(Error::Hub(message)) if message.contains("not private")
+        ));
         assert!(matches!(
             remember_peer(&path, &peer),
-            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+            Err(Error::Hub(message)) if message.contains("not private")
         ));
         assert!(matches!(
-            remove_peer(&path, "synthetic handheld"),
-            Err(Error::Hub(message)) if message.contains("not implemented on Windows")
+            remove_peer(&path, "handheld"),
+            Err(Error::Hub(message)) if message.contains("not private")
         ));
-        assert!(!path.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2720,49 +2734,33 @@ mod tests {
         let (hub, server) = hub.join().unwrap();
         assert!(server.is_spent());
 
-        #[cfg(not(windows))]
-        {
-            let client = client.unwrap();
-            let hub = hub.unwrap();
-            assert_eq!(client.device, "hub");
-            assert_eq!(hub.device, "handheld");
-            assert_eq!(client.key_hex, hub.key_hex);
-            assert_eq!(read_peers(&client_peers).unwrap(), vec![client.clone()]);
-            assert_eq!(read_peers(&hub_peers).unwrap(), vec![hub.clone()]);
+        let client = client.unwrap();
+        let hub = hub.unwrap();
+        assert_eq!(client.device, "hub");
+        assert_eq!(hub.device, "handheld");
+        assert_eq!(client.key_hex, hub.key_hex);
+        assert_eq!(read_peers(&client_peers).unwrap(), vec![client.clone()]);
+        assert_eq!(read_peers(&hub_peers).unwrap(), vec![hub.clone()]);
 
-            // Pairing again replaces the record; unpairing forgets it.
-            let mut again =
-                PairingServer::with_code("222333", "hub", &hub_peers, clock.clone()).unwrap();
-            let (repaired, _) = memory_attempt(
-                &mut again,
-                Ipv4Addr::LOCALHOST.into(),
-                "222 333",
-                &client_peers,
-            );
-            let repaired = repaired.unwrap();
-            assert_ne!(repaired.key_hex, hub.key_hex);
-            assert_eq!(read_peers(&hub_peers).unwrap(), vec![repaired]);
-            assert_eq!(read_peers(&client_peers).unwrap().len(), 1);
-            assert!(remove_peer(&hub_peers, "handheld").unwrap());
-            assert!(!remove_peer(&hub_peers, "handheld").unwrap());
-            assert!(read_peers(&hub_peers).unwrap().is_empty());
-        }
-        // Protected peer storage is not built on Windows: the exchange completes, then both
-        // sides fail closed instead of storing the key unprotected.
-        #[cfg(windows)]
-        {
-            for result in [client, hub] {
-                assert!(matches!(
-                    result,
-                    Err(Error::Hub(message)) if message.contains("not implemented on Windows")
-                ));
-            }
-            assert!(!hub_peers.exists() && !client_peers.exists());
-        }
+        // Pairing again replaces the record; unpairing forgets it.
+        let mut again =
+            PairingServer::with_code("222333", "hub", &hub_peers, clock.clone()).unwrap();
+        let (repaired, _) = memory_attempt(
+            &mut again,
+            Ipv4Addr::LOCALHOST.into(),
+            "222 333",
+            &client_peers,
+        );
+        let repaired = repaired.unwrap();
+        assert_ne!(repaired.key_hex, hub.key_hex);
+        assert_eq!(read_peers(&hub_peers).unwrap(), vec![repaired]);
+        assert_eq!(read_peers(&client_peers).unwrap().len(), 1);
+        assert!(remove_peer(&hub_peers, "handheld").unwrap());
+        assert!(!remove_peer(&hub_peers, "handheld").unwrap());
+        assert!(read_peers(&hub_peers).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[cfg(unix)]
     #[test]
     fn remembered_peers_replace_by_device_and_unpair() {
         let root = fresh_root("peers-remember");

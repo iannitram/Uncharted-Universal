@@ -11,7 +11,7 @@ publish = false
 name = "uncharted_runtime"
 path = "src/lib.rs"
 # A static library linked into the loader while C remains (ADR 0002); rlib for the Rust tests.
-# build.rs: the NID table, the loader cfg (UNCHARTED_RUNTIME_LOADER=1) and the gpu/ build.
+# build.rs: the NID table and, with UNCHARTED_GPU_BUILD, the loader cfg and the gpu/ build.
 crate-type = ["rlib", "staticlib"]
 
 # The desktop runner. Only `--probe` is built; the game loader joins it in piece 3.16.

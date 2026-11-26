@@ -131,6 +131,25 @@ void TestIndexBufferDeduplication() {
     assert(state.ShouldBindIndexBuffer(ib2, 16, vk::IndexType::eUint32));
 }
 
+void TestForgetCompute() {
+    // #155: a pass that binds its own compute pipeline inside Record() calls ForgetCompute(), so
+    // the next guest dispatch of the pipeline bound before binds it again.
+    Vulkan::BindState state;
+    const auto gfx = FakePipeline(0x5001);
+    const auto cmp = FakePipeline(0x5002);
+    const auto ib = FakeBuffer(0x5003);
+    assert(state.ShouldBindPipeline(vk::PipelineBindPoint::eGraphics, gfx));
+    assert(state.ShouldBindPipeline(vk::PipelineBindPoint::eCompute, cmp));
+    assert(state.ShouldBindIndexBuffer(ib, 0, vk::IndexType::eUint16));
+
+    state.ForgetCompute();
+    assert(state.ShouldBindPipeline(vk::PipelineBindPoint::eCompute, cmp));
+    assert(!state.ShouldBindPipeline(vk::PipelineBindPoint::eCompute, cmp));
+    // Graphics and index-buffer state are untouched.
+    assert(!state.ShouldBindPipeline(vk::PipelineBindPoint::eGraphics, gfx));
+    assert(!state.ShouldBindIndexBuffer(ib, 0, vk::IndexType::eUint16));
+}
+
 } // namespace
 
 int main() {
@@ -138,5 +157,6 @@ int main() {
     TestVertexInputDeduplication();
     TestVertexBufferDeduplication();
     TestIndexBufferDeduplication();
+    TestForgetCompute();
     return 0;
 }

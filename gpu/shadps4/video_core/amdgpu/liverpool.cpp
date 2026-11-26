@@ -503,11 +503,9 @@ void SignalFlip(Vulkan::Rasterizer& rasterizer, const u8*) {
     // Raycaster copies deferred before the flip land before the guest hears of it (the labels
     // before it wait for them as well, landing_gate.h).
     const u64 landing_seq = VideoCore::LandingGate::Pending();
-    if (ShouldDeferFlipSignal(Vulkan::DrawPipe::OnStageB(),
+    if (ShouldDeferFlipSignal(VideoCore::LandingGate::Active(), Vulkan::DrawPipe::OnStageB(),
                               !BbToggle::Disabled(BbToggle::RecorderFences))) {
-        // Behind the deferred fences, which the interrupt must not overtake, without waiting on
-        // the draw recording thread even when no raycaster copy is pending (cutscenes, deaths,
-        // movie changes).
+        // Behind the deferred fences, which the interrupt must not overtake, without waiting.
         rasterizer.OnGuestFlip();
         rasterizer.GetBufferCache().CheckStableBindings();
         rasterizer.CheckConstants();

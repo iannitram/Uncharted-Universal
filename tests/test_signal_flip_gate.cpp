@@ -13,12 +13,15 @@ void SetCurrentThreadName(const char*) {}
 } // namespace Common
 
 int main() {
-    // 1. SignalFlip must defer GfxFlip onto the landing thread whenever Stage B and
-    // RecorderFences are active, regardless of whether LandingGate::Active() is true.
-    static_assert(AmdGpu::ShouldDeferFlipSignal(true, true));
-    static_assert(!AmdGpu::ShouldDeferFlipSignal(false, true));
-    static_assert(!AmdGpu::ShouldDeferFlipSignal(true, false));
-    static_assert(!AmdGpu::ShouldDeferFlipSignal(false, false));
+    // 1. SignalFlip defers GfxFlip onto the landing thread only while a landing is pending, on
+    // Stage B with RecorderFences on. Otherwise the flip handler runs on the GPU command thread,
+    // which owns the draw scheduler the frame is prepared on.
+    for (int bits = 0; bits < 8; ++bits) {
+        const bool gate = bits & 1, stage_b = bits & 2, fences = bits & 4;
+        assert(AmdGpu::ShouldDeferFlipSignal(gate, stage_b, fences) == (bits == 7));
+    }
+    static_assert(AmdGpu::ShouldDeferFlipSignal(true, true, true));
+    static_assert(!AmdGpu::ShouldDeferFlipSignal(false, true, true));
 
     // 2. BbCopy::AfterCopies must deliver its callback strictly after queued async copies
     // complete, even when no LandingGate copy is pending.
