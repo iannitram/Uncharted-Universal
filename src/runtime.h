@@ -67,17 +67,15 @@ void runtime_trophy_bind(const char *(*user_dir)(void),
                          void (*notify)(int grade, const char *game, const char *name, const void *png, uint64_t png_size));
 void runtime_trophy_configure(const char *dir);
 uintptr_t runtime_trophy_resolve(const char *name);
-/* Benchmark mode (BB_BENCHMARK=<seconds>, #173): runtime_benchmark.c forwards to
- * crates/runtime/src/benchmark_run.rs when the build links it (BB_RUST_BENCHMARK) and is a no-op
- * otherwise. With BB_BENCHMARK unset every call costs one atomic load and changes nothing.
- * active: 1 when benchmark mode runs. start: 1 on, 0 off, -1 BB_BENCHMARK is set but cannot run (printed): exit. saves_dir is the
- * --user folder, where benchmark.json is written. pad: 1 when the benchmark owns this pad read
- * (fills the fields). frame: a game frame was presented; exits the process (code 0) when the
- * time is up and the report is written. crash: a fatal fault, writes the report with "crash". */
-typedef struct { uint32_t buttons; uint8_t left_x, left_y, right_x, right_y; } RuntimeBenchmarkPad;
+/* Benchmark mode (BB_BENCHMARK=<seconds>, #173): Rust (crates/runtime/src/benchmark_run.rs, the
+ * loader build; 3.17e retired the C glue src/runtime_benchmark.c). With BB_BENCHMARK unset every
+ * call costs one atomic load and changes nothing. active: 1 when benchmark mode runs. start: 1 on,
+ * 0 off, -1 BB_BENCHMARK is set but cannot run (printed): exit. saves_dir is the --user folder,
+ * where benchmark.json is written. frame: a game frame was presented; exits the process (code 0)
+ * when the time is up and the report is written. crash: a fatal fault, writes the report with
+ * "crash". The pad schedule is read by the Rust pad module directly (uncharted_benchmark_pad). */
 int runtime_benchmark_start(const char *saves_dir);
 int runtime_benchmark_active(void);
-int runtime_benchmark_pad(RuntimeBenchmarkPad *out);
 void runtime_benchmark_frame(uint64_t vram_mib);
 void runtime_benchmark_crash(void);
 

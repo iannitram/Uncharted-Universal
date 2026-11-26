@@ -10,12 +10,12 @@
 //! [`crash`] emits the bounded single-line format consumed by `crates/core::logs::crash_line`;
 //! wiring it into the fault/assertion handlers remains part of the loader port.
 //! [`memory`] is the guest address space (piece 3.12): direct and flexible memory, the region
-//! table and the GPU library's page hooks. On Linux and Android it exports the C symbols of
-//! `src/runtime_memory.c`, which Windows still builds until piece 3.15.
-//! [`os`] is the host OS shims (piece 3.15, from `src/compat_win.c`): the open file description
-//! whose positioned reads and writes never touch the shared position (#39), the Win32 errno map,
-//! the sleep, the UTC offset, OS random bytes, `remove_tree` and CPU times; [`file`] keeps one
-//! `os::Description` per open guest file.
+//! table and the GPU library's page hooks. On Linux, Android and Windows it exports the C symbols
+//! of the deleted `src/runtime_memory.c` (3.17e).
+//! [`os`] is the host OS shims (piece 3.15 and 3.17e, from the deleted `src/compat_win.c`): the
+//! open file description whose positioned reads and writes never touch the shared position (#39),
+//! the Win32 errno map, the sleep, the UTC offset, OS random bytes, `remove_tree`, CPU times and
+//! Windows `bb_setjmp`/`bb_longjmp`; [`file`] keeps one `os::Description` per open guest file.
 //! [`file`] is the guest file system (piece 3.09): mounts, the mod overlay, the descriptor table
 //! and the file calls of the deleted `src/runtime_file.c`, with its C symbols.
 //! [`time`] and [`rtc`] (piece 3.02) are the guest's `gettimeofday` and `libSceRtc`, from
@@ -48,8 +48,8 @@
 //! [`cpu_patch`] and [`red_zone`] (piece 3.14) are the guest code patchers, ports of
 //! `src/cpu_patch.c` and `src/red_zone.c`: instructions the host CPU lacks (BMI1, LZCNT, MOVBE)
 //! run from thunks, and guest leaf functions that keep data below rsp run their faulting accesses
-//! with rsp 128 bytes lower. Each exports its C symbols; the loader links these, the C files
-//! stay until 3.17. The x86 decoder is iced-x86 (Zydis in the C).
+//! with rsp 128 bytes lower. Each exports its C symbols; the loaders link these (the C files
+//! were deleted in 3.17e). The x86 decoder is iced-x86 (Zydis in the C).
 //!
 //! # Remaining planned modules
 //!
@@ -90,8 +90,8 @@ pub mod file;
 pub mod kernel;
 /// cbindgen:ignore
 pub mod loader;
-// Left out of the header: src/runtime.h declares memory's symbols (src/runtime_memory.c is
-// still the Windows build), and its constants are Rust's.
+// Left out of the header: src/runtime.h declares memory's symbols for src/probe.c and the C
+// tests, and its constants are Rust's.
 /// cbindgen:ignore
 pub mod memory;
 pub mod os;

@@ -333,16 +333,14 @@ endif()
 # linked here, where CMake knows its dependencies (build.sh builds them with ninja).
 if (WIN32)
     enable_language(RC)
-    file(GLOB BB_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
-    list(FILTER BB_RUNTIME EXCLUDE REGEX "runtime_(memory|fiber|thread)\\.c")
     file(GLOB BB_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
     add_library(atrac9 STATIC ${BB_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
-    # cpu_patch and red_zone come from crates/runtime (Rust, piece 3.14); src/cpu_patch.c and
-    # src/red_zone.c stay until 3.17.
-    add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c
-        ../packaging/windows/bb-probe.rc)
+    # bb-probe: the C loader src/probe.c and nothing else from src/ (3.17e). The runtime modules,
+    # cpu_patch and red_zone (3.14), the benchmark glue and bb_setjmp/bb_longjmp (3.17e) all come
+    # from crates/runtime. bb-probe and src/probe.c go when it is retired (3.16, #443).
+    add_executable(bb-probe ../src/probe.c ../packaging/windows/bb-probe.rc)
     set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     target_include_directories(bb-probe PRIVATE .. ../src)
@@ -368,7 +366,6 @@ if (WIN32)
         COMMENT "Building crates/runtime (Rust)"
         USES_TERMINAL)
     add_dependencies(bb-probe uncharted_runtime_rust)
-    set_source_files_properties(../src/runtime_benchmark.c PROPERTIES COMPILE_DEFINITIONS BB_RUST_BENCHMARK)
     target_link_libraries(bb-probe PRIVATE "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
     # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
     # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
@@ -376,12 +373,13 @@ if (WIN32)
     # uncharted-run (roadmap 3.17d, #457): the Rust loader (crates/runtime/src/loader/cli.rs) with a
     # C main (crates/runtime/c/uncharted_run_main.c) that hands it the GPU library's entry points.
     # It links the same libraries as bb-probe, minus probe.c, whose runtime_quit/runtime_restart
-    # the C main replaces. bb-probe stays until the live-hardware run is checked (3.17e).
-    add_executable(uncharted-run ../crates/runtime/c/uncharted_run_main.c ${BB_RUNTIME} ../src/compat_win.c
+    # the C main replaces, and no file of src/ (3.17e). bb-probe stays until the live-hardware run
+    # is checked and it is retired (3.16, #443).
+    add_executable(uncharted-run ../crates/runtime/c/uncharted_run_main.c
         ../packaging/windows/uncharted-run.rc)
     set_target_properties(uncharted-run PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(uncharted-run PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
-    target_include_directories(uncharted-run PRIVATE .. ../src)
+    target_include_directories(uncharted-run PRIVATE ..)
     target_link_libraries(uncharted-run PRIVATE bbgpu atrac9 Zydis::Zydis onecore bcrypt ws2_32 -pthread
         "${bb_rust_lib}" kernel32 ntdll userenv ws2_32 dbghelp unwind)
     add_dependencies(uncharted-run uncharted_runtime_rust)

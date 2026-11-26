@@ -39,7 +39,7 @@
 #include "video_core/renderer_vulkan/vk_low_latency.h"
 
 extern "C" {
-// crates/runtime memory on Linux, runtime_memory.c on Windows
+// crates/runtime memory (Linux, Android, Windows; src/runtime_memory.c was deleted in 3.17e)
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
 int runtime_memory_read_backing(uintptr_t address, void* data, uint64_t size);
