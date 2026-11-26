@@ -63,6 +63,23 @@ public:
         };
     }
 
+    // The swapchain extent the game started with is the baseline (#640): the first non-zero
+    // extent seen. Comparing with the render size instead fired the prompt at startup whenever
+    // the render size (auto, BB_GAME_RES, preference) differs from the window, with no resize.
+    BbResizeState ObserveExtent(uint32_t cur_w, uint32_t cur_h, uint64_t now_ms) {
+        if (cur_w == 0 || cur_h == 0) {
+            return State();
+        }
+        if (start_w_ == 0 || start_h_ == 0) {
+            start_w_ = cur_w;
+            start_h_ = cur_h;
+        }
+        return Observe(start_w_, start_h_, cur_w, cur_h, now_ms);
+    }
+
+    uint32_t StartWidth() const { return start_w_; }
+    uint32_t StartHeight() const { return start_h_; }
+
     BbResizeState State() const {
         return BbResizeState{
             .needs_restart = needs_restart_,
@@ -82,4 +99,6 @@ private:
     uint32_t settled_w_ = 0;
     uint32_t settled_h_ = 0;
     bool needs_restart_ = false;
+    uint32_t start_w_ = 0;
+    uint32_t start_h_ = 0;
 };
