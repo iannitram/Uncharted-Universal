@@ -2,9 +2,12 @@
 //!
 //! The Win32 security API needs raw pointers, which this crate cannot hold. The system's own
 //! `whoami.exe` and `icacls.exe` (absolute paths under `%SystemRoot%\System32`, never searched
-//! on `PATH`) do the same job: `icacls /inheritance:r /grant:r *<SID>:(F)` leaves a protected
-//! DACL with one allow entry for the current user, and `icacls /save` prints the DACL as SDDL
-//! so it can be checked again before a secret is read.
+//! on `PATH`) do the same job: `icacls /inheritance:r /grant:r *<SID>:(F)` protects the DACL
+//! and grants the current user, `icacls /save` prints the DACL as SDDL, and `icacls /remove`
+//! drops any other trustee still named there. A file created in a folder with no inheritable
+//! entries gets the token's default DACL as explicit entries (on an elevated account: SYSTEM,
+//! Administrators and the user), which `/inheritance:r` alone leaves in place. The SDDL is
+//! checked again before a secret is read.
 //!
 //! The parsers are plain functions over text and compile on every OS, so Linux and macOS CI
 //! test them; only the two process-running functions are `cfg(windows)`.
@@ -101,6 +104,67 @@ pub(super) fn sddl_is_owner_only(save_output: &str, sid: &str) -> bool {
     count > 0 && rest.is_empty()
 }
 
+/// The SID behind a well-known SDDL trustee alias (`SY`, `BA`, ...), or `None` for one this
+/// table does not know (a domain-relative alias such as `DA` has no fixed SID).
+fn alias_sid(alias: &str) -> Option<&'static str> {
+    Some(match alias {
+        "WD" => "S-1-1-0",
+        "CO" => "S-1-3-0",
+        "CG" => "S-1-3-1",
+        "OW" => "S-1-3-4",
+        "NU" => "S-1-5-2",
+        "IU" => "S-1-5-4",
+        "SU" => "S-1-5-6",
+        "AN" => "S-1-5-7",
+        "PS" => "S-1-5-10",
+        "AU" => "S-1-5-11",
+        "RC" => "S-1-5-12",
+        "SY" => "S-1-5-18",
+        "LS" => "S-1-5-19",
+        "NS" => "S-1-5-20",
+        "BA" => "S-1-5-32-544",
+        "BU" => "S-1-5-32-545",
+        "BG" => "S-1-5-32-546",
+        "PU" => "S-1-5-32-547",
+        "AO" => "S-1-5-32-548",
+        "SO" => "S-1-5-32-549",
+        "PO" => "S-1-5-32-550",
+        "BO" => "S-1-5-32-551",
+        "RU" => "S-1-5-32-554",
+        "RD" => "S-1-5-32-555",
+        "AC" => "S-1-15-2-1",
+        _ => return None,
+    })
+}
+
+/// Every trustee other than `sid` in the DACL of `icacls /save` output, as SIDs `icacls /remove`
+/// accepts, each once. `None` when the DACL cannot be read or names a trustee that cannot be
+/// turned into a SID, so the caller fails closed.
+pub(super) fn other_trustees(save_output: &str, sid: &str) -> Option<Vec<String>> {
+    let sddl = save_output
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("D:"))?;
+    let dacl = &sddl[2..];
+    let dacl = dacl.split("S:").next().unwrap_or(dacl);
+    let mut others: Vec<String> = Vec::new();
+    let mut rest = &dacl[dacl.find('(').unwrap_or(dacl.len())..];
+    while let Some(body) = rest.strip_prefix('(') {
+        let end = body.find(')')?;
+        let trustee = body[..end].rsplit(';').next()?;
+        let trustee = if is_user_sid(trustee) {
+            trustee.to_string()
+        } else {
+            alias_sid(trustee)?.to_string()
+        };
+        if trustee != sid && !others.contains(&trustee) {
+            others.push(trustee);
+        }
+        rest = &body[end + 1..];
+    }
+    rest.is_empty().then_some(others)
+}
+
 #[cfg(windows)]
 mod imp {
     use super::*;
@@ -162,7 +226,9 @@ mod imp {
         }
     }
 
-    /// Remove inherited entries from `path` and leave one allow entry: the current user.
+    /// Remove inherited entries from `path`, grant the current user, drop every other trustee
+    /// still named in the DACL, and confirm one allow entry for the current user is all that is
+    /// left.
     pub fn restrict_to_current_user(path: &Path) -> Result<()> {
         let sid = current_sid()?;
         let path = absolute(path)?;
@@ -176,14 +242,30 @@ mod imp {
                 grant.as_ref(),
             ],
         )?;
+        let others = other_trustees(&saved_dacl(&path)?, sid)
+            .ok_or_else(|| Error::Hub("could not read the storage permissions".into()))?;
+        if !others.is_empty() {
+            let others: Vec<String> = others.iter().map(|other| format!("*{other}")).collect();
+            let mut args: Vec<&std::ffi::OsStr> = vec![path.as_os_str(), "/remove".as_ref()];
+            args.extend(others.iter().map(std::ffi::OsStr::new));
+            run("icacls.exe", &args)?;
+        }
+        if !sddl_is_owner_only(&saved_dacl(&path)?, sid) {
+            return Err(Error::Hub("icacls.exe could not protect storage".into()));
+        }
         Ok(())
     }
 
     /// Whether `path` has a protected DACL naming only the current user.
     pub fn is_owner_only(path: &Path) -> Result<bool> {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let sid = current_sid()?;
         let path = absolute(path)?;
+        Ok(sddl_is_owner_only(&saved_dacl(&path)?, sid))
+    }
+
+    /// The `icacls /save` text for the absolute `path`.
+    fn saved_dacl(path: &Path) -> Result<String> {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
@@ -202,7 +284,7 @@ mod imp {
         )
         .and_then(|_| Ok(std::fs::read(&out)?));
         let _ = std::fs::remove_file(&out);
-        Ok(sddl_is_owner_only(&decode_icacls_save(&result?), sid))
+        Ok(decode_icacls_save(&result?))
     }
 }
 
@@ -255,6 +337,28 @@ mod tests {
         assert!(!sddl_is_owner_only("no sddl here", SID));
         assert!(!sddl_is_owner_only("", SID));
         assert!(!sddl_is_owner_only("D:PAI(A;;FA;;;S-1-1-0)", SID));
+    }
+
+    #[test]
+    fn other_trustees_lists_every_sid_but_the_user() {
+        let logon = "S-1-5-5-0-2106792";
+        let elevated = format!("f\r\nD:PAI(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;{SID})(A;;FA;;;SY)\r\n");
+        assert_eq!(
+            other_trustees(&elevated, SID),
+            Some(vec!["S-1-5-18".to_string(), "S-1-5-32-544".to_string()])
+        );
+        let session = format!("D:PAI(A;;FA;;;{SID})(D;;FA;;;{logon})S:AI(ML;;NW;;;LW)");
+        assert_eq!(other_trustees(&session, SID), Some(vec![logon.to_string()]));
+        assert_eq!(
+            other_trustees(&format!("D:PAI(A;;FA;;;{SID})"), SID),
+            Some(vec![])
+        );
+        assert_eq!(other_trustees("D:PAI", SID), Some(vec![]));
+        // unknown alias, malformed entry, no DACL: fail closed
+        assert_eq!(other_trustees("D:PAI(A;;FA;;;DA)", SID), None);
+        assert_eq!(other_trustees(&format!("D:PAI(A;;FA;;;{SID}"), SID), None);
+        assert_eq!(other_trustees(&format!("D:PAI(A;;FA;;;{SID})x"), SID), None);
+        assert_eq!(other_trustees("no sddl here", SID), None);
     }
 
     #[test]
