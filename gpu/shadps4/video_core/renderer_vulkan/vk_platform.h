@@ -18,6 +18,9 @@ class WindowSDL;
 
 namespace Vulkan {
 
+/// bbport: the GPU crash report for a call that has no device at hand (Check() below).
+[[noreturn]] void DeviceLostAnywhere();
+
 constexpr u32 TargetVulkanApiVersion = VK_API_VERSION_1_3;
 
 vk::SurfaceKHR CreateSurface(vk::Instance instance, const Frontend::WindowSDL& emu_window);
@@ -57,6 +60,11 @@ void SetObjectName(vk::Device device, const HandleType& handle, const char* form
 
 template <StringLiteral msg = "">
 static void Check(vk::Result r) {
+    // bbport: a side-queue submit that saw the loss used to assert here and end the game while
+    // the graphics thread was still printing the fault report (#155 museum crash, 2026-11-24).
+    if (r == vk::Result::eErrorDeviceLost) {
+        DeviceLostAnywhere();
+    }
     if constexpr (msg.len <= 1) {
         ASSERT_MSG(r == vk::Result::eSuccess, "vk::Result={}", vk::to_string(r));
     } else {
@@ -67,6 +75,9 @@ static void Check(vk::Result r) {
 
 template <StringLiteral msg = "", typename T>
 static T Check(vk::ResultValue<T> r) {
+    if (r.result == vk::Result::eErrorDeviceLost) {
+        DeviceLostAnywhere();
+    }
     if constexpr (msg.len <= 1) {
         ASSERT_MSG(r.result == vk::Result::eSuccess, "vk::Result={}", vk::to_string(r.result));
     } else {
