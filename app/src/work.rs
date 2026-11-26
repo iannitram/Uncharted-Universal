@@ -417,16 +417,14 @@ mod tests {
             _account: &str,
             _app_password: &str,
         ) -> uncharted_core::Result<uncharted_core::relay::RelayAccountStatus> {
-            self.nextcloud
-                .clone()
-                .map_err(uncharted_core::Error::Launch)
+            self.nextcloud.clone().map_err(uncharted_core::Error::Saves)
         }
 
         fn start_oauth(
             &self,
             _service: uncharted_core::relay::CloudService,
         ) -> uncharted_core::Result<uncharted_core::relay::RelayChallenge> {
-            self.oauth.clone().map_err(uncharted_core::Error::Launch)
+            self.oauth.clone().map_err(uncharted_core::Error::Saves)
         }
 
         fn sign_out(&self) -> uncharted_core::Result<()> {

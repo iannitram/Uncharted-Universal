@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 // The app's side of the Save Relay C interface (bindings/ios/SaveRelay.swift, save-relay
-// v1.0.0-rc.2): the Keychain keeps the credential, URLSession carries the requests. Nothing here
+// v1.0.0-rc.3): the Keychain keeps the credential, URLSession carries the requests. Nothing here
 // imports UIKit, so the unit test (apple/tests/relay_host_test.sh) builds it for the Simulator
 // without the app.
 

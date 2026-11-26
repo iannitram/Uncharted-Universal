@@ -6,6 +6,7 @@ use crate::savecard::{side_by_side, SaveCard, SideBySide};
 use crate::{Error, Result};
 use chrono::DateTime;
 use serde_json::Value;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -22,6 +23,65 @@ fn game_id(game: Game) -> &'static str {
     }
 }
 
+// The argv of every Save Relay call. `relay/contract.rs` runs these same lists against the
+// pinned release's own parser (issue #637: the fakes accepted forms the pinned rc.2 refused).
+
+/// `pull|push <game> --manifest <file> --saves-dir <folder> --slot <n> --json [--resolve ..]`.
+fn sync_args(
+    phase: &str,
+    game: Game,
+    slot: u8,
+    manifests: &Path,
+    folder: &Path,
+    keep: Option<Keep>,
+) -> Vec<OsString> {
+    let id = game_id(game);
+    let mut args: Vec<OsString> = vec![phase.into(), id.into(), "--manifest".into()];
+    args.push(manifests.join(format!("{id}.json")).into());
+    args.push("--saves-dir".into());
+    args.push(folder.into());
+    args.push("--slot".into());
+    args.push(slot.to_string().into());
+    args.push("--json".into());
+    if let Some(keep) = keep {
+        args.push("--resolve".into());
+        args.push(
+            match keep {
+                Keep::Server => "keep-server",
+                Keep::Local => "keep-local",
+            }
+            .into(),
+        );
+    }
+    args
+}
+
+/// The account state, with no game (save-relay `v1.0.0-rc.3` and later).
+const STATUS_ARGS: [&str; 2] = ["status", "--json"];
+
+/// Forget the account and its stored credentials.
+const SIGN_OUT_ARGS: [&str; 2] = ["sign-out", "--json"];
+
+/// Nextcloud sign-in; the app password goes on stdin, never in argv.
+fn nextcloud_args<'a>(url: &'a str, account: &'a str) -> [&'a str; 8] {
+    [
+        "setup",
+        "nextcloud",
+        "--url",
+        url,
+        "--user",
+        account,
+        "--password-stdin",
+        "--json",
+    ]
+}
+
+/// Google Drive or Dropbox sign-in: with `--json` Save Relay answers with a code to enter on
+/// any device instead of opening a browser.
+fn oauth_args(service: CloudService) -> [&'static str; 3] {
+    ["setup", service.id(), "--json"]
+}
+
 impl DesktopRelay {
     fn invoke(
         &self,
@@ -34,26 +94,10 @@ impl DesktopRelay {
         if !(1..=crate::saves::MOST).contains(&slot) {
             return Err(Error::Saves("Save Relay slot must be from 1 to 10.".into()));
         }
-        let id = game_id(game);
         let mut cmd = Command::new(&self.program);
-        cmd.args([phase, id, "--manifest"])
-            .arg(self.manifests.join(format!("{id}.json")))
-            .arg("--saves-dir")
-            .arg(folder)
-            .arg("--slot")
-            .arg(slot.to_string())
-            .arg("--json")
+        cmd.args(sync_args(phase, game, slot, &self.manifests, folder, keep))
             .stdin(Stdio::null())
             .stderr(Stdio::null());
-        if let Some(keep) = keep {
-            cmd.args([
-                "--resolve",
-                match keep {
-                    Keep::Server => "keep-server",
-                    Keep::Local => "keep-local",
-                },
-            ]);
-        }
         let output = cmd
             .output()
             .map_err(|e| Error::Launch(format!("Could not start the bundled Save Relay: {e}")))?;
@@ -77,13 +121,29 @@ fn invalid() -> Error {
 }
 
 fn is_missing_vcruntime(code: Option<i32>) -> bool {
-    // The Windows loader can terminate the image before main runs. The rc.2
+    // The Windows loader can terminate the image before main runs. The release
     // binary imports VCRUNTIME140.dll from the Microsoft x64 C++ runtime.
     code == Some(0xc0000135_u32 as i32)
 }
 
+const MISSING_VCRUNTIME: &str = "Save Relay could not load a required DLL. Install the Microsoft Visual C++ x64 Redistributable and retry.";
+
 fn missing_vcruntime_error() -> Error {
-    Error::Launch("Save Relay could not load a required DLL. Install the Microsoft Visual C++ x64 Redistributable and retry.".into())
+    Error::Launch(MISSING_VCRUNTIME.into())
+}
+
+/// Save Relay's `usage` code: it did not understand the launcher's command line, so the
+/// helper beside the launcher is older than the forms this launcher sends (issue #637).
+const TOO_OLD: &str = "Save Relay is too old for this launcher. Reinstall Uncharted Universal to get the Save Relay it ships with.";
+
+/// Account setup, status and sign-out are not a game start: their errors are `Saves: ..`,
+/// never "Starting the game failed: ..".
+fn account_error(message: impl Into<String>) -> Error {
+    Error::Saves(message.into())
+}
+
+fn account_invalid() -> Error {
+    account_error("Save Relay returned an unexpected response.")
 }
 
 fn credential_store_error_message(error_code: Option<&str>) -> Option<&'static str> {
@@ -148,6 +208,7 @@ fn decode(phase: &str, game: Game, slot: u8, code: Option<i32>, stdout: &[u8]) -
             }
             // Provider messages can contain account paths. Only display known local text.
             let message = match (code, error_code) {
+                (_, Some("usage")) => TOO_OLD,
                 (Some(4), Some("not_set_up")) => {
                     return Ok(Sync::LocalOnly(
                         "Save Relay needs setup; using local saves.",
@@ -339,11 +400,11 @@ pub trait RelaySetup {
 
 fn decode_status(code: Option<i32>, stdout: &[u8]) -> Result<RelayAccountStatus> {
     if is_missing_vcruntime(code) {
-        return Err(missing_vcruntime_error());
+        return Err(account_error(MISSING_VCRUNTIME));
     }
-    let report: Value = serde_json::from_slice(stdout).map_err(|_| invalid())?;
+    let report: Value = serde_json::from_slice(stdout).map_err(|_| account_invalid())?;
     if !report["command"].is_null() && report["command"] != "status" {
-        return Err(invalid());
+        return Err(account_invalid());
     }
     match report["ok"].as_bool() {
         Some(false) => {
@@ -352,11 +413,12 @@ fn decode_status(code: Option<i32>, stdout: &[u8]) -> Result<RelayAccountStatus>
                 return Ok(RelayAccountStatus::default());
             }
             if let Some(msg) = credential_store_error_message(err_code) {
-                return Err(Error::Launch(msg.into()));
+                return Err(account_error(msg));
             }
-            Err(Error::Launch(
-                "Save Relay could not check account status.".into(),
-            ))
+            if err_code == Some("usage") {
+                return Err(account_error(TOO_OLD));
+            }
+            Err(account_error("Save Relay could not check account status."))
         }
         Some(true) => {
             let data = &report["data"];
@@ -369,7 +431,7 @@ fn decode_status(code: Option<i32>, stdout: &[u8]) -> Result<RelayAccountStatus>
                 configured,
             })
         }
-        None => Err(invalid()),
+        None => Err(account_invalid()),
     }
 }
 
@@ -377,18 +439,21 @@ fn decode_setup_error(stdout: &[u8], fallback: impl FnOnce() -> String) -> Error
     if let Ok(report) = serde_json::from_slice::<Value>(stdout) {
         let err_code = report["error"]["code"].as_str();
         if let Some(msg) = credential_store_error_message(err_code) {
-            return Error::Launch(msg.into());
+            return account_error(msg);
+        }
+        if err_code == Some("usage") {
+            return account_error(TOO_OLD);
         }
         if matches!(
             err_code,
             Some("server_unreachable" | "network_error" | "timeout")
         ) {
-            return Error::Launch(
-                "Could not reach the save sync server. Check your connection and try again.".into(),
+            return account_error(
+                "Could not reach the save sync server. Check your connection and try again.",
             );
         }
     }
-    Error::Launch(fallback())
+    account_error(fallback())
 }
 
 fn decode_sign_in_nextcloud(
@@ -398,7 +463,7 @@ fn decode_sign_in_nextcloud(
     stdout: &[u8],
 ) -> Result<RelayAccountStatus> {
     if is_missing_vcruntime(code) {
-        return Err(missing_vcruntime_error());
+        return Err(account_error(MISSING_VCRUNTIME));
     }
     let json_failed = serde_json::from_slice::<Value>(stdout)
         .ok()
@@ -430,7 +495,7 @@ fn decode_start_oauth(
     stdout: &[u8],
 ) -> Result<RelayChallenge> {
     if is_missing_vcruntime(code) {
-        return Err(missing_vcruntime_error());
+        return Err(account_error(MISSING_VCRUNTIME));
     }
     let report = serde_json::from_slice::<Value>(stdout);
     let json_failed = report
@@ -442,11 +507,11 @@ fn decode_start_oauth(
             format!("Save Relay could not start {} sign-in.", service.name())
         }));
     }
-    let report = report.map_err(|_| invalid())?;
+    let report = report.map_err(|_| account_invalid())?;
     let verification_url = report["data"]["verification_url"]
         .as_str()
         .and_then(|s| sanitize_text(s, 1024))
-        .ok_or_else(invalid)?;
+        .ok_or_else(account_invalid)?;
     let user_code = report["data"]["user_code"]
         .as_str()
         .and_then(|s| sanitize_text(s, 128));
@@ -464,7 +529,7 @@ fn decode_start_oauth(
 
 fn decode_sign_out(success: bool, code: Option<i32>, stdout: &[u8]) -> Result<()> {
     if is_missing_vcruntime(code) {
-        return Err(missing_vcruntime_error());
+        return Err(account_error(MISSING_VCRUNTIME));
     }
     let json_failed = serde_json::from_slice::<Value>(stdout)
         .ok()
@@ -477,14 +542,18 @@ fn decode_sign_out(success: bool, code: Option<i32>, stdout: &[u8]) -> Result<()
     Ok(())
 }
 
+fn start_failed(e: std::io::Error) -> Error {
+    account_error(format!("Could not start Save Relay: {e}"))
+}
+
 impl RelaySetup for DesktopRelay {
     fn status(&self) -> Result<RelayAccountStatus> {
         let output = Command::new(&self.program)
-            .args(["status", "--json"])
+            .args(STATUS_ARGS)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+            .map_err(start_failed)?;
         decode_status(output.status.code(), &output.stdout)
     }
 
@@ -496,42 +565,33 @@ impl RelaySetup for DesktopRelay {
     ) -> Result<RelayAccountStatus> {
         let (url, account) = (url.trim(), account.trim());
         if url.is_empty() || account.is_empty() || app_password.is_empty() {
-            return Err(Error::Launch(
-                "Enter the Nextcloud address, account and app password first.".into(),
+            return Err(account_error(
+                "Enter the Nextcloud address, account and app password first.",
             ));
         }
         if url.chars().any(char::is_control)
             || account.chars().any(char::is_control)
             || app_password.contains(['\n', '\r'])
         {
-            return Err(Error::Launch(
-                "Nextcloud sign-in fields cannot contain line breaks or control characters.".into(),
+            return Err(account_error(
+                "Nextcloud sign-in fields cannot contain line breaks or control characters.",
             ));
         }
         // Pass the password on stdin so it never appears in argv, logs, or settings files.
         use std::io::Write;
         let mut child = Command::new(&self.program)
-            .args([
-                "setup",
-                "nextcloud",
-                "--url",
-                url,
-                "--user",
-                account,
-                "--password-stdin",
-                "--json",
-            ])
+            .args(nextcloud_args(url, account))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+            .map_err(start_failed)?;
         if let Some(mut stdin) = child.stdin.take() {
             let _ = writeln!(stdin, "{app_password}");
         }
         let output = child
             .wait_with_output()
-            .map_err(|e| Error::Launch(format!("Save Relay setup failed: {e}")))?;
+            .map_err(|e| account_error(format!("Save Relay setup failed: {e}")))?;
         decode_sign_in_nextcloud(
             account,
             output.status.success(),
@@ -542,16 +602,16 @@ impl RelaySetup for DesktopRelay {
 
     fn start_oauth(&self, service: CloudService) -> Result<RelayChallenge> {
         if service == CloudService::Nextcloud {
-            return Err(Error::Launch(
-                "Nextcloud sign-in requires a server address, account and app password.".into(),
+            return Err(account_error(
+                "Nextcloud sign-in requires a server address, account and app password.",
             ));
         }
         let output = Command::new(&self.program)
-            .args(["setup", service.id(), "--json"])
+            .args(oauth_args(service))
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+            .map_err(start_failed)?;
         decode_start_oauth(
             service,
             output.status.success(),
@@ -562,11 +622,11 @@ impl RelaySetup for DesktopRelay {
 
     fn sign_out(&self) -> Result<()> {
         let output = Command::new(&self.program)
-            .args(["sign-out", "--json"])
+            .args(SIGN_OUT_ARGS)
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .map_err(|e| Error::Launch(format!("Could not start Save Relay: {e}")))?;
+            .map_err(start_failed)?;
         decode_sign_out(
             output.status.success(),
             output.status.code(),
@@ -575,5 +635,7 @@ impl RelaySetup for DesktopRelay {
     }
 }
 
+#[cfg(test)]
+mod contract;
 #[cfg(test)]
 mod tests;

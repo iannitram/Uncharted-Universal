@@ -81,6 +81,21 @@ jobs:
       - run: cargo build --workspace
       - run: cargo test --workspace
       - run: cargo test --workspace --all-features
+      - name: Run relay.rs's argv against the pinned Save Relay (#637)
+        # bundle_relay.py downloads the release this OS's components.lock.json pins and checks
+        # its SHA256; relay/contract.rs then runs every command line relay.rs builds against it
+        # on a throwaway profile and fails on any `usage` reply.
+        run: |
+          relay="$RUNNER_TEMP/save-relay-contract"
+          case "${{ matrix.os }}" in
+            linux)   python3 packaging/linux/bundle_relay.py "$relay/stage" "$relay/cache"
+                     bin="$relay/stage/save-relay" ;;
+            windows) python packaging/windows/bundle_relay.py "$relay/stage" "$relay/cache"
+                     bin="$relay/stage/save-relay.exe" ;;
+            macos)   python3 packaging/macos/bundle_relay.py "$relay/MacOS" "$relay/Resources" "$relay/cache"
+                     bin="$relay/MacOS/save-relay" ;;
+          esac
+          SAVE_RELAY_CONTRACT_BIN="$bin" cargo test -p uncharted_core --lib relay::contract -- --nocapture
       - name: Smoke-run the uncharted-universal commands
         # Every command once on a synthetic dump with its exit status (crates/cli/tests/cli.rs,
         # also part of the workspace tests above; named here so a CLI break shows on its own).

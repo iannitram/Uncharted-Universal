@@ -29,9 +29,9 @@ def load_module(path: Path, name: str):
 class SaveRelayBundleTests(unittest.TestCase):
     def test_component_locks_have_valid_pinned_entries(self):
         for platform, expected_asset in (
-            ("linux", "save-relay-1.0.0-rc.2-x86_64-unknown-linux-musl"),
-            ("windows", "save-relay-1.0.0-rc.2-x86_64-pc-windows-msvc.exe"),
-            ("macos", "save-relay-1.0.0-rc.2-aarch64-apple-darwin"),
+            ("linux", "save-relay-1.0.0-rc.3-x86_64-unknown-linux-musl"),
+            ("windows", "save-relay-1.0.0-rc.3-x86_64-pc-windows-msvc.exe"),
+            ("macos", "save-relay-1.0.0-rc.3-aarch64-apple-darwin"),
         ):
             lock_path = ROOT / "packaging" / platform / "components.lock.json"
             self.assertTrue(lock_path.is_file(), f"missing {lock_path}")
@@ -39,7 +39,7 @@ class SaveRelayBundleTests(unittest.TestCase):
             self.assertIn("save-relay", data)
             entry = data["save-relay"]
             self.assertTrue(REQUIRED_LOCK_KEYS.issubset(entry.keys()), platform)
-            self.assertEqual(entry["version"], "v1.0.0-rc.2")
+            self.assertEqual(entry["version"], "v1.0.0-rc.3")
             self.assertEqual(entry["asset"], expected_asset)
             self.assertEqual(len(entry["sha256"]), 64)
             int(entry["sha256"], 16)
@@ -80,7 +80,7 @@ class SaveRelayBundleTests(unittest.TestCase):
                 digest = hashlib.sha256(payload).hexdigest()
                 lock = {
                     "save-relay": {
-                        "version": "v1.0.0-rc.2",
+                        "version": "v1.0.0-rc.3",
                         "asset": f"save-relay-{platform}",
                         "sha256": digest,
                         "source": "https://127.0.0.1:0",
@@ -123,7 +123,7 @@ class SaveRelayBundleTests(unittest.TestCase):
             payload = b"synthetic-macos-relay"
             lock = {
                 "save-relay": {
-                    "version": "v1.0.0-rc.2",
+                    "version": "v1.0.0-rc.3",
                     "asset": "save-relay-macos",
                     "sha256": hashlib.sha256(payload).hexdigest(),
                     "source": "https://127.0.0.1:0",

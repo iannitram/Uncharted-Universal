@@ -1,11 +1,11 @@
 {
   "save-relay": {
-    "version": "v1.0.0-rc.2",
-    "source_commit": "961513cb9ef56253970ee67b5b6febe2c2f0349d",
-    "asset": "save-relay-1.0.0-rc.2-x86_64-pc-windows-msvc.exe",
-    "sha256": "597a15acb49c3679ee4234999e574416a8bd7f6deea0bf06a8d05a97d644eaa3",
+    "version": "v1.0.0-rc.3",
+    "source_commit": "1bb84b888f43c531afe3181b0888098979df71cb",
+    "asset": "save-relay-1.0.0-rc.3-x86_64-pc-windows-msvc.exe",
+    "sha256": "90973b21b094bff595cfe605c6b801f83e7ff9bfdc4fbe7e02b3e340fde28d3f",
     "source": "https://github.com/iannitram/save-relay",
     "license": "MIT",
-    "license_source": "https://github.com/iannitram/save-relay/blob/961513cb9ef56253970ee67b5b6febe2c2f0349d/LICENSE"
+    "license_source": "https://github.com/iannitram/save-relay/blob/1bb84b888f43c531afe3181b0888098979df71cb/LICENSE"
   }
 }
