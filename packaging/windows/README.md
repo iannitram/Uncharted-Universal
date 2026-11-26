@@ -10,8 +10,8 @@ Install [MSYS2](https://www.msys2.org) (`winget install MSYS2.MSYS2`), open the
 `shell.nix`):
 
 ```bash
-pacman -S --needed git patch \
-  mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
+pacman -S --needed git patch make \
+  mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python,nasm} \
   mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
   mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
   mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
@@ -26,8 +26,27 @@ Then, in the repository:
 ```bash
 git submodule update --init --recursive
 bash build.sh                      # out/bb-probe.exe, out/bb-gpu-capabilities.exe
+bash packaging/windows/build_ffmpeg.sh  # out/ffmpeg-lgpl/: the LGPL-2.1 FFmpeg DLLs the zip ships
 bash packaging/windows/package.sh  # dist/uncharted-windows/ and .zip: uncharted-app.exe + DLLs
 ```
+
+Run `build.sh` and `package.sh` from Git Bash or the CLANG64 shell, not after sourcing
+`msys2-env.sh` in Git Bash: `bash` is then MSYS2's, and cargo's `link.exe` loses its temp folder
+(`LNK1104 ... C:\WINDOWS\lnk{...}.tmp`).
+
+FFmpeg (#625, owner ruling 2026-11-26): `bb-probe.exe` imports avcodec, avformat, avutil,
+swresample and swscale at load time. MSYS2's FFmpeg (the one it compiles against) is configured
+with `--enable-gpl --enable-version3` and cannot ship with this GPL-2.0-only project (#299), so
+`build_ffmpeg.sh` builds the same release from the official tarball (pinned SHA256) as LGPL-2.1,
+with no external libraries. `package.sh` copies exactly the DLLs `bb-probe.exe` and
+`bb-gpu-capabilities.exe` import and the DLLs those import (`dll_imports.py closure`, read with
+`llvm-objdump -p`), FFmpeg from `out/ffmpeg-lgpl/bin` and the rest from CLANG64; refuses any FFmpeg
+DLL whose embedded configure line has `--enable-gpl`, `--enable-version3` or `--enable-nonfree`
+(`licence_check.py ffmpeg`); and writes `licenses/ffmpeg/` (COPYING.LGPLv2.1, FFmpeg-NOTICE.txt with
+the version, the source URL and SHA256, and the source offer). Before zipping, `dll_imports.py check`
+fails if any shipped `.exe` or `.dll` imports a non-system DLL its folder lacks; `save-relay.exe`'s
+`VCRUNTIME140.dll` is copied from Visual Studio's `VC/Redist/MSVC/<version>/x64/Microsoft.VC143.CRT`
+folder (or `BB_VC_CRT`) with a notice in `licenses/`.
 
 The package carries the Rust launcher: `uncharted-app.exe`, with
 `uncharted-universal.exe` (the command line; `uncharted-universal.exe play u1` starts a game and

@@ -600,3 +600,13 @@ omits FFmpeg, x264, and x265 DLLs by default (`BB_BUNDLE_FFMPEG=0`) so users sup
 LGPL or GPL-2.0-compatible FFmpeg build. `packaging/licence_check.py` also fails closed if any
 GPL-3.0 FFmpeg library is passed to the packager (`BB_BUNDLE_FFMPEG=1`), and
 `packaging/windows/README-Uncharted.txt` carries the GPL source offer and user-installed FFmpeg note.
+
+## Update 2026-11-26: LGPL-2.1 FFmpeg ships in the Windows zip (#625)
+
+Leaving FFmpeg out made the zip unusable: `bin/bb-probe.exe` imports avcodec, avformat, avutil,
+swresample and swscale at load time and exited 0xC0000135 (#625, #632, #633). By owner ruling of
+2026-11-26 the zip ships FFmpeg DLLs built as LGPL-2.1 (`packaging/windows/build_ffmpeg.sh`: the
+official 9.0.2 tarball, no `--enable-gpl`, `--enable-version3` or `--enable-nonfree`, no external
+libraries), which GPL-2.0-only code may use. `package.sh` refuses any FFmpeg DLL whose embedded
+configure line has one of those switches and ships `licenses/ffmpeg/` (the LGPL-2.1 text, a notice and
+the source offer: version, URL and SHA256 of the source). `BB_BUNDLE_FFMPEG` is gone.

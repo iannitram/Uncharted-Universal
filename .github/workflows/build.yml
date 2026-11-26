@@ -242,8 +242,8 @@ jobs:
       - name: Install CLANG64 build dependencies
         run: |
           source ./msys2-env.sh
-          pacman -S --needed --noconfirm git patch \
-            mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python} \
+          pacman -S --needed --noconfirm git patch make \
+            mingw-w64-clang-x86_64-{toolchain,cmake,ninja,pkgconf,python,nasm} \
             mingw-w64-clang-x86_64-{vulkan-headers,vulkan-loader,vulkan-memory-allocator,glslang} \
             mingw-w64-clang-x86_64-{sdl3,fmt,spdlog,boost,robin-map,xxhash,ffmpeg,zydis} \
             mingw-w64-clang-x86_64-{spirv-tools,spirv-headers,spirv-cross} \
@@ -252,8 +252,26 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build
         run: BB_JOBS=2 bash build.sh
+      # The LGPL-2.1 FFmpeg DLLs the zip ships (#625); the build is cached by its script.
+      - uses: actions/cache@v4
+        with:
+          path: out/ffmpeg-lgpl
+          key: ffmpeg-lgpl-${{ hashFiles('packaging/windows/build_ffmpeg.sh') }}
+      - name: Build the LGPL-2.1 FFmpeg DLLs
+        run: BB_JOBS=4 bash packaging/windows/build_ffmpeg.sh
       - name: Package
         run: bash packaging/windows/package.sh
+      - name: Start bb-probe.exe from the package with only System32 on PATH (#625)
+        run: |
+          cd out/stage/uncharted-windows/bin
+          set +e
+          PATH=/c/Windows/System32 ./bb-probe.exe --help > probe.out 2>&1
+          rc=$?
+          set -e
+          cat probe.out; rm -f probe.out
+          echo "bb-probe.exe --help exit $rc"
+          # 127 or 0xC0000135 (-1073741515 / 3221225781) means a DLL is missing.
+          case $rc in 127|53|-1073741515|3221225781) exit 1 ;; esac
       - name: Start the Rust faces from the package
         run: |
           cd out/stage/uncharted-windows

@@ -9,7 +9,9 @@ licence files into the package, and exit 1 naming each library that breaks the r
                                                      /clang64/share/licenses/ (the folder is not always named
                                                      after the package); if none, packaging/windows/licenses/<short name>-LICENSE.txt
   licence_check.py linux <licenses dir> <library>... Debian: dpkg -S, /usr/share/doc/<package>/copyright
-  licence_check.py apple [<apple dir>]               the tree vendored for the Apple build (ADR 0006, #396): no GPL-3.0
+  licence_check.py ffmpeg <dll>...                   each FFmpeg DLL's embedded configure line and licence string:
+                                                     exit 1 unless LGPL-2.1 (no --enable-gpl/version3/nonfree)
+  licence_check.py apple [<apple dir>]             the tree vendored for the Apple build (ADR 0006, #396): no GPL-3.0
                                                      family or bbnet20 path or text, no Apache-2.0, and every
                                                      apple/vendor/<component> has a VENDOR.txt and a LICENSE
 """
@@ -51,6 +53,27 @@ def check_ffmpeg_compatibility(entries):
                 problems.append(f'{name}: FFmpeg licence {path.name} is GPL-3.0/LGPL-3.0 (incompatible with GPL-2.0-only)')
                 break
     return problems
+
+
+# Configure switches that make an FFmpeg build GPL, (L)GPL-3.0 or unredistributable. The owner ruling
+# of 2026-11-26 allows only LGPL-2.1 FFmpeg in the Windows zip (#625).
+FFMPEG_FORBIDDEN_SWITCHES = (b'--enable-gpl', b'--enable-version3', b'--enable-nonfree')
+FFMPEG_LGPL21 = b'LGPL version 2.1 or later'
+
+
+def check_ffmpeg_build(name, data):
+    """Problems with one FFmpeg DLL's own build (the bytes of the file); empty means LGPL-2.1.
+
+    Every FFmpeg library embeds its configure line (avcodec_configuration() and the like) and its
+    licence string (avcodec_license(): "LGPL version 2.1 or later", "GPL version 2 or later",
+    "LGPL version 3 or later" or "nonfree and unredistributable").
+    """
+    found = [switch.decode() for switch in FFMPEG_FORBIDDEN_SWITCHES if switch in data]
+    if found:
+        return [f'{name}: FFmpeg built with {" ".join(found)} (only an LGPL-2.1 build may ship)']
+    if FFMPEG_LGPL21 not in data:
+        return [f'{name}: no "LGPL version 2.1 or later" licence string (not an LGPL-2.1 FFmpeg build)']
+    return []
 
 
 def check_licences(entries):
@@ -200,6 +223,11 @@ def run(mode, licenses, libraries):
 if __name__ == '__main__':
     if sys.argv[1:2] == ['apple'] and len(sys.argv) <= 3:
         found = check_apple_tree(sys.argv[2] if len(sys.argv) == 3 else Path(__file__).resolve().parent.parent / 'apple')
+        for problem in found:
+            print(f'licence check: {problem}', file=sys.stderr)
+        sys.exit(1 if found else 0)
+    if sys.argv[1:2] == ['ffmpeg'] and len(sys.argv) > 2:
+        found = [problem for dll in sys.argv[2:] for problem in check_ffmpeg_build(Path(dll).name, Path(dll).read_bytes())]
         for problem in found:
             print(f'licence check: {problem}', file=sys.stderr)
         sys.exit(1 if found else 0)
