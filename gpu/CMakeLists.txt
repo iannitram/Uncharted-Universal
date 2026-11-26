@@ -525,6 +525,14 @@ target_include_directories(signal-flip-gate-test PRIVATE shim "${BB_SHADPS4_CORE
 target_compile_options(signal-flip-gate-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
 target_link_libraries(signal-flip-gate-test PRIVATE Vulkan::Headers Boost::headers Threads::Threads)
 
+# #592: a deferred flip hands its frame back to the GPU command thread (thread model).
+add_executable(flip-handback-test EXCLUDE_FROM_ALL
+    ../tests/test_flip_handback.cpp
+    ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(flip-handback-test PRIVATE shim "${BB_SHADPS4_CORE_DIR}")
+target_compile_options(flip-handback-test PRIVATE -UNDEBUG -Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-unused-variable)
+target_link_libraries(flip-handback-test PRIVATE Vulkan::Headers Boost::headers Threads::Threads)
+
 add_executable(u2-stall-guards-test EXCLUDE_FROM_ALL
     ../tests/test_u2_stall_guards.cpp
     ../tests/test_gpu_runtime_stubs.cpp

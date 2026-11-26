@@ -73,7 +73,7 @@ How it was made: the shadPS4 fork's `shadps4.exe --extract-pkg <pkg> --extract-d
 
 | Must | Pieces |
 |---|---|
-| M1-M3 playthroughs on the AMD handheld | the correctness and campaign work still open (#63, #64, #109, #111, #112 and the bug issues; #31, #35, #37, #60, #62, #113, #164 closed), crash help (#165: #168-#170, #175; the after-crash screen is 2.07, which replaced closed #176), playthroughs #77 and #78 (#76, U1, closed 2026-11-18); 5.02 |
+| M1-M3 playthroughs on the AMD handheld | the correctness and campaign work still open (#63, #64, #109, #111, #112 (the #112 flip waits: the deferred flip's frame goes back to the GPU command thread since #592, the owner soak is owed) and the bug issues; #31, #35, #37, #60, #62, #113, #164 closed), crash help (#165: #168-#170, #175; the after-crash screen is 2.07, which replaced closed #176), playthroughs #77 and #78 (#76, U1, closed 2026-11-18); 5.02 |
 | M4 saves work | 3.06 (savedata in Rust), 1.17, 9.02 |
 | M5 power and frame rate | 1.14, 1.15, 1.16, 1.27, auto-tune (#166: #171, #173 (the `BB_BENCHMARK` runtime benchmark that the M5 soak reads), #174 and #178 are 1.27, and #172 is 1.05 `dump`; the display cards are 2.06, which replaced closed #177), #22 (closed 2026-11-22); 5.02 |
 | M6 every build verified | 0.02, 2.10, 3.01, 6.01, 8.02 (#407); 1.x: 7.02 |
