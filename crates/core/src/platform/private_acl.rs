@@ -94,7 +94,7 @@ pub(super) fn sddl_is_owner_only(save_output: &str, sid: &str) -> bool {
             || fields[1].contains("ID")
             || !fields[3].is_empty()
             || !fields[4].is_empty()
-            || fields[5] != sid
+            || !names_user(fields[5], sid)
         {
             return false;
         }
@@ -102,6 +102,18 @@ pub(super) fn sddl_is_owner_only(save_output: &str, sid: &str) -> bool {
         rest = &body[end + 1..];
     }
     count > 0 && rest.is_empty()
+}
+
+/// Whether SDDL trustee `trustee` is the user `sid`. SDDL writes the machine's built-in
+/// Administrator (RID 500, the GitHub Windows runner's account) as `LA`, not as its SID. `LA` is
+/// always a local RID-500 account; were the user a different domain's RID 500, `LA` would be the
+/// machine's own Administrator, which can take ownership of any file anyway.
+fn names_user(trustee: &str, sid: &str) -> bool {
+    trustee == sid
+        || (trustee == "LA"
+            && sid.starts_with("S-1-5-21-")
+            && sid.ends_with("-500")
+            && sid.split('-').count() == 8)
 }
 
 /// The SID behind a well-known SDDL trustee alias (`SY`, `BA`, ...), or `None` for one this
@@ -181,7 +193,9 @@ pub(super) fn other_trustees_or_why(
     while let Some(body) = rest.strip_prefix('(') {
         let end = body.find(')').ok_or_else(malformed)?;
         let trustee = body[..end].rsplit(';').next().ok_or_else(malformed)?;
-        let trustee = if is_user_sid(trustee) {
+        let trustee = if names_user(trustee, sid) {
+            sid.to_string()
+        } else if is_user_sid(trustee) {
             trustee.to_string()
         } else {
             alias_sid(trustee)
@@ -378,6 +392,22 @@ mod tests {
         assert!(!sddl_is_owner_only("no sddl here", SID));
         assert!(!sddl_is_owner_only("", SID));
         assert!(!sddl_is_owner_only("D:PAI(A;;FA;;;S-1-1-0)", SID));
+    }
+
+    #[test]
+    fn la_is_the_user_only_when_the_user_is_a_built_in_administrator() {
+        let admin = "S-1-5-21-1111111111-2222222222-3333333333-500";
+        assert!(sddl_is_owner_only("D:PAI(A;;FA;;;LA)", admin));
+        assert_eq!(
+            other_trustees("D:PAI(A;;FA;;;LA)(A;;FA;;;SY)", admin),
+            Some(vec!["S-1-5-18".to_string()])
+        );
+        assert!(!sddl_is_owner_only("D:PAI(A;;FA;;;LA)", SID));
+        assert!(!sddl_is_owner_only("D:PAI(A;;FA;;;LA)", "S-1-5-21-1-2-500"));
+        assert_eq!(
+            other_trustees_or_why("D:PAI(A;;FA;;;LA)", SID),
+            Err("unknown trustee alias LA".to_string())
+        );
     }
 
     #[test]
