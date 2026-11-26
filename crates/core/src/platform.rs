@@ -9,8 +9,11 @@ use crate::error::{Error, Result};
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 
+mod private_acl;
+
 /// Create a new per-user configuration file without following or replacing an existing path.
-/// Unix permissions are owner-only (0600); Windows inherits the app-data directory ACL.
+/// Unix permissions are owner-only (0600); on Windows the new, still empty, file gets a
+/// protected DACL with one allow entry for the current user before the caller writes to it.
 pub fn create_private_file(path: &Path) -> Result<File> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
@@ -19,7 +22,14 @@ pub fn create_private_file(path: &Path) -> Result<File> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    Ok(options.open(path)?)
+    let file = options.open(path)?;
+    #[cfg(windows)]
+    if let Err(error) = private_acl::restrict_to_current_user(path) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(file)
 }
 
 /// Whether a file's permissions are suitable for storing a pairing key.
@@ -33,10 +43,14 @@ pub fn private_file_permissions(path: &Path) -> Result<bool> {
         use std::os::unix::fs::PermissionsExt;
         Ok(metadata.permissions().mode() & 0o077 == 0)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        private_acl::is_owner_only(path)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         // The file lives below the per-user application configuration directory, whose ACL is
-        // inherited from APPDATA/Application Support on these platforms.
+        // inherited from Application Support on these platforms.
         Ok(true)
     }
 }
