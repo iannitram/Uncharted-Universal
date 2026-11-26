@@ -2,6 +2,7 @@
 
 Newest first. One line per change of stage, release or decision that the next session needs.
 
+- 2026-11-25 6.01 Windows CI: `check.yml` `native-windows` now runs `cargo test --workspace --target x86_64-pc-windows-gnullvm` (was only the runtime's `os::` tests) beside the CLANG64 GPU build and its unit targets; the Rust target for Windows is `x86_64-pc-windows-gnullvm`, the one the release zip uses.
 - 2026-11-24 `uncharted-run` Windows link flags (#579 follow-up): `crates/runtime/build.rs` links the runner with no high-entropy ASLR and a 16 MiB committed main stack (MSVC `/HIGHENTROPYVA:NO /STACK`, gnullvm `--disable-high-entropy-va --stack`), as `gpu/CMakeLists.txt` links `bb-probe`. Without them the PS4 address-range reservation failed with exit 21 on Windows. `uncharted_run_rejects_invalid_bb_benchmark` runs on Windows again; it passes locally on msvc and gnullvm.
 
 - 2026-11-20 M21b safe area, `uncharted-run` tests, and Windows CI sync (3.19 #433, 3.16 #457, 6.01): added `uncharted_runtime_safe_area` / `bbgpu_safe_area` with 6:5/3:2/16:9/16:10 unit tests (`3.19`), added `crates/runtime/tests/uncharted_run.rs` covering `--probe`, `--force-fault` single `Crash:` line, `--list-missing`, and usage exit code (`3.16`), recorded `6.01` Windows CI (`check.yml`/`build.yml`), and fixed `fleet_record_persists_updates_and_reports_drift` OS assertion for macOS/Windows CI.
