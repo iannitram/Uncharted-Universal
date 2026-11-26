@@ -2172,6 +2172,56 @@ mod tests {
         assert_eq!((window.get_focus_row(), window.get_focus_index()), (1, 1));
     }
 
+    /// The Saves page's rows are not squeezed to a sliver: opened before Settings was ever
+    /// drawn, the hidden Settings layout capped the list at the Tune button's width. The slot and
+    /// backup titles get their full width at several window sizes.
+    #[test]
+    fn saves_rows_fill_the_page_width() {
+        i_slint_backend_testing::init_no_event_loop();
+        let window = AppWindow::new().unwrap();
+        let games: Vec<GameData> = Game::ALL.into_iter().map(GameData::empty).collect();
+        let ui = Rc::new(Ui {
+            screen: RefCell::new(Screen::new(games, None, NO_RELAY)),
+            shown: RefCell::new(Shown::Continue),
+            lang: RefCell::new(Lang::new("en".into(), None, None)),
+            prompt_choice: Cell::default(),
+            last_pad: Cell::default(),
+            about: RefCell::default(),
+            fleet: RefCell::default(),
+            crash: RefCell::default(),
+            folders: None,
+            window: window.as_weak(),
+            pictures: RefCell::default(),
+            now: Box::new(|| 1_794_519_000),
+            offset: Box::new(|_| 0),
+            first: RefCell::new(None),
+        });
+        wire(&window, &ui, Rc::new(|_| {}), Rc::new(|_| {}));
+        let mut data: Vec<GameSaves> = Game::ALL.into_iter().map(GameSaves::empty).collect();
+        data[1].slots[0].used = true;
+        data[1].slots[0].saved_unix = 1_794_518_040;
+        data[1].backups = vec![vm::saves::stamp(1_794_500_000, 1)];
+        ui.show(Shown::Saves(SavesVm::new(data, Game::U2, NO_RELAY)));
+        let mut titles: Vec<_> = window.get_save_slots().iter().map(|r| r.title).collect();
+        titles.push(window.get_save_backups().row_data(0).unwrap().title);
+        for (w, h) in [(1600, 900), (640, 400), (900, 1000), (3440, 1440)] {
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(w as f32, h as f32));
+            for label in titles.iter().map(|t| t.as_str()) {
+                let text = ElementHandle::find_by_accessible_label(&window, label)
+                    .next()
+                    .unwrap_or_else(|| panic!("{label} not drawn at {w}x{h}"));
+                let size = text.size();
+                assert!(
+                    size.width >= 30.0,
+                    "{label} squeezed to {}px at {w}x{h}",
+                    size.width
+                );
+            }
+        }
+    }
+
     /// One headless Slint run of the first-run page: the client path through the window's own
     /// callbacks, as far as a job leaves the UI thread.
     #[test]
