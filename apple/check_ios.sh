@@ -9,9 +9,11 @@
 # Save Relay cdylib, which crashes on a device), the Save Relay C interface and the runtime defined in it,
 # no app extension, and nothing in the bundle outside an allowlist, so no game file can ride along.
 # Ipa: Payload/<App>.app only, the same allowlist, an ad-hoc signature and no entitlements.
-# FOLLOW-UP: the allowlist below stands in for tools/check_no_game_data.sh (the game-data guard owned by
-# the Mac release slice); call that script from here once it is on main.
+# Both modes also run tools/check_no_game_data.sh (the game-data guard, decision #23) on what they check,
+# on top of the allowlist; a failure of either fails the check.
 set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+game_data_guard=$here/../tools/check_no_game_data.sh
 fail() { echo "error: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
 usage() { echo "usage: apple/check_ios.sh app <X.app> [device|simulator] | ipa <X.ipa>" >&2; exit 2; }
@@ -34,6 +36,13 @@ check_contents() { # <app dir> <executable name>
     [ ! -e "$app/PlugIns" ] && [ ! -e "$app/Frameworks" ] || fail "app extension or framework present"
     [ ! -e "$app/_CodeSignature" ] && [ ! -e "$app/embedded.mobileprovision" ] || fail "signature leftovers present"
     ok "bundle holds only allowlisted files"
+}
+
+# The shared game-data guard; its own messages go to stderr, a failure fails this script.
+check_game_data() { # <app dir | ipa>
+    [ -f "$game_data_guard" ] || fail "tools/check_no_game_data.sh is missing"
+    bash "$game_data_guard" "$1" || fail "game data check failed for $(basename "$1")"
+    ok "check_no_game_data.sh: clean"
 }
 
 check_app() { # <app dir> <device|simulator>
@@ -64,6 +73,7 @@ check_app() { # <app dir> <device|simulator>
     done
     ok "nm: save_relay_* and uncharted_runtime_version defined"
     check_contents "$app" "$exe"
+    check_game_data "$app"
 }
 
 check_ipa() { # <ipa>
@@ -82,7 +92,7 @@ check_ipa() { # <ipa>
     ok "Payload/$apps"
     unzip -q "$ipa" -d "$work/x"
     app=$work/x/Payload/$apps
-    check_app "$app" device
+    check_app "$app" device # includes the game-data guard on the unpacked app (the guard needs a .ipa suffix; package_ipa.sh checks a .ipa.partial)
     exe=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Info.plist")
     signature=$(codesign -dvv "$app/$exe" 2>&1 | sed -n 's/^Signature=//p')
     [ "$signature" = adhoc ] || fail "signature is '$signature', not adhoc"
