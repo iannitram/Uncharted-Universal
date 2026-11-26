@@ -9,12 +9,14 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
 
 #include "bbport_dlss_bridge.h" // Vulkan first: the NGX headers expect its types
+#include "../shim/bbport_dlss_policy.h"
 
 #include <nvsdk_ngx_helpers.h>
 #include <nvsdk_ngx_vk.h>
@@ -47,6 +49,8 @@ struct State {
     NVSDK_NGX_Handle* fg_feature{};
     BbDlssgFeature fg_desc{};
     bool fg_device_supported{};
+    bool fg_forced{};           ///< BB_FORCE_FRAME_GEN=1
+    bool fg_extensions_known{}; ///< NGX answered Frame Generation's device extension list
     int32_t fg_max_count{};
     // Extensions of both features, without duplicates.
     std::vector<VkExtensionProperties> instance_extensions, device_extensions;
@@ -152,18 +156,30 @@ int32_t DeviceExtensions(VkInstance instance, VkPhysicalDevice physical, uint32_
     state.device_extensions.clear();
     Merge(state.device_extensions, required, required_count);
     NVSDK_NGX_FeatureRequirement fg_support{};
-    state.fg_device_supported =
+    const bool fg_supported =
         NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical,
                                                                   &state.discovery_fg,
                                                                   &fg_support)) &&
-        fg_support.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported &&
+        fg_support.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
+    // BB_FORCE_FRAME_GEN=1 (testing): NGX said no (a GeForce RTX 30 such as the 3090 Ti), but if
+    // its extension list is still answered, ask for those extensions and let feature creation
+    // decide. A refusal there falls over to FSR 3.1, it does not stop the game. Without the
+    // override the extension list is only asked for on a supported GPU, as before.
+    state.fg_forced = BbDlssPolicy::ForceFrameGen(std::getenv("BB_FORCE_FRAME_GEN"));
+    state.fg_extensions_known =
+        (fg_supported || state.fg_forced) &&
         NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
             instance, physical, &state.discovery_fg, &required_count, &required));
-    if (state.fg_device_supported) {
+    state.fg_device_supported = fg_supported && state.fg_extensions_known;
+    if (state.fg_extensions_known) {
         Merge(state.device_extensions, required, required_count);
-    } else {
+    }
+    if (!state.fg_device_supported) {
         Log(0, "Frame Generation is not supported on this GPU or driver (code 0x%x)",
             static_cast<unsigned>(fg_support.FeatureSupported));
+        if (state.fg_forced)
+            Log(1, "BB_FORCE_FRAME_GEN=1: trying DLSS Frame Generation on a GPU NGX rejects "
+                   "(testing only; if it fails the game uses FSR 3.1)");
     }
     *count = uint32_t(state.device_extensions.size());
     *extensions = state.device_extensions.data();
@@ -208,9 +224,15 @@ int32_t Initialize(VkInstance instance, VkPhysicalDevice physical, VkDevice devi
     if (NVSDK_NGX_FAILED(NVSDK_NGX_Parameter_GetUI(
             state.capabilities, NVSDK_NGX_DLSSG_Parameter_MultiFrameCountMax, &fg_max)))
         fg_max = 1;
-    if (state.fg_device_supported && fg_available) {
-        state.fg_max_count = static_cast<int32_t>(std::clamp(fg_max, 1u, 3u));
-        Log(0, "Frame Generation available (up to %dx)", state.fg_max_count + 1);
+    state.fg_max_count = BbDlssPolicy::FrameGenMaxCount(
+        state.fg_device_supported, fg_available != 0, fg_max,
+        state.fg_forced && state.fg_extensions_known);
+    if (state.fg_max_count > 0) {
+        if (state.fg_device_supported && fg_available)
+            Log(0, "Frame Generation available (up to %dx)", state.fg_max_count + 1);
+        else
+            Log(1, "BB_FORCE_FRAME_GEN=1: Frame Generation forced on (2x), NGX reports it "
+                   "unsupported here");
     } else if (fg_needs_driver) {
         Log(1, "Frame Generation needs a newer NVIDIA driver");
     }

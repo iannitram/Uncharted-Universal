@@ -51,13 +51,8 @@
 static inline int compat_mkdir(const char *path, int mode) { (void)mode; return _mkdir(path); }
 #define mkdir(path, mode) compat_mkdir(path, mode)
 
-/* pread/pwrite on CRT descriptors: positioned I/O that leaves the file offset unchanged. */
-ssize_t compat_pread(int fd, void *buffer, size_t size, int64_t offset);
-ssize_t compat_pwrite(int fd, const void *buffer, size_t size, int64_t offset);
-#define pread compat_pread
-/* close for descriptors that had positioned reads (runtime_file.c): drops their second handle (compat_win.c). */
-int compat_close(int fd);
-#define pwrite compat_pwrite
+/* pread/pwrite/close: the file layer's positioned I/O is Rust (crates/runtime/src/os.rs, 3.15);
+ * the C pread/pwrite of compat_win.c had no callers left and went with it (3.17e). */
 static inline int compat_fsync(int fd) { return _commit(fd); }
 #define fsync compat_fsync
 static inline char *compat_realpath(const char *path, char *out) { return _fullpath(out, path, PATH_MAX); }
@@ -81,7 +76,8 @@ static inline int compat_setenv(const char *name, const char *value, int overwri
  * which runtime.h includes. */
 /* setjmp/longjmp without SEH unwinding (guest frames have no unwind data) that saves every
  * Win64 callee-saved register, xmm6-15 included. clang's __builtin_longjmp restores a wrong
- * frame pointer on Win64. bb_longjmp may also be entered from the exception handler. */
+ * frame pointer on Win64. bb_longjmp may also be entered from the exception handler. Both are
+ * Rust (crates/runtime/src/os.rs global_asm, 3.17e; formerly src/compat_win.c). */
 typedef unsigned long long bb_jmp_buf[32];
 __attribute__((returns_twice)) int bb_setjmp(bb_jmp_buf buffer);
 __attribute__((noreturn)) void bb_longjmp(bb_jmp_buf buffer, int value);

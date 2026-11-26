@@ -30,10 +30,11 @@ present to the guest.
   launch::play / uncharted-run (starts loader, sets environment)
       |
       v
-  bb-probe.exe  =  src/probe.c        (loader, faults, patches)
-                +  src/runtime*.c     (HLE system libraries)
-                +  src/compat_win.c   (POSIX shims for MinGW)
+  bb-probe.exe  =  src/probe.c        (loader, faults, patches; until 3.16 #443)
+                +  crates/runtime     (HLE system libraries, OS shims, benchmark)
                 +  gpu/bbgpu          (shim over the shadPS4 renderer)
+  uncharted-run =  crates/runtime     (Rust loader, crates/runtime/src/loader/)
+                +  gpu/bbgpu          (no file of src/ since 3.17e)
                       |
                       v
                 gpu/shadps4/         (vendored, see gpu/VENDOR.txt)
@@ -54,14 +55,15 @@ Its main responsibilities:
   instructions to a thunk, then jump. `patch_eop_tick_wait` (the
   `GetRenderFrameParams` GPU-crash fix) is one of these.
 - **Fault handling.** Vectored/unhandled exception handlers on Windows, signals
-  on Linux, plus a speculative-read `setjmp` recovery path. `src/compat_win.c`
-  hand-writes `bb_setjmp`/`bb_longjmp` in assembly because clang's builtins
+  on Linux, plus a speculative-read `setjmp` recovery path. `crates/runtime/src/os.rs`
+  hand-writes `bb_setjmp`/`bb_longjmp` in assembly (was `src/compat_win.c`, 3.17e) because clang's builtins
   restore a wrong frame pointer on Win64 and guest frames have no unwind data.
 - **A MOVBE emulator**, for AMD FX, which lacks the instruction.
 
-### `src/runtime*.c` — the HLE runtime
+### The HLE runtime (`crates/runtime`, formerly `src/runtime*.c`)
 
-One file per PS4 library. Each provides `runtime_X_resolve()`, and usually
+Every `src/runtime*.c` is Rust now; 3.17e (#619) deleted the last of them. The table
+names the C files the modules replaced. One file per PS4 library. Each provides `runtime_X_resolve()`, and usually
 `runtime_X_report()` and `runtime_X_configure()`. The largest:
 
 | File | What it provides |
@@ -163,8 +165,9 @@ The launcher compiles the patches and passes `--patches` to the loader.
 ## Two platforms, one codebase
 
 The C runtime is built for both Linux and MSYS2/CLANG64 (MinGW + winpthreads),
-with `_WIN32` branches throughout and `src/compat_win.c` covering the POSIX
-calls that MinGW lacks. The differences are documented in a table in
+with `_WIN32` branches throughout. The POSIX calls that MinGW lacks are
+`cfg(windows)` code in `crates/runtime/src/os.rs` (`src/compat_win.c` until 3.17e);
+`src/compat_win.h` keeps the CRT macros for `src/probe.c` until `bb-probe` retires. The differences are documented in a table in
 [packaging/windows/README.md](../packaging/windows/README.md). Notable ones:
 
 - `libbbgpu.so` on Linux, but a **static** library on Windows, so the loader can
