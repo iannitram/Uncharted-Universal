@@ -586,6 +586,8 @@ export component AppWindow inherits Window {
     in property <int> row-index;
     in property <[SideData]> sides;
     in property <int> side-index;
+    // The Quit prompt: true when Stay has the focus (`OverlayView::Quit`).
+    in property <bool> quit-stay;
 
     // About's focused button while About is open (`page` 3, `Ui::about` in src/main.rs), and
     // the after-crash screen's (`page` 5, `Ui::crash`).
@@ -1334,17 +1336,18 @@ export component AppWindow inherits Window {
                 spacing: root.unit;
                 FocusButton {
                     label: @tr("Quit");
-                    hint: root.prompt-hints.confirm;
+                    hint: root.quit-stay ? "" : root.prompt-hints.confirm;
                     unit: root.unit;
-                    focused: true;
+                    focused: !root.quit-stay;
                     clicked => {
                         root.clicked(5, 0);
                     }
                 }
                 FocusButton {
                     label: @tr("Stay");
-                    hint: root.prompt-hints.back;
+                    hint: root.quit-stay ? root.prompt-hints.confirm : root.prompt-hints.back;
                     unit: root.unit;
+                    focused: root.quit-stay;
                     clicked => {
                         root.clicked(6, 0);
                     }

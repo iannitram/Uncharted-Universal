@@ -180,8 +180,10 @@ pub enum Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Overlay {
     None,
-    /// "Quit the launcher?"
-    Quit,
+    /// "Quit the launcher?"; `stay` is true when Stay has the focus.
+    Quit {
+        stay: bool,
+    },
     /// The list of the game's saves; `index` is the focused row.
     OtherSaves {
         index: usize,
@@ -356,10 +358,18 @@ impl Screen {
         match self.overlay.clone() {
             Overlay::None => self.handle_screen(input),
             Overlay::Running { .. } => Command::None,
-            Overlay::Quit => match input {
-                Input::Activate => Command::Quit,
-                Input::Back => {
+            Overlay::Quit { stay } => match input {
+                Input::Activate if !stay => Command::Quit,
+                Input::Activate | Input::Back => {
                     self.overlay = Overlay::None;
+                    Command::None
+                }
+                Input::Move(Nav::Left) | Input::Tab { back: true } => {
+                    self.overlay = Overlay::Quit { stay: false };
+                    Command::None
+                }
+                Input::Move(Nav::Right) | Input::Tab { back: false } => {
+                    self.overlay = Overlay::Quit { stay: true };
                     Command::None
                 }
                 _ => Command::None,
@@ -388,7 +398,7 @@ impl Screen {
             Input::Tab { back } => self.focus = self.focus.tab(back, actions, pages),
             Input::PrevGame => self.change_game((self.current + games - 1) % games),
             Input::NextGame => self.change_game((self.current + 1) % games),
-            Input::Back => self.overlay = Overlay::Quit,
+            Input::Back => self.overlay = Overlay::Quit { stay: false },
             Input::OtherSaves => {
                 if self.data().saves.len() > 1 {
                     self.overlay = Overlay::OtherSaves { index: 0 };
@@ -563,6 +573,7 @@ impl Screen {
                 };
                 self.handle(Input::Activate)
             }
+            (5, Overlay::Quit { .. }) => Command::Quit,
             (5, _) => self.handle(Input::Activate),
             (6, _) => self.handle(Input::Back),
             _ => Command::None,
@@ -598,7 +609,7 @@ impl Screen {
             status: self.status.clone(),
             overlay: match &self.overlay {
                 Overlay::None => OverlayView::None,
-                Overlay::Quit => OverlayView::Quit,
+                Overlay::Quit { stay } => OverlayView::Quit { stay: *stay },
                 Overlay::Warning { .. } => {
                     OverlayView::Warning(data.warning.clone().unwrap_or_default())
                 }
@@ -792,7 +803,10 @@ pub struct SideView {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OverlayView {
     None,
-    Quit,
+    /// `stay` is true when Stay has the focus.
+    Quit {
+        stay: bool,
+    },
     OtherSaves {
         title: String,
         rows: Vec<RowView>,
@@ -813,7 +827,7 @@ impl OverlayView {
     pub fn code(&self) -> i32 {
         match self {
             OverlayView::None => 0,
-            OverlayView::Quit => 1,
+            OverlayView::Quit { .. } => 1,
             OverlayView::OtherSaves { .. } => 2,
             OverlayView::Conflict { .. } => 3,
             OverlayView::Warning(_) => 4,
