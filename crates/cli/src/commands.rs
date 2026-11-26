@@ -476,6 +476,7 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
         }
     };
     let plan = core("play", play_plan(game, ctx))?;
+    core("play", require_prepared(game, &plan.install, ctx))?;
     let root = ctx.exe.parent().unwrap_or(Path::new("."));
     let relay = DesktopRelay {
         program: beside(&ctx.exe, "save-relay"),
@@ -517,6 +518,22 @@ fn play(args: &[String], ctx: &Ctx) -> Done {
     }
     out.code = exit_status(played.exit_code);
     Ok(out)
+}
+
+/// Play stops before the save sync and the runtime when `prepare` has not written this game's
+/// install (`install.json`, which `prepare::prepare` writes last), and says to run prepare:
+/// the runtime started without a boot image only prints its usage line (#644). `BB_RUNTIME`
+/// (a runtime the player chose, and the relay tests' synthetic one) skips the check.
+fn require_prepared(game: Game, install: &Path, ctx: &Ctx) -> Result<()> {
+    if ctx.var("BB_RUNTIME").is_some() || install.join(prepare::MANIFEST_FILE).is_file() {
+        return Ok(());
+    }
+    Err(Error::Launch(format!(
+        "{} is not prepared yet (no install in {}). Run `uncharted-universal prepare {}` first.",
+        game.name(),
+        install.display(),
+        game.key()
+    )))
 }
 
 // ---- steam-add ----

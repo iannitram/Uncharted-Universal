@@ -129,6 +129,49 @@ fn play_needs_a_known_game_and_a_valid_keep() {
 }
 
 #[test]
+fn play_without_a_prepared_install_says_to_run_prepare_and_starts_nothing() {
+    let dir = TempDir::new("play-unprepared");
+    let mut ctx = home(dir.path());
+    // No runtime and no save-relay beside this program: nothing could start anyway.
+    let bin = dir.path().join("bundle");
+    fs::create_dir_all(&bin).unwrap();
+    ctx.exe = bin.join("uncharted-universal");
+    let install = AppDirs::new(&vars(&ctx).unwrap()).install(Game::U2.key());
+
+    let out = exec(&["play", "u2"], &ctx);
+    assert_eq!(out.code, FAILED, "{}", out.stderr);
+    assert!(
+        out.stderr.contains("Uncharted 2 is not prepared yet")
+            && out.stderr.contains("uncharted-universal prepare u2"),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains(&install.display().to_string()));
+    assert!(!out.stdout.contains("before play"), "{}", out.stdout);
+    assert!(
+        !out.stdout.contains("quit with exit status"),
+        "{}",
+        out.stdout
+    );
+
+    // A folder without install.json (prepare refused or stopped) is not an install either.
+    fs::create_dir_all(&install).unwrap();
+    let out = exec(&["play", "u2"], &ctx);
+    assert!(out.stderr.contains("not prepared yet"), "{}", out.stderr);
+
+    // With install.json the check passes: play goes on (here to a runtime that is missing).
+    fs::write(install.join(prepare::MANIFEST_FILE), "{}").unwrap();
+    let out = exec(&["play", "u2"], &ctx);
+    assert!(!out.stderr.contains("not prepared yet"), "{}", out.stderr);
+
+    // BB_RUNTIME, a runtime the player chose, skips the check.
+    fs::remove_file(install.join(prepare::MANIFEST_FILE)).unwrap();
+    let ctx = set(ctx, "BB_RUNTIME", bin.join("custom-runtime"));
+    let out = exec(&["play", "u2"], &ctx);
+    assert!(!out.stderr.contains("not prepared yet"), "{}", out.stderr);
+}
+
+#[test]
 fn play_plan_uses_the_selected_save_slot_the_profile_and_the_players_variables() {
     let dir = TempDir::new("play-plan");
     let ctx = set(home(dir.path()), "BB_GPU_MERGE", "1");
@@ -1183,6 +1226,9 @@ fn play_uses_bundled_save_relay_beside_executable() {
             let mut ctx = home(dir.path());
             ctx.os = Os::Linux;
             ctx.exe = bin.join("uncharted-universal");
+            let install = AppDirs::new(&vars(&ctx).unwrap()).install(Game::U2.key());
+            fs::create_dir_all(&install).unwrap();
+            fs::write(install.join(prepare::MANIFEST_FILE), "{}").unwrap();
             let out = exec(&["play", "u2"], &ctx);
             assert_eq!(out.code, OK, "{}", out.stderr);
             assert!(out.stdout.contains("before play: downloaded saves"));
