@@ -10,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 
 #include "bbport_settings.h"
 
@@ -177,6 +178,33 @@ int main() {
     Check(!fs::exists(WithSuffix(blocked, ".tmp")), "the failed save leaves no temp file");
     SetConfig(ini);
     Check(ReadAll(ini) == before, "the old settings file is untouched");
+
+#ifdef _WIN32
+    // The real target held open by another program (no delete sharing, as _wfopen opens it):
+    // the rename fails, Save() says so, the old file stays whole and the temp file is removed.
+    {
+        const std::string held = ReadAll(ini);
+        FILE* holder = _wfopen(ini.c_str(), L"r");
+        Check(holder != nullptr, "the settings file can be held open");
+        s.sharpness = 0.5f;
+        Check(!Save(), "Save() reports a held file it cannot replace");
+        if (holder) std::fclose(holder);
+        Check(ReadAll(ini) == held, "the held settings file is untouched");
+        Check(!fs::exists(WithSuffix(ini, ".tmp")), "the failed replace leaves no temp file");
+        // Held only for a moment (a virus scanner): the retried rename gets through.
+        holder = _wfopen(ini.c_str(), L"r");
+        std::thread release([holder] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+            if (holder) std::fclose(holder);
+        });
+        Check(Save(), "Save() gets through once a brief hold ends");
+        release.join();
+        Load();
+        Check(s.sharpness == 0.5f, "the save after the brief hold is read back");
+        s.sharpness = 1.25f;
+        Check(Save(), "the settings are saved again");
+    }
+#endif
 
     // A missing folder is created.
     const fs::path fresh = root / "new" / "folder" / "bbport.ini";

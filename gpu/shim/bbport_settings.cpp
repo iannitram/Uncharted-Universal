@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <thread>
 
 #ifdef _WIN32
 #include <cwchar>
@@ -618,7 +620,13 @@ bool Save() {
         std::printf("Settings: cannot write %s\n", Display(temp).c_str());
         return false;
     }
-    std::filesystem::rename(temp, path, ec);
+    // On Windows a virus scanner or the indexer can hold the new file (or the old one) for a
+    // moment; the rename is tried a few times before the save is given up.
+    for (int attempt = 0;; ++attempt) {
+        std::filesystem::rename(temp, path, ec);
+        if (!ec || attempt == 4) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
     if (ec) {
         std::filesystem::remove(temp, ec);
         std::printf("Settings: cannot replace %s\n", Display(path).c_str());
