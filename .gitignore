@@ -47,6 +47,8 @@ param.sfo
 
 # Rust
 /target
+# Test save folders keep their icon0.png/thumb.png as downloaded (owner ruling, save data only).
+!tests/fixtures/saves/**/*.png
 
 # Metal probe run record (written by tests/apple_metal/run.sh when given this path)
 metal-probe-report.json
