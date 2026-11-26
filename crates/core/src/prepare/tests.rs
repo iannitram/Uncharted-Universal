@@ -2,8 +2,9 @@
 //! `nid`, the UTF-8 title in `analysis.json`), then `prepare` and `locate` end to end on a
 //! hand-built synthetic dump: a plain-ELF `eboot.bin` with imports and every relocation kind
 //! `boot.bin` carries, `libc.prx` and `libSceFios2.prx` from `link`'s fixtures, a `param.sfo` and
-//! a patch folder. No game data. The revision gate is opened with an explicit table because
-//! `games::SUPPORTED` is still empty.
+//! a patch folder. No game data. Most cases open the revision gate with an explicit table for
+//! 01.02, which `games::SUPPORTED` does not list; the shipped gate (01.00) runs through the
+//! public `prepare`.
 
 use super::*;
 use crate::link::tests::link_modules::{eboot, fios, libc, sym, Elf};
@@ -458,13 +459,18 @@ const PATCH_XML: &str = r#"<?xml version="1.0"?>
 
 /// A dump folder of `game` with its executable named `exe`.
 fn make_dump(dump: &Path, exe: &str, title_id: &str) {
+    make_dump_at(dump, exe, title_id, APP_VER);
+}
+
+/// [`make_dump`] whose `param.sfo` says `app_ver`.
+fn make_dump_at(dump: &Path, exe: &str, title_id: &str, app_ver: &str) {
     write(&dump.join(exe), &main_elf().bytes());
     write(&dump.join("sce_module/libc.prx"), &libc_elf().bytes());
     write(&dump.join("sce_module/libSceFios2.prx"), &fios().bytes());
     write(
         &dump.join("sce_sys/param.sfo"),
         &param_sfo(&[
-            ("APP_VER", Value::Text(APP_VER)),
+            ("APP_VER", Value::Text(app_ver)),
             ("TITLE", Value::Text("UNCHARTED\u{2122}")),
             ("TITLE_ID", Value::Text(title_id)),
             ("USER_DEFINED_PARAM_2", Value::Int(7)),
@@ -689,7 +695,7 @@ fn a_refused_revision_writes_nothing() {
         })
     );
     assert!(!install.exists());
-    // The shipped table is still empty: the public `prepare` refuses every revision.
+    // The shipped table lists 01.00 only: the public `prepare` refuses this 01.02 dump.
     assert!(matches!(
         prepare(&dump, &install, Game::U1, &PrepareOptions::default()),
         Err(Error::WrongRevision { .. })
@@ -703,6 +709,40 @@ fn a_refused_revision_writes_nothing() {
         listing(&install),
         BTreeSet::from([MANIFEST_FILE.to_owned(), "boot-res-1x1.bin".to_owned()])
     );
+}
+
+#[test]
+fn the_shipped_gate_prepares_01_00_of_every_game() {
+    // Owner ruling 2026-11-26 (#627): `games::SUPPORTED` lists 01.00 for U1, U2 and U3.
+    for game in Game::ALL {
+        let temp = Temp::new(&format!("shipped-{}", game.key()));
+        let (dump, install) = (temp.dump(), temp.install());
+        make_dump_at(&dump, game.executable(), "CUSA02320", "01.00");
+        let manifest = prepare(&dump, &install, game, &PrepareOptions::default())
+            .unwrap_or_else(|err| panic!("{}: {err}", game.key()));
+        assert_eq!(manifest.game, game);
+        assert_eq!(manifest.app_ver, "01.00");
+        assert!(install.join(MANIFEST_FILE).exists());
+    }
+}
+
+#[test]
+fn the_shipped_gate_refuses_an_unknown_revision_and_writes_nothing() {
+    for game in Game::ALL {
+        for app_ver in ["01.99", "01.02"] {
+            let temp = Temp::new(&format!("shipped-refused-{}-{app_ver}", game.key()));
+            let (dump, install) = (temp.dump(), temp.install());
+            make_dump_at(&dump, game.executable(), "CUSA02320", app_ver);
+            assert_eq!(
+                prepare(&dump, &install, game, &PrepareOptions::default()),
+                Err(Error::WrongRevision {
+                    game: game.key().into(),
+                    found: app_ver.into(),
+                })
+            );
+            assert!(!install.exists());
+        }
+    }
 }
 
 #[test]

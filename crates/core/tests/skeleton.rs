@@ -46,14 +46,14 @@ fn games_and_their_executables() {
     assert_eq!(Game::from_key("U3"), Some(Game::U3));
     assert_eq!(Game::U2.executable(), "big2-ps4_Shipping.elf");
     assert_eq!(Game::from_executable("eboot.bin"), Some(Game::U1));
-    assert!(games::supported(Game::U1).is_empty());
+    assert_eq!(games::supported(Game::U1), ["01.00"]);
     assert_eq!(games::SUPPORTED.len(), 3);
     assert_eq!(
         games::title_region("CUSA02320").unwrap_err().code(),
         "not_built"
     );
     assert_eq!(
-        games::check_revision(Game::U1, "01.00").unwrap_err().code(),
+        games::check_revision(Game::U1, "01.02").unwrap_err().code(),
         "wrong_revision"
     );
 }

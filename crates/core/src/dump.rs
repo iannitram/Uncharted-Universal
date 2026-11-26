@@ -247,6 +247,24 @@ mod tests {
     }
 
     #[test]
+    fn every_revision_the_gate_accepts_passes_the_version_check() {
+        // The dump check and `games::check_revision` give one answer (#636).
+        for game in Game::ALL {
+            for version in crate::games::supported(game) {
+                let dir = good("gate-version", version);
+                let report = check(&dir.0).unwrap();
+                assert!(
+                    !report.problems.iter().any(|p| p.contains("version")),
+                    "{} {version}: {:?}",
+                    game.key(),
+                    report.problems
+                );
+                assert_eq!(crate::games::check_revision(game, version), Ok(()));
+            }
+        }
+    }
+
+    #[test]
     fn identifies_self_version_missing_data_and_wrong_folder() {
         let self_dir = good("self", "01.00");
         fs::write(
