@@ -84,7 +84,10 @@ static std::optional<std::filesystem::path> GetBundleParentDirectory() {
 }
 #endif
 
-static auto UserPaths = [] {
+// bbport: built on first use, not before main: bbgpu_init sets BB_GPU_USER_DIR from bb-probe's
+// --user just before the first path is asked for. A static built before main read the variable
+// too early, so the cache, shader and log folders landed in ./user beside the exe (#646).
+static std::unordered_map<PathType, fs::path> BuildUserPaths() {
     // bbport: the port keeps GPU caches where BB_GPU_USER_DIR points.
     const char* port_dir = std::getenv("BB_GPU_USER_DIR");
     auto user_dir = port_dir ? std::filesystem::path(port_dir) : std::filesystem::current_path() / PORTABLE_DIR;
@@ -151,7 +154,12 @@ static auto UserPaths = [] {
     }
 
     return paths;
-}();
+}
+
+static std::unordered_map<PathType, fs::path>& UserPaths() {
+    static std::unordered_map<PathType, fs::path> paths = BuildUserPaths();
+    return paths;
+}
 
 bool ValidatePath(const fs::path& path) {
     if (path.empty()) {
@@ -180,7 +188,7 @@ std::string PathToUTF8String(const std::filesystem::path& path) {
 }
 
 const fs::path& GetUserPath(PathType shad_path) {
-    return UserPaths.at(shad_path);
+    return UserPaths().at(shad_path);
 }
 
 std::string GetUserPathString(PathType shad_path) {
@@ -194,7 +202,7 @@ void SetUserPath(PathType shad_path, const fs::path& new_path) {
         return;
     }
 
-    UserPaths.insert_or_assign(shad_path, new_path);
+    UserPaths().insert_or_assign(shad_path, new_path);
 }
 
 std::optional<fs::path> FindGameByID(const fs::path& dir, const std::string& game_id,
