@@ -310,13 +310,29 @@ private:
 /// rather than waiting for the deferred signals on the GPU command thread.
 ///
 /// Only while a raycaster landing is pending (LandingGate::Active()). The deferred flip runs the
-/// EOP flip handler on the landing thread, and that handler prepares the frame on the draw
-/// scheduler the GPU command thread is still recording into: with every Stage B flip deferred
-/// (#553), Uncharted 2 crashed in the NVIDIA Windows driver (vkEndCommandBuffer from
-/// Presenter::PrepareFrame on the landing thread) or never presented a frame.
+/// EOP flip handler on the landing thread. Before #592 that handler prepared the frame there, on
+/// the draw scheduler the GPU command thread was still recording into: with every Stage B flip
+/// deferred (#553), Uncharted 2 crashed in the NVIDIA Windows driver (vkEndCommandBuffer from
+/// Presenter::PrepareFrame on the landing thread) or never presented a frame. The handler now
+/// hands the frame back to the GPU command thread (PrepareEopFlipInline).
 [[nodiscard]] constexpr bool ShouldDeferFlipSignal(bool gate_active, bool on_stage_b,
                                                    bool recorder_fences_enabled) noexcept {
     return gate_active && on_stage_b && recorder_fences_enabled;
+}
+
+/// bbport (#592): whether an EOP flip's frame (VideoOutDriver::SubmitFlipInternal ->
+/// Presenter::PrepareFrame -> draw_scheduler.Flush) may be prepared on the thread that raised the
+/// flip interrupt. Only the GPU command thread (stage A) and the draw recording thread (stage B)
+/// own the draw scheduler and the caches; they record into the scheduler's command buffer and
+/// never both at once. From any other thread (the landing thread of a deferred flip, the Vulkan
+/// recording thread, the EOP flip worker) the frame goes to the GPU command thread
+/// (Liverpool::SendCommand, without waiting), which runs it once the draw recording thread is
+/// idle (Liverpool::ProcessCommands). The raising thread does not wait for the GPU command
+/// thread, so a GPU command thread waiting for that flip's signal (WaitDeferredSignals) is not
+/// waited for in turn (#112).
+[[nodiscard]] constexpr bool PrepareEopFlipInline(bool on_gpu_command_thread,
+                                                  bool on_draw_recording_thread) noexcept {
+    return on_gpu_command_thread || on_draw_recording_thread;
 }
 
 } // namespace AmdGpu

@@ -28,6 +28,7 @@
 #include "core/libraries/videoout/videoout_error.h"
 #include "imgui/renderer/imgui_core.h"
 #include "video_core/amdgpu/liverpool.h"
+#include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_vram.h"
@@ -679,10 +680,16 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
     if (!is_eop) {
         // Non EOP flips can arrive from any thread so ask GPU thread to perform them
         liverpool->SendCommand([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
-    } else if (Vulkan::Scheduler::OnRecorderThread()) {
-        // bbport: the end-of-pipe label of this flip was signalled by the Vulkan recording
-        // thread (RecorderFences). PrepareFrame there waits in SyncRecording for that thread to
-        // go idle, i.e. for itself: the game froze (U1 jeep chase). The GPU thread makes it.
+    } else if (!AmdGpu::PrepareEopFlipInline(AmdGpu::Liverpool::OnProcessorThread(),
+                                             Vulkan::DrawPipe::OnStageB())) {
+        // bbport: the frame is prepared on the draw scheduler, which only the GPU command thread
+        // and the draw recording thread record into. On the Vulkan recording thread
+        // (RecorderFences) PrepareFrame waited in SyncRecording for that thread, i.e. for itself:
+        // the game froze (U1 jeep chase). On the landing thread (a flip deferred behind a
+        // raycaster landing, SignalFlip) it ended and submitted the command buffer while the GPU
+        // command thread was recording into it: a fault in the NVIDIA driver (#592). The GPU
+        // command thread makes it, once the draw recording thread is idle; this thread does not
+        // wait for it (#112).
         liverpool->SendCommand([=, this]() {
             SubmitFlipInternal(port, index, flip_arg, is_eop);
             eop_flip_reached();

@@ -103,7 +103,7 @@ MINGW*|MSYS*)
     fi
     echo "Built $PWD/out/bb-probe.exe"
     if [[ ${1:-} == --test ]]; then
-        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test resolve-overlap-test upscaler-latch-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test clear-state-and-submit-waits-test signal-flip-gate-test u2-stall-guards-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test)
+        tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test resolve-overlap-test upscaler-latch-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test clear-state-and-submit-waits-test signal-flip-gate-test flip-handback-test u2-stall-guards-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test)
         ninja_jobs=()
         if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
         if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
@@ -208,14 +208,14 @@ echo "Built $PWD/out/bb-probe"
 # GPU check (live_resolution=auto): links only the Vulkan loader.
 "$CC" -std=c11 -O2 -Wall -Wextra -Werror tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test stage-specialization-start-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test vram-probation-test clear-state-and-submit-waits-test bind-state-cache-test nv-perf-diag-test signal-flip-gate-test u2-stall-guards-test resolve-overlap-test upscaler-latch-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)
+    tests=(motion-history-test motion-shader-test wbinvl1-test shader-scalar-64-test image-sample-dref-grad-test shared-memory-bounds-test nan-guard-test stage-specialization-start-test button-prompts-test ui-composition-test upscaler-support-test expand-image-test tiny-readback-test small-readback-batch-test macro-mip-tiling-test vram-fallback-test vram-probation-test clear-state-and-submit-waits-test bind-state-cache-test nv-perf-diag-test signal-flip-gate-test flip-handback-test u2-stall-guards-test resolve-overlap-test upscaler-latch-test video-pacing-test runtime-resize-test videodec-recovery-test movie-scaling-test scene-resolution-test taa-shader-test camera-motion-test vulkan-smoke-test)
     ninja_jobs=()
     if [[ -n ${BB_JOBS:-} ]]; then ninja_jobs=(-j"$BB_JOBS"); fi
     if ! ninja -C out/gpu "${ninja_jobs[@]}" "${tests[@]}" > out/gpu-tests-build.log 2>&1; then
         tail -40 out/gpu-tests-build.log >&2
         echo 'GPU test build failed (full log: out/gpu-tests-build.log)' >&2; exit 1
     fi
-    for test in "${tests[@]:0:13}" resolve-overlap-test upscaler-latch-test; do "out/gpu/$test"; done
+    for test in "${tests[@]:0:13}" resolve-overlap-test upscaler-latch-test flip-handback-test; do "out/gpu/$test"; done
     BB_BUTTON_PROMPTS=nintendo "out/gpu/button-prompts-test" --forced-nintendo
     for candidate in /run/opengl-driver/share/vulkan/icd.d/lvp_icd*.json /usr/share/vulkan/icd.d/lvp_icd*.json; do
         if [[ -f $candidate ]]; then export VK_ICD_FILENAMES=$candidate; break; fi
