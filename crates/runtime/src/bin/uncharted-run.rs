@@ -18,17 +18,8 @@ pub extern "C" fn runtime_restart() -> ! {
     entry::runtime_restart()
 }
 
-#[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
-#[no_mangle]
-pub extern "C" fn runtime_benchmark_active() -> std::ffi::c_int {
-    uncharted_runtime::benchmark_run::uncharted_benchmark_active()
-}
-
-#[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
-#[no_mangle]
-pub extern "C" fn runtime_benchmark_frame(vram_mib: u64) -> std::ffi::c_int {
-    uncharted_runtime::benchmark_run::uncharted_benchmark_frame(vram_mib)
-}
+// `runtime_benchmark_active` and `runtime_benchmark_frame`, which the GPU library calls, are the
+// library's (`benchmark_run.rs`, 3.17e); `build.rs` keeps them with `--undefined`.
 
 #[cfg(all(uncharted_loader, target_arch = "x86_64", target_os = "linux"))]
 fn configure_gpu_and_fault_hooks() {

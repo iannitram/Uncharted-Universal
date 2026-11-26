@@ -345,6 +345,75 @@ fn cpu_times_100ns(_: bool) -> io::Result<(u64, u64)> {
     ))
 }
 
+// `bb_setjmp` / `bb_longjmp` (roadmap 3.17e, the former `src/compat_win.c`; declared for C in
+// `src/compat_win.h` and `gpu/shim/bbport_toggles.h`): setjmp/longjmp without SEH unwinding
+// (guest frames have no unwind data) that save every Win64 callee-saved register, xmm6-15
+// included; clang's `__builtin_longjmp` restores a wrong frame pointer on Win64. `bb_longjmp`
+// may also be entered from the exception handler (the GPU library's `bbgpu_fault_recover`,
+// `probe.c`'s handler), with the faulting thread's registers. The buffer (`bb_jmp_buf`, 32
+// u64): rbx rbp rdi rsi r12-r15 (0-56), rsp after the return (64), the return address (72),
+// xmm6-15 (80-239), MXCSR (240), x87 control word (244).
+#[cfg(all(windows, target_arch = "x86_64"))]
+core::arch::global_asm!(
+    ".globl bb_setjmp",
+    "bb_setjmp:",
+    "mov [rcx + 0], rbx",
+    "mov [rcx + 8], rbp",
+    "mov [rcx + 16], rdi",
+    "mov [rcx + 24], rsi",
+    "mov [rcx + 32], r12",
+    "mov [rcx + 40], r13",
+    "mov [rcx + 48], r14",
+    "mov [rcx + 56], r15",
+    "lea rdx, [rsp + 8]",
+    "mov [rcx + 64], rdx",
+    "mov rdx, [rsp]",
+    "mov [rcx + 72], rdx",
+    "movups [rcx + 80], xmm6",
+    "movups [rcx + 96], xmm7",
+    "movups [rcx + 112], xmm8",
+    "movups [rcx + 128], xmm9",
+    "movups [rcx + 144], xmm10",
+    "movups [rcx + 160], xmm11",
+    "movups [rcx + 176], xmm12",
+    "movups [rcx + 192], xmm13",
+    "movups [rcx + 208], xmm14",
+    "movups [rcx + 224], xmm15",
+    "stmxcsr [rcx + 240]",
+    "fnstcw [rcx + 244]",
+    "xor eax, eax",
+    "ret",
+    ".globl bb_longjmp",
+    "bb_longjmp:",
+    "mov eax, edx",
+    "test eax, eax",
+    "jnz 2f",
+    "mov eax, 1",
+    "2:",
+    "mov rbx, [rcx + 0]",
+    "mov rbp, [rcx + 8]",
+    "mov rdi, [rcx + 16]",
+    "mov rsi, [rcx + 24]",
+    "mov r12, [rcx + 32]",
+    "mov r13, [rcx + 40]",
+    "mov r14, [rcx + 48]",
+    "mov r15, [rcx + 56]",
+    "movups xmm6, [rcx + 80]",
+    "movups xmm7, [rcx + 96]",
+    "movups xmm8, [rcx + 112]",
+    "movups xmm9, [rcx + 128]",
+    "movups xmm10, [rcx + 144]",
+    "movups xmm11, [rcx + 160]",
+    "movups xmm12, [rcx + 176]",
+    "movups xmm13, [rcx + 192]",
+    "movups xmm14, [rcx + 208]",
+    "movups xmm15, [rcx + 224]",
+    "ldmxcsr [rcx + 240]",
+    "fldcw [rcx + 244]",
+    "mov rsp, [rcx + 64]",
+    "jmp qword ptr [rcx + 72]",
+);
+
 // The C symbols of compat_win.h that this module replaces. They are declared for C in
 // include/uncharted_runtime.h (written by cbindgen, checked by tests/header.rs).
 
@@ -854,5 +923,38 @@ mod tests {
         }
         assert!(reached.is_empty(), "reached the host: {reached:#?}");
         assert_eq!(file.position(), 8);
+    }
+
+    /// `bb_longjmp` comes back out of `bb_setjmp` with its value (1 for 0), on the same stack.
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    #[test]
+    fn bb_longjmp_returns_from_bb_setjmp_with_its_value() {
+        use std::cell::UnsafeCell;
+        use std::ffi::c_int;
+        use std::sync::atomic::AtomicU32;
+
+        extern "C" {
+            fn bb_setjmp(buffer: *mut u64) -> c_int;
+            fn bb_longjmp(buffer: *mut u64, value: c_int) -> !;
+        }
+        struct Buffer(UnsafeCell<[u64; 32]>);
+        // SAFETY: only this test touches it, from one thread.
+        unsafe impl Sync for Buffer {}
+        static BUFFER: Buffer = Buffer(UnsafeCell::new([0; 32]));
+        static CALLS: AtomicU32 = AtomicU32::new(0);
+
+        #[inline(never)]
+        fn round(value: c_int) -> c_int {
+            // SAFETY: a 32-word buffer; the jump comes back into this frame, which is still live.
+            let got = unsafe { bb_setjmp(BUFFER.0.get().cast()) };
+            if CALLS.fetch_add(1, Ordering::SeqCst).is_multiple_of(2) {
+                // SAFETY: the buffer was filled by bb_setjmp in this frame just above.
+                unsafe { bb_longjmp(BUFFER.0.get().cast(), value) }
+            }
+            got
+        }
+        assert_eq!(round(7), 7);
+        assert_eq!(round(0), 1);
+        assert_eq!(CALLS.load(Ordering::SeqCst), 4);
     }
 }

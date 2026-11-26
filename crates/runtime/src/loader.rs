@@ -3,7 +3,8 @@
 //!
 //! Full guest execution (image mapping, signal/VEH fault handlers, `bbgpu_init`, and
 //! `enter_on_stack`) is in the submodules below; `cli` is the command flow `uncharted-run` runs.
-//! `src/probe.c` stays until `bb-probe` is retired (3.17e).
+//! `src/probe.c` stays until `bb-probe` is retired (3.16, #443); 3.17e deleted every other C file
+//! of `src/`.
 
 pub mod cli;
 pub mod entry;
