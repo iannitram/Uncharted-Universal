@@ -107,6 +107,8 @@ tamper "a game folder" "outside the allowlist" 'mkdir Payload/Fakeu1.app/game &&
 tamper "a second app" "exactly one app" 'cp -R Payload/Fakeu1.app Payload/Other.app'
 tamper "an extension" "outside the allowlist" 'mkdir -p Payload/Fakeu1.app/PlugIns/x.appex && echo x > Payload/Fakeu1.app/PlugIns/x.appex/x'
 tamper "a file outside Payload" "outside Payload" 'echo x > readme.txt'
+# Only the game-data guard catches this one: an allowlisted licence file that starts with the PS4 SELF magic.
+tamper "a SELF inside an allowed file" "PS4 SELF magic" "printf '\\117\\025\\075\\035xxxx' > Payload/Fakeu1.app/licenses/save-relay-LICENSE.txt"
 
 # 4. Refusals, each before anything is written.
 refuse "an out folder inside the checkout" "outside the checkout" "$root/out/none" \
