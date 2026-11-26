@@ -4,8 +4,8 @@
 //! pull under a name the hub never paired both fail with the reason. Every file is synthetic;
 //! nothing leaves loopback and mDNS is not used (`--bind 127.0.0.1` skips the announcement).
 //!
-//! Paired-device storage fails closed on Windows until its ACL work lands, so there the commands
-//! must fail before listening or connecting, and store nothing.
+//! The same flow runs on Windows, where the paired-device file is owner-only and atomically
+//! replaced (#189).
 
 #![cfg(feature = "hub")]
 
@@ -55,8 +55,8 @@ fn command(root: &Path, args: &[&str]) -> Command {
 }
 
 /// The per-user data folder `command` gives the binary under `root`: `XDG_DATA_HOME` on Linux,
-/// `<HOME>/Library/Application Support` on the Mac (`uncharted_core::platform`).
-#[cfg(not(windows))]
+/// `LOCALAPPDATA` on Windows (both `<root>/data`), `<HOME>/Library/Application Support` on the
+/// Mac (`uncharted_core::platform`).
 fn user_data(root: &Path) -> PathBuf {
     if cfg!(target_os = "macos") {
         root.join("home/Library/Application Support")
@@ -66,10 +66,8 @@ fn user_data(root: &Path) -> PathBuf {
 }
 
 /// Kills the hub when the test ends early, so a failed assertion leaves no listener behind.
-#[cfg(not(windows))]
 struct Running(std::process::Child);
 
-#[cfg(not(windows))]
 impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -116,7 +114,6 @@ fn publish(builds: &Path, name: &str) -> PathBuf {
     root
 }
 
-#[cfg(not(windows))]
 #[test]
 fn a_device_pairs_with_and_pulls_from_a_fake_hub_on_loopback() {
     use std::io::{BufRead, BufReader};
@@ -271,7 +268,6 @@ fn a_device_pairs_with_and_pulls_from_a_fake_hub_on_loopback() {
     assert_eq!(errors.matches("a connection failed").count(), 3, "{errors}");
 }
 
-#[cfg(not(windows))]
 #[test]
 fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     use std::io::{BufRead, BufReader};
@@ -392,46 +388,4 @@ fn a_device_pairs_with_and_pulls_game_data_from_a_fake_hub_on_loopback() {
     assert!(status.success(), "{status:?}");
     let said = reader.join().unwrap().join("\n");
     assert!(said.contains("sent game data for linux"), "{said}");
-}
-
-#[cfg(windows)]
-#[test]
-fn on_windows_the_hub_commands_fail_closed_before_any_connection() {
-    let hub_root = TempDir::new("hub-windows");
-    let builds = hub_root.0.join("builds");
-    publish(&builds, "2026-11-12");
-    let serve = uu(
-        &hub_root.0,
-        &[
-            "hub",
-            "serve",
-            "--builds",
-            &builds.display().to_string(),
-            "--role",
-            "strix-halo",
-            "--bind",
-            "127.0.0.1",
-            "--port",
-            "0",
-            "--stop-after",
-            "1",
-        ],
-    );
-    let device_root = TempDir::new("device-windows");
-    let pair = uu(
-        &device_root.0,
-        &["hub", "pair", "483921", "--hub", "127.0.0.1:9"],
-    );
-    let pull = uu(&device_root.0, &["hub", "pull", "--hub", "127.0.0.1:9"]);
-    for output in [&serve, &pair, &pull] {
-        assert_eq!(code(output), 1, "{output:?}");
-        assert!(
-            stderr(output).contains("not implemented on Windows"),
-            "{output:?}"
-        );
-        assert!(output.stdout.is_empty(), "{output:?}");
-    }
-    for root in [&hub_root.0, &device_root.0] {
-        assert!(!root.join("config/uncharted-universal/peers.json").exists());
-    }
 }
