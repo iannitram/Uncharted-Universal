@@ -156,21 +156,22 @@ int32_t DeviceExtensions(VkInstance instance, VkPhysicalDevice physical, uint32_
     state.device_extensions.clear();
     Merge(state.device_extensions, required, required_count);
     NVSDK_NGX_FeatureRequirement fg_support{};
-    state.fg_device_supported =
+    const bool fg_supported =
         NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureRequirements(instance, physical,
                                                                   &state.discovery_fg,
                                                                   &fg_support)) &&
-        fg_support.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported &&
-        NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
-            instance, physical, &state.discovery_fg, &required_count, &required));
-    // BB_FORCE_FRAME_GEN=1 (testing): NGX said no (a GeForce RTX 30 such as the 3090 Ti), but its
-    // extension list was still answered: ask for those extensions and let feature creation
-    // decide. A refusal there falls over to FSR 3.1, it does not stop the game.
+        fg_support.FeatureSupported == NVSDK_NGX_FeatureSupportResult_Supported;
+    // BB_FORCE_FRAME_GEN=1 (testing): NGX said no (a GeForce RTX 30 such as the 3090 Ti), but if
+    // its extension list is still answered, ask for those extensions and let feature creation
+    // decide. A refusal there falls over to FSR 3.1, it does not stop the game. Without the
+    // override the extension list is only asked for on a supported GPU, as before.
     state.fg_forced = BbDlssPolicy::ForceFrameGen(std::getenv("BB_FORCE_FRAME_GEN"));
     state.fg_extensions_known =
+        (fg_supported || state.fg_forced) &&
         NVSDK_NGX_SUCCEED(NVSDK_NGX_VULKAN_GetFeatureDeviceExtensionRequirements(
             instance, physical, &state.discovery_fg, &required_count, &required));
-    if (state.fg_device_supported || (state.fg_forced && state.fg_extensions_known)) {
+    state.fg_device_supported = fg_supported && state.fg_extensions_known;
+    if (state.fg_extensions_known) {
         Merge(state.device_extensions, required, required_count);
     }
     if (!state.fg_device_supported) {

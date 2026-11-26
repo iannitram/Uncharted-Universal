@@ -111,9 +111,14 @@ FrameGenerator::FrameGenerator(const Instance& instance_, Scheduler& scheduler_)
         settings.frame_gen = BbSettings::FrameGenFsr3;
     }
     if (BbDlssPolicy::ForceFrameGen(std::getenv("BB_FORCE_FRAME_GEN"))) {
+        // dlss_max >= 1 means the bridge offers 2x (NGX's own yes or the override); feature
+        // creation still decides and falls over to FSR 3.1 on a refusal.
         std::printf("Frame generation: WARNING BB_FORCE_FRAME_GEN=1 is set: DLSS Frame Generation "
-                    "is tried on a GPU the NVIDIA SDK does not list for it (testing only; %s)\n",
-                    dlss_max >= 1 ? "NGX accepted it" : "NGX did not accept it, FSR 3.1 is used");
+                    "is tried even where the NVIDIA SDK does not list the GPU (testing only; "
+                    "%s)\n",
+                    dlss_max >= 1 ? "offered, feature creation decides"
+                                  : "not offered (DLSS unavailable, an older bbport_dlss.dll or "
+                                    "no extension list from NGX), FSR 3.1 is used");
     }
     if (settings.frame_gen != BbSettings::FrameGenOff) {
         const int max = settings.frame_gen == BbSettings::FrameGenDlss ? dlss_max + 1 : 2;

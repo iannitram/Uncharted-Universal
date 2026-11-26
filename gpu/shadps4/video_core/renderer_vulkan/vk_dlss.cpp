@@ -54,16 +54,14 @@ const char* Dlss::FeatureSizeProblem(u32 input_width, u32 input_height, u32 outp
     return BbDlssPolicy::FeatureSizeProblem(input_width, input_height, output_width, output_height);
 }
 
+#ifdef BB_DLSS_BRIDGE
+
 namespace {
 /// A resource the driver may be handed: real image and view, sizes that are not zero.
 bool UsableResource(const Dlss::Resource& r) {
     return r.image && r.view && r.width && r.height;
 }
-} // namespace
 
-#ifdef BB_DLSS_BRIDGE
-
-namespace {
 #ifdef _WIN32
 constexpr wchar_t BridgeName[] = L"bbport_dlss.dll";
 constexpr wchar_t NgxName[] = L"nvngx_dlss.dll";
