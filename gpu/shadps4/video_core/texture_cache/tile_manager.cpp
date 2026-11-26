@@ -197,6 +197,10 @@ vk::Pipeline TileManager::GetTilingPipeline(const ImageInfo& info, bool is_tiler
 void TileManager::RecordTilingDispatch(vk::Pipeline pipeline, const vk::DescriptorBufferInfo& tiled,
                                        const vk::DescriptorBufferInfo& linear,
                                        const vk::DescriptorBufferInfo& params, u32 dim_x) {
+    // bbport: this binds a tiling pipeline. Without this the next guest dispatch of the pipeline
+    // bound before took the cached bind as current and ran the tiler with its own descriptors:
+    // U2's museum exposure dispatch lost the device ("write to an invalid address", #155).
+    scheduler.GetBindState().ForgetCompute();
     scheduler.Record([pipeline, layout = *pl_layout, tiled, linear, params,
                       dim_x](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline);

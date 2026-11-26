@@ -628,6 +628,12 @@ struct BindState {
         index_type = {};
     }
 
+    /// A compute pipeline was bound behind the cache's back (a pass recorded through Record()
+    /// with its own bindPipeline): the next guest dispatch must bind its pipeline again.
+    void ForgetCompute() {
+        compute_pipeline = vk::Pipeline{};
+    }
+
     bool ShouldBindPipeline(vk::PipelineBindPoint bind_point, vk::Pipeline pipeline) {
         vk::Pipeline& cached =
             bind_point == vk::PipelineBindPoint::eGraphics ? graphics_pipeline : compute_pipeline;

@@ -891,31 +891,25 @@ fn hub_commands_check_the_paired_device_file_first() {
     let ctx = linux_home(dir.path());
     let pull = exec(&["hub", "pull", "--hub", "127.0.0.1:9"], &ctx);
     assert_eq!(pull.code, FAILED, "{pull:?}");
-    // Paired-device storage fails closed on Windows until its ACL work lands (#189).
-    let expected = if cfg!(windows) {
-        "not implemented on Windows"
-    } else {
-        "not paired with a hub yet"
-    };
-    assert!(pull.stderr.contains(expected), "{}", pull.stderr);
+    assert!(
+        pull.stderr.contains("not paired with a hub yet"),
+        "{}",
+        pull.stderr
+    );
     let none = dir.path().join("none").display().to_string();
     let serve = exec(&["hub", "serve", "--builds", &none], &ctx);
     assert_eq!(serve.code, FAILED);
-    let expected = if cfg!(windows) {
-        "not implemented on Windows"
-    } else {
-        "no builds folder at"
-    };
-    assert!(serve.stderr.contains(expected), "{}", serve.stderr);
+    assert!(
+        serve.stderr.contains("no builds folder at"),
+        "{}",
+        serve.stderr
+    );
     // A hub that is not there is a failure, not a hang.
-    #[cfg(not(windows))]
-    {
-        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = closed.local_addr().unwrap().to_string();
-        drop(closed);
-        let pair = exec(&["hub", "pair", "483921", "--hub", &addr], &ctx);
-        assert_eq!(pair.code, FAILED, "{pair:?}");
-    }
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = closed.local_addr().unwrap().to_string();
+    drop(closed);
+    let pair = exec(&["hub", "pair", "483921", "--hub", &addr], &ctx);
+    assert_eq!(pair.code, FAILED, "{pair:?}");
 }
 
 // ---- fleet ----

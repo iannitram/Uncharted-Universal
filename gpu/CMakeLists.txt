@@ -422,6 +422,11 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
+add_executable(settings-roundtrip-test EXCLUDE_FROM_ALL ../tests/test_settings_roundtrip.cpp
+    shim/bbport_settings.cpp)
+target_include_directories(settings-roundtrip-test PRIVATE shim)
+target_compile_options(settings-roundtrip-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
 add_executable(gfx-menu-profiles-test EXCLUDE_FROM_ALL ../tests/test_gfx_menu_profiles.cpp
     shim/bbport_settings.cpp)
 target_include_directories(gfx-menu-profiles-test PRIVATE shim)
