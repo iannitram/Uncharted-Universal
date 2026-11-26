@@ -182,16 +182,6 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
     let memory_hit = || ask(crate::memory::abi::runtime_memory_resolve);
     #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     let memory_hit = || None;
-    #[cfg(uncharted_gpu)]
-    let gpu_hit = || {
-        extern "C" {
-            fn bbgpu_resolve(scoped_nid: *const c_char) -> usize;
-        }
-        ask(bbgpu_resolve)
-    };
-    #[cfg(not(uncharted_gpu))]
-    let gpu_hit = || None;
-
     ask(sync::runtime_mutex_resolve)
         .or_else(thread_hit)
         .or_else(|| crate::content::resolve(name))
@@ -209,7 +199,6 @@ pub(super) fn resolve_chain(name: &CStr) -> Option<usize> {
         .or_else(|| ask(crate::savedata::runtime_savedata_resolve))
         .or_else(|| crate::file::resolve(name))
         .or_else(fiber_hit)
-        .or_else(gpu_hit)
 }
 
 /// The modules' report lines, in `runtime.c`'s order.
