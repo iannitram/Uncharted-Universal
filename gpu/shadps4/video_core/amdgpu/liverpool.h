@@ -329,10 +329,12 @@ private:
 /// (Liverpool::SendCommand, without waiting), which runs it once the draw recording thread is
 /// idle (Liverpool::ProcessCommands). The raising thread does not wait for the GPU command
 /// thread, so a GPU command thread waiting for that flip's signal (WaitDeferredSignals) is not
-/// waited for in turn (#112).
+/// waited for in turn (#112). While an earlier flip is still queued there (handback_pending),
+/// this one queues behind it, so frames are prepared in the order they were flipped.
 [[nodiscard]] constexpr bool PrepareEopFlipInline(bool on_gpu_command_thread,
-                                                  bool on_draw_recording_thread) noexcept {
-    return on_gpu_command_thread || on_draw_recording_thread;
+                                                  bool on_draw_recording_thread,
+                                                  bool handback_pending) noexcept {
+    return (on_gpu_command_thread || on_draw_recording_thread) && !handback_pending;
 }
 
 } // namespace AmdGpu

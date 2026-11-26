@@ -628,6 +628,8 @@ namespace {
 std::atomic<u64> eop_flips_reached{0};
 std::mutex eop_flip_mutex;
 std::condition_variable eop_flip_cv;
+// bbport (#592): EOP flips sent to the GPU command thread and not yet prepared.
+std::atomic<u32> eop_handbacks_pending{0};
 } // namespace
 
 bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
@@ -680,8 +682,9 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
     if (!is_eop) {
         // Non EOP flips can arrive from any thread so ask GPU thread to perform them
         liverpool->SendCommand([=, this]() { SubmitFlipInternal(port, index, flip_arg, is_eop); });
-    } else if (!AmdGpu::PrepareEopFlipInline(AmdGpu::Liverpool::OnProcessorThread(),
-                                             Vulkan::DrawPipe::OnStageB())) {
+    } else if (!AmdGpu::PrepareEopFlipInline(
+                   AmdGpu::Liverpool::OnProcessorThread(), Vulkan::DrawPipe::OnStageB(),
+                   eop_handbacks_pending.load(std::memory_order_acquire) != 0)) {
         // bbport: the frame is prepared on the draw scheduler, which only the GPU command thread
         // and the draw recording thread record into. On the Vulkan recording thread
         // (RecorderFences) PrepareFrame waited in SyncRecording for that thread, i.e. for itself:
@@ -689,9 +692,12 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
         // raycaster landing, SignalFlip) it ended and submitted the command buffer while the GPU
         // command thread was recording into it: a fault in the NVIDIA driver (#592). The GPU
         // command thread makes it, once the draw recording thread is idle; this thread does not
-        // wait for it (#112).
+        // wait for it (#112). A flip raised on stage A or B while one is still queued there goes
+        // behind it: a deferred flip's frame is not prepared after the next flip's.
+        eop_handbacks_pending.fetch_add(1, std::memory_order_acq_rel);
         liverpool->SendCommand([=, this]() {
             SubmitFlipInternal(port, index, flip_arg, is_eop);
+            eop_handbacks_pending.fetch_sub(1, std::memory_order_acq_rel);
             eop_flip_reached();
         });
     } else {

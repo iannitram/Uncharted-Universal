@@ -136,12 +136,19 @@ struct Result {
     unsigned overlaps = 0;
     unsigned submits = 0;
     unsigned submits_off_gpu_side = 0;
+    bool in_order = true; ///< frames prepared in the order they were flipped
 };
 
+/// alternate: every odd flip is not deferred (the landing ended): stage B waits for the deferred
+/// signals and raises it itself. order_guard: pass the queued handbacks to the decision.
 Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
-                std::chrono::milliseconds wait_timeout) {
+                std::chrono::milliseconds wait_timeout, bool alternate = false,
+                bool order_guard = true) {
     FakeScheduler scheduler;
     Worker landing;
+    std::atomic<unsigned> handbacks_pending{0};
+    std::atomic<int> last_prepared{-1};
+    std::atomic<bool> in_order{true};
 
     // Stage A's command queue (Liverpool::SendCommand / ProcessCommands).
     std::mutex command_mutex;
@@ -159,7 +166,7 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
     // Stage B's packet ring (DrawPipe). A packet is a draw or a flip.
     std::mutex ring_mutex;
     std::condition_variable ring_cv;
-    std::deque<bool> ring; // true: flip
+    std::deque<int> ring; // -1: draw, else the frame of a flip
     bool ring_stop = false;
     bool stage_b_busy = false;
 
@@ -169,13 +176,23 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
     std::atomic<bool> gave_up{false};
 
     // VideoOutDriver::SubmitFlip for an EOP flip, from the interrupt handler.
-    const auto submit_flip = [&] {
-        const auto prepare = [&] { scheduler.Flush(); };
+    const auto submit_flip = [&](int frame) {
+        const auto prepare = [&, frame] {
+            scheduler.Flush();
+            if (last_prepared.exchange(frame) != frame - 1) {
+                in_order.store(false);
+            }
+        };
         if (route == Route::Handback) {
-            if (AmdGpu::PrepareEopFlipInline(on_stage_a, on_stage_b)) {
+            if (AmdGpu::PrepareEopFlipInline(on_stage_a, on_stage_b,
+                                             order_guard && handbacks_pending.load() != 0)) {
                 prepare();
             } else {
-                send_command(prepare);
+                handbacks_pending.fetch_add(1);
+                send_command([&, prepare] {
+                    prepare();
+                    handbacks_pending.fetch_sub(1);
+                });
             }
             return;
         }
@@ -207,15 +224,26 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
             if (ring.empty()) {
                 return;
             }
-            const bool flip = ring.front();
+            const int flip = ring.front();
             ring.pop_front();
             stage_b_busy = true;
             lk.unlock();
-            if (flip) {
+            if (flip >= 0 && alternate && flip % 2 == 1) {
+                // SignalFlip with no landing pending: WaitDeferredSignals, then raise it here.
+                for (auto until = std::chrono::steady_clock::now() + wait_timeout;
+                     signals_done.load() < signals_issued.load();) {
+                    if (std::chrono::steady_clock::now() >= until) {
+                        gave_up.store(true);
+                        break;
+                    }
+                    std::this_thread::yield();
+                }
+                submit_flip(flip);
+            } else if (flip >= 0) {
                 // SignalFlip with a landing pending: the interrupt goes to the landing thread.
                 signals_issued.fetch_add(1);
-                landing.Post([&] {
-                    submit_flip();
+                landing.Post([&, flip] {
+                    submit_flip(flip);
                     signals_done.fetch_add(1);
                 });
             } else {
@@ -254,7 +282,7 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
             commands_run.fetch_add(1);
         }
     };
-    const auto hand_to_stage_b = [&](bool flip) {
+    const auto hand_to_stage_b = [&](int flip) {
         {
             std::scoped_lock lk{ring_mutex};
             ring.push_back(flip);
@@ -265,15 +293,20 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
     Result result;
     for (unsigned frame = 0; frame < frames && !result.deadlocked; ++frame) {
         for (unsigned draw = 0; draw < draws_per_frame; ++draw) {
-            hand_to_stage_b(false);
-            if (draw % 4 == 0) {
+            hand_to_stage_b(-1);
+            if (draw % 4 == 0 && !alternate) {
                 process_commands(); // between packets, as the Process loop does
             }
         }
-        hand_to_stage_b(true);
+        hand_to_stage_b(static_cast<int>(frame));
         // Stage B goes on recording the next frame while the flip is on the landing thread.
         for (unsigned draw = 0; draw < draws_per_frame / 2; ++draw) {
-            hand_to_stage_b(false);
+            hand_to_stage_b(-1);
+        }
+        if (alternate && frame % 2 == 0) {
+            // Stage A is ahead: it hands over the next frame, with its flip, before it drains.
+            ++result.frames_done;
+            continue;
         }
         // The end of the submission: drain stage B and wait for the deferred signals. This
         // thread does not run its commands while it waits (it is inside the wait).
@@ -308,6 +341,7 @@ Result RunModel(Route route, unsigned frames, unsigned draws_per_frame,
     result.overlaps = scheduler.overlaps.load();
     result.submits = scheduler.submits.load();
     result.submits_off_gpu_side = scheduler.submits_off_gpu_side.load();
+    result.in_order = in_order.load() && last_prepared.load() == static_cast<int>(frames) - 1;
     return result;
 }
 
@@ -326,11 +360,15 @@ int main() {
     // 1. Only the GPU command thread and the draw recording thread prepare an EOP flip's frame
     // where the interrupt was raised; the landing, Vulkan recording and EOP flip worker threads
     // (neither) send it to the GPU command thread.
-    static_assert(AmdGpu::PrepareEopFlipInline(true, false));
-    static_assert(AmdGpu::PrepareEopFlipInline(false, true));
-    static_assert(!AmdGpu::PrepareEopFlipInline(false, false));
-    for (int bits = 0; bits < 4; ++bits) {
-        assert(AmdGpu::PrepareEopFlipInline(bits & 1, bits & 2) == (bits != 0));
+    // While a handed-back flip is still queued, every flip queues behind it.
+    static_assert(AmdGpu::PrepareEopFlipInline(true, false, false));
+    static_assert(AmdGpu::PrepareEopFlipInline(false, true, false));
+    static_assert(!AmdGpu::PrepareEopFlipInline(false, false, false));
+    static_assert(!AmdGpu::PrepareEopFlipInline(true, false, true));
+    static_assert(!AmdGpu::PrepareEopFlipInline(false, true, true));
+    for (int bits = 0; bits < 8; ++bits) {
+        assert(AmdGpu::PrepareEopFlipInline(bits & 1, bits & 2, bits & 4) ==
+               ((bits & 3) != 0 && (bits & 4) == 0));
     }
 
     // 2. Deferred flips: every frame is prepared on stage A, never while stage B records, and
@@ -345,6 +383,19 @@ int main() {
     assert(handback.submits == 200);
     assert(handback.overlaps == 0);
     assert(handback.submits_off_gpu_side == 0);
+    assert(handback.in_order);
+
+    // 4. The landing ends between two flips: the second is raised on stage B while the first is
+    // still queued for stage A. It queues behind it, so the frames are prepared in flip order;
+    // without the queued handbacks in the decision the second frame is prepared first.
+    const Result mixed = RunModel(Route::Handback, 200, 16, 2000ms, true);
+    const Result unguarded = RunModel(Route::Handback, 20, 16, 2000ms, true, false);
+    std::printf("flip-handback-test: landing ends: %u submits, %u overlaps, in order %d "
+                "(unguarded: in order %d, expected 0)\n",
+                mixed.submits, mixed.overlaps, mixed.in_order, unguarded.in_order);
+    assert(!mixed.deadlocked && mixed.submits == 200 && mixed.overlaps == 0);
+    assert(mixed.submits_off_gpu_side == 0 && mixed.in_order);
+    assert(!unguarded.deadlocked && !unguarded.in_order);
 
     // 3. The deadlock check sees the #112 shape: a handler that waits for stage A while stage A
     // waits for the handler's signal.
