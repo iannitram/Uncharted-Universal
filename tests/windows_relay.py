@@ -67,6 +67,15 @@ def test_package(archive, tmp):
     run = subprocess.run(play, env=env, capture_output=True, text=True, timeout=15, check=True)
     assert "needs setup" in run.stdout and len(calls(tmp)) == 1, run
 
+    # The bundled helper is the pinned release, and the launcher's account check speaks its
+    # command line (#637: rc.2 answered `status --json` with a usage error).
+    version = subprocess.run([relay, "version", "--json"], env=env, capture_output=True,
+                             text=True, timeout=15, check=True)
+    assert json.loads(version.stdout)["data"]["version"] == lock["save-relay"]["version"].lstrip("v"), version
+    status = subprocess.run([stage / "uncharted-universal.exe", "setup", "relay", "status"], env=env,
+                            capture_output=True, text=True, timeout=15)
+    assert status.returncode == 0 and "configured: no" in status.stdout, status
+
     # Keep the tested package untouched; replace the helper in this temporary extracted copy.
     shutil.copyfile(runtime, relay)
     pull = ("pull", "conflict", 2)

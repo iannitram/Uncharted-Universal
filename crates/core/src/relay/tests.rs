@@ -14,7 +14,7 @@ fn distinguishes_offline_deferred_retry_and_nonzero_conflicts() {
     let mut push = report("deferred");
     push["command"] = "push".into();
     assert_eq!(read("push", 0, push).unwrap(), Sync::Offline);
-    // After offline progress rc.2 can upload during the next pull.
+    // After offline progress Save Relay can upload during the next pull.
     assert_eq!(
         read("pull", 0, report("pushed")).unwrap(),
         Sync::Done("uploaded saves".into())
@@ -344,4 +344,142 @@ fn desktop_relay_validates_setup_inputs_before_spawning() {
         .unwrap_err()
         .to_string()
         .contains("Nextcloud sign-in"));
+}
+
+#[test]
+fn reads_the_rc3_account_envelopes() {
+    // save-relay v1.0.0-rc.3's own replies on a fresh profile (relay/contract.rs runs the binary).
+    let fresh = br#"{"ok":true,"command":"status","data":{"account":null,"configured":false,"service":null}}"#;
+    assert_eq!(
+        decode_status(Some(0), fresh).unwrap(),
+        RelayAccountStatus::default()
+    );
+    let signed_out = br#"{"ok":true,"command":"sign-out","data":{}}"#;
+    assert!(decode_sign_out(true, Some(0), signed_out).is_ok());
+    // The positional OAuth form adds verification_url and user_code beside url and code.
+    let challenge = json!({"ok": true, "command": "setup", "data": {
+        "service": "gdrive", "url": "https://example.invalid/device", "code": "ABCD-EFGH",
+        "verification_url": "https://example.invalid/device", "user_code": "ABCD-EFGH"}});
+    let got = decode_start_oauth(
+        CloudService::GoogleDrive,
+        true,
+        Some(0),
+        challenge.to_string().as_bytes(),
+    )
+    .unwrap();
+    assert_eq!(got.verification_url, "https://example.invalid/device");
+    assert_eq!(got.user_code.as_deref(), Some("ABCD-EFGH"));
+}
+
+#[test]
+fn a_usage_reply_says_save_relay_is_too_old() {
+    // What the rc.2 binary answered to the launcher's account argv (#637).
+    let status =
+        br#"{"ok":false,"command":"status","error":{"code":"usage","message":"missing <game>"}}"#;
+    let setup = br#"{"ok":false,"command":"setup","error":{"code":"usage","message":"unknown flag '--url'"}}"#;
+    let sign_out = br#"{"ok":false,"command":"unknown","error":{"code":"usage","message":"unknown command 'sign-out'"}}"#;
+    let errors = [
+        decode_status(Some(2), status).unwrap_err(),
+        decode_sign_in_nextcloud("nathan", false, Some(2), setup).unwrap_err(),
+        decode_start_oauth(CloudService::Dropbox, false, Some(2), setup).unwrap_err(),
+        decode_sign_out(false, Some(2), sign_out).unwrap_err(),
+    ];
+    for err in errors {
+        let msg = err.to_string();
+        assert_eq!(err.code(), "saves", "{msg}");
+        assert!(msg.contains("too old for this launcher"), "{msg}");
+        assert!(!msg.contains("Starting the game failed"), "{msg}");
+        assert!(
+            !msg.contains("missing <game>") && !msg.contains("--url"),
+            "{msg}"
+        );
+    }
+    let pull = json!({"ok": false, "command": "pull", "error": {"code": "usage", "message": "x"}});
+    assert!(
+        decode("pull", Game::U2, 3, Some(2), pull.to_string().as_bytes())
+            .unwrap_err()
+            .to_string()
+            .contains("too old for this launcher")
+    );
+}
+
+#[test]
+fn account_errors_are_not_game_start_errors() {
+    let other = br#"{"ok":false,"command":"status","error":{"code":"io","message":"x"}}"#;
+    let msg = decode_status(Some(1), other).unwrap_err().to_string();
+    assert_eq!(msg, "Saves: Save Relay could not check account status.");
+    let relay = DesktopRelay {
+        program: PathBuf::from("/nonexistent/save-relay"),
+        manifests: PathBuf::from("/nonexistent"),
+    };
+    for err in [
+        relay.status().unwrap_err(),
+        relay.sign_out().unwrap_err(),
+        relay.start_oauth(CloudService::Dropbox).unwrap_err(),
+        relay
+            .sign_in_nextcloud("https://nc.invalid", "user", "pw")
+            .unwrap_err(),
+    ] {
+        assert_eq!(err.code(), "saves", "{err}");
+        assert!(
+            err.to_string()
+                .starts_with("Saves: Could not start Save Relay"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
+fn launcher_argv_forms() {
+    assert_eq!(STATUS_ARGS, ["status", "--json"]);
+    assert_eq!(SIGN_OUT_ARGS, ["sign-out", "--json"]);
+    assert_eq!(
+        nextcloud_args("https://nc.invalid", "elena"),
+        [
+            "setup",
+            "nextcloud",
+            "--url",
+            "https://nc.invalid",
+            "--user",
+            "elena",
+            "--password-stdin",
+            "--json"
+        ]
+    );
+    assert_eq!(
+        oauth_args(CloudService::GoogleDrive),
+        ["setup", "gdrive", "--json"]
+    );
+    assert_eq!(
+        oauth_args(CloudService::Dropbox),
+        ["setup", "dropbox", "--json"]
+    );
+    let args = sync_args(
+        "pull",
+        Game::U3,
+        4,
+        Path::new("m"),
+        Path::new("s"),
+        Some(Keep::Local),
+    );
+    let args: Vec<_> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        args,
+        [
+            "pull",
+            "uncharted-3",
+            "--manifest",
+            &Path::new("m").join("uncharted-3.json").to_string_lossy(),
+            "--saves-dir",
+            "s",
+            "--slot",
+            "4",
+            "--json",
+            "--resolve",
+            "keep-local"
+        ]
+    );
 }

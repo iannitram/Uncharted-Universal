@@ -66,7 +66,7 @@ Known problems
 Port by SuperMedo.
 
 Shared saves
-Save Relay v1.0.0-rc.2 ships beside the launcher with its own copy of Microsoft's Visual C++ runtime (vcruntime140.dll, see licenses\), so the Visual C++ Redistributable is not needed. Once configured, Play syncs your selected slot before starting each game and after it quits. Without setup or while offline, your saves stay available locally. Until launcher sign-in is available, use the bundled save-relay.exe setup. A console Play session shows both sides of a conflict. The launcher leaves an unanswered conflict pending.
+Save Relay v1.0.0-rc.3 ships beside the launcher with its own copy of Microsoft's Visual C++ runtime (vcruntime140.dll, see licenses\), so the Visual C++ Redistributable is not needed. Once configured, Play syncs your selected slot before starting each game and after it quits. Without setup or while offline, your saves stay available locally. Until launcher sign-in is available, use the bundled save-relay.exe setup. A console Play session shows both sides of a conflict. The launcher leaves an unanswered conflict pending.
 
 Licence and source offer
 This project is licensed under the GNU General Public License, version 2 only (GPL-2.0-only; see LICENSE). Third-party library licence texts are in licenses\. Complete corresponding source code is available at https://github.com/iannitram/Uncharted-Universal (and for any bundled GPL/LGPL components, from the upstream packages named in licenses\). bin\ holds FFmpeg's avcodec, avformat, avutil, swresample and swscale DLLs, built from the unmodified FFmpeg release source under the LGPL version 2.1 or later, without GPL, version 3 or nonfree parts. licenses\ffmpeg\ holds their licence, a notice, and where to get their source.

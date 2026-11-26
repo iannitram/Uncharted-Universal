@@ -1,15 +1,15 @@
 {
   "save-relay": {
-    "version": "v1.0.0-rc.2",
-    "source_commit": "961513cb9ef56253970ee67b5b6febe2c2f0349d",
-    "asset": "save-relay-1.0.0-rc.2-aarch64-apple-ios.zip",
-    "sha256": "f534282e51ea3fe31b5e0d8d6cc36e9bd0b343b6f499db67b9ad7f8d6df5c16c",
-    "size": 8444190,
+    "version": "v1.0.0-rc.3",
+    "source_commit": "1bb84b888f43c531afe3181b0888098979df71cb",
+    "asset": "save-relay-1.0.0-rc.3-aarch64-apple-ios.zip",
+    "sha256": "6e1e7ff7c3dc2ad81b1d882018ad73bcff3f996c46cc3ba9703b0170c792b4f6",
+    "size": 8738312,
     "library": "lib/libsave_relay.a",
-    "library_sha256": "8000c37ca14afdd3e80e70f7a82083caee1b4350f563d57e423e7f188d0f5b46",
+    "library_sha256": "80408555c7eebbd7aeaaccf0fe7cbce02ce7b0a7f6cca133bd894c6b6833330b",
     "source": "https://github.com/iannitram/save-relay",
     "license": "MIT",
-    "license_source": "https://github.com/iannitram/save-relay/blob/961513cb9ef56253970ee67b5b6febe2c2f0349d/LICENSE",
+    "license_source": "https://github.com/iannitram/save-relay/blob/1bb84b888f43c531afe3181b0888098979df71cb/LICENSE",
     "simulator_slice": "The release has no Simulator slice. The Simulator test build compiles the tag at source_commit: cargo build --release --lib --no-default-features --features ffi --target aarch64-apple-ios-sim (packaging/ios/fetch_save_relay.py --sim). Device builds always use the release asset."
   }
 }
