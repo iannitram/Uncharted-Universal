@@ -366,7 +366,7 @@ pub extern "C" fn uncharted_benchmark_crash() {
 /// The loader's names for the functions above (roadmap 3.17e: the former
 /// `src/runtime_benchmark.c`, declared for C in `src/runtime.h`). Only in the loader build, which
 /// links a `runtime_quit` (`bb-probe`'s `probe.c`, `uncharted-run`'s main).
-#[cfg(uncharted_loader)]
+#[cfg(all(uncharted_loader, target_arch = "x86_64"))]
 mod loader_glue {
     use std::ffi::{c_char, c_int};
 
