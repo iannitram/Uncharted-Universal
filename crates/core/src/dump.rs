@@ -23,6 +23,49 @@ pub struct FoundGame {
 
 /// First four bytes of a PS4 SELF container (an executable that is not a plain ELF).
 const PS4_SELF_MAGIC: [u8; 4] = [0x4f, 0x15, 0x3d, 0x1d];
+/// SELF entry flags `prepare::load_image` refuses: encrypted (0x2) and deflated (0x8).
+const SELF_ENTRY_ENCRYPTED_OR_COMPRESSED: u64 = 0x2 | 0x8;
+
+/// What the SELF entry table says about one executable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelfState {
+    /// No entry is encrypted or compressed: a fake-signed SELF that prepare loads.
+    Plain,
+    /// At least one entry is encrypted or compressed.
+    Encrypted,
+    /// The header or entry table is cut short.
+    Unreadable,
+}
+
+/// Read the rest of the SELF header (32 bytes in all; entry count at 24) and the entry table
+/// after it (32 bytes per entry, flags first), as `prepare::load_image` does. `file` is just
+/// past the 4-byte magic. Only the flags are looked at.
+fn self_state(file: &mut File) -> std::io::Result<SelfState> {
+    fn read_full(file: &mut File, buf: &mut [u8]) -> std::io::Result<bool> {
+        match file.read_exact(buf) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+    let mut header = [0u8; 28];
+    if !read_full(file, &mut header)? {
+        return Ok(SelfState::Unreadable);
+    }
+    let count = u16::from_le_bytes([header[20], header[21]]);
+    let mut entry = [0u8; 32];
+    for _ in 0..count {
+        if !read_full(file, &mut entry)? {
+            return Ok(SelfState::Unreadable);
+        }
+        let mut flags = [0u8; 8];
+        flags.copy_from_slice(&entry[..8]);
+        if u64::from_le_bytes(flags) & SELF_ENTRY_ENCRYPTED_OR_COMPRESSED != 0 {
+            return Ok(SelfState::Encrypted);
+        }
+    }
+    Ok(SelfState::Plain)
+}
 
 /// What `check` found.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +73,9 @@ pub struct DumpReport {
     /// `TITLE_ID` from `param.sfo` ("CUSA02320"), if readable.
     pub title_id: Option<String>,
     pub games: Vec<FoundGame>,
-    /// False when an executable is still an encrypted container (a `.pkg` from PSN, or an
-    /// encrypted SELF) instead of a decrypted dump.
+    /// False when an executable is still an encrypted container (a `.pkg` from PSN, or a
+    /// SELF with an encrypted or compressed entry) instead of a decrypted dump. A SELF whose
+    /// entries are all plain (fake-signed) counts as decrypted: `prepare::load_image` loads it.
     pub decrypted: bool,
     /// Plain sentences for the first-run page, in order; empty when all is well.
     pub problems: Vec<String>,
@@ -77,13 +121,26 @@ pub fn check(folder: &Path) -> Result<DumpReport> {
             continue;
         }
         let mut header = [0; 4];
-        let count = File::open(&path)?.read(&mut header)?;
+        let mut file = File::open(&path)?;
+        let count = file.read(&mut header)?;
         if count == 4 && header == PS4_SELF_MAGIC {
-            decrypted = false;
-            problems.push(format!(
-                "{} is still an encrypted PS4 SELF; use a decrypted ELF dump.",
-                game.executable()
-            ));
+            match self_state(&mut file)? {
+                SelfState::Plain => {}
+                SelfState::Encrypted => {
+                    decrypted = false;
+                    problems.push(format!(
+                        "{} is still an encrypted PS4 SELF; use a decrypted dump.",
+                        game.executable()
+                    ));
+                }
+                SelfState::Unreadable => {
+                    decrypted = false;
+                    problems.push(format!(
+                        "{} is a PS4 SELF whose header is cut short; dump it again.",
+                        game.executable()
+                    ));
+                }
+            }
         } else if count != 4 || &header != b"\x7fELF" {
             decrypted = false;
             problems.push(format!("{} is not a decrypted ELF.", game.executable()));
@@ -193,6 +250,64 @@ mod tests {
         dir
     }
 
+    /// A SELF header (magic, entry count at 24) and one 32-byte entry per flag value.
+    fn self_with_flags(flags: &[u64]) -> Vec<u8> {
+        let mut data = vec![0u8; 32];
+        data[..4].copy_from_slice(&PS4_SELF_MAGIC);
+        data[24..26].copy_from_slice(&(flags.len() as u16).to_le_bytes());
+        for flag in flags {
+            let mut entry = [0u8; 32];
+            entry[..8].copy_from_slice(&flag.to_le_bytes());
+            data.extend_from_slice(&entry);
+        }
+        data
+    }
+
+    #[test]
+    fn a_self_with_no_encrypted_or_compressed_entry_counts_as_decrypted() {
+        let dir = good("plain-self", "01.00");
+        // Ten entries: signed (0x4) segment entries (0x800) and plain ones, none encrypted
+        // (0x2) or deflated (0x8), as a fake-signed dump carries.
+        let flags = [0x804, 0x1, 0x804, 0x1, 0x804, 0x1, 0x804, 0x1, 0x4, 0x0];
+        for game in Game::ALL {
+            fs::write(dir.0.join(game.executable()), self_with_flags(&flags)).unwrap();
+        }
+        let report = check(&dir.0).unwrap();
+        assert!(report.decrypted);
+        assert!(report.problems.is_empty(), "{:?}", report.problems);
+    }
+
+    #[test]
+    fn a_compressed_or_cut_short_self_is_a_problem() {
+        let compressed = good("compressed-self", "01.00");
+        fs::write(compressed.0.join("eboot.bin"), self_with_flags(&[0x808])).unwrap();
+        let report = check(&compressed.0).unwrap();
+        assert!(!report.decrypted);
+        assert!(report
+            .problems
+            .iter()
+            .any(|p| p == "eboot.bin is still an encrypted PS4 SELF; use a decrypted dump."));
+
+        let short = good("short-self", "01.00");
+        let mut data = self_with_flags(&[0x800, 0x800]);
+        data.truncate(32 + 40);
+        fs::write(short.0.join("eboot.bin"), data).unwrap();
+        let report = check(&short.0).unwrap();
+        assert!(!report.decrypted);
+        assert!(report
+            .problems
+            .iter()
+            .any(|p| p == "eboot.bin is a PS4 SELF whose header is cut short; dump it again."));
+
+        let header_only = good("header-only-self", "01.00");
+        fs::write(
+            header_only.0.join("eboot.bin"),
+            [&PS4_SELF_MAGIC[..], b"short"].concat(),
+        )
+        .unwrap();
+        assert!(!check(&header_only.0).unwrap().decrypted);
+    }
+
     #[test]
     fn accepts_a_complete_decrypted_dump() {
         let dir = good("good", "01.00");
@@ -208,14 +323,15 @@ mod tests {
         let self_dir = good("self", "01.00");
         fs::write(
             self_dir.0.join("eboot.bin"),
-            [&PS4_SELF_MAGIC[..], b"encrypted"].concat(),
+            self_with_flags(&[0x800, 0x802]),
         )
         .unwrap();
-        assert!(check(&self_dir.0)
-            .unwrap()
+        let report = check(&self_dir.0).unwrap();
+        assert!(!report.decrypted);
+        assert!(report
             .problems
             .iter()
-            .any(|p| p.contains("encrypted PS4 SELF")));
+            .any(|p| p == "eboot.bin is still an encrypted PS4 SELF; use a decrypted dump."));
 
         let version_dir = good("version", "01.02");
         assert!(check(&version_dir.0)
