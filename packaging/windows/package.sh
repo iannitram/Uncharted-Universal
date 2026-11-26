@@ -27,22 +27,60 @@ for face in "${faces[@]}"; do cp "$faces_dir/$face.exe" "$dest/"; done
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do
     llvm-strip --strip-debug -o "$dest/bin/$exe" "out/$exe"
 done
-# Every DLL the executables load from the CLANG64 tree (SDL3, Vulkan loader, ...).
-# FFmpeg (and x264/x265) are omitted by default (#299) because MSYS2 builds FFmpeg with
-# --enable-version3 (GPL-3.0), which cannot ship with a GPL-2.0-only project; set
-# BB_BUNDLE_FFMPEG=1 only with an LGPL or GPL-2.0-compatible build (checked by licence_check.py).
-ldd "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" |
-    awk '/\/clang64\/bin\// {print $3}' | sort -u > out/bundled-dlls.txt
-if [[ ${BB_BUNDLE_FFMPEG:-0} != 1 ]]; then
-    grep -viE '/(avcodec|avformat|avutil|swscale|swresample|postproc|libx264|libx265)(-[0-9]+)?\.dll$' \
-        out/bundled-dlls.txt > out/bundled-dlls.filtered.txt || true
-    mv out/bundled-dlls.filtered.txt out/bundled-dlls.txt
-fi
+# Every DLL the executables import, and the DLLs those import, read from their import tables
+# (packaging/windows/dll_imports.py): FFmpeg from the LGPL-2.1 build of build_ffmpeg.sh (owner
+# ruling 2026-11-26, #625), everything else (SDL3, libc++, ...) from the CLANG64 tree. MSYS2's
+# own FFmpeg is GPL and version 3 (#299) and is never shipped: licence_check.py ffmpeg refuses
+# any FFmpeg DLL built with --enable-gpl, --enable-version3 or --enable-nonfree.
+ffmpeg=out/ffmpeg-lgpl
+[[ -f $ffmpeg/SOURCE.txt && -f $ffmpeg/COPYING.LGPLv2.1 ]] ||
+    { echo 'Build the LGPL-2.1 FFmpeg DLLs first: bash packaging/windows/build_ffmpeg.sh' >&2; exit 1; }
+ffmpeg_bin=$(cygpath -am "$ffmpeg/bin")
+python3 -I packaging/windows/dll_imports.py closure "$ffmpeg_bin" "$(cygpath -am /clang64/bin)" -- \
+    "$dest/bin/bb-probe.exe" "$dest/bin/bb-gpu-capabilities.exe" > out/bundled-dlls.txt ||
+    { echo 'An imported DLL was found in neither the FFmpeg build nor CLANG64 (see above).' >&2; exit 1; }
+mapfile -t ffmpeg_dlls < <(python3 -I -c "
+import sys; sys.path.insert(0, 'packaging')
+import licence_check
+for line in open('out/bundled-dlls.txt'):
+    if licence_check.is_ffmpeg_library(line.strip().rsplit('/', 1)[-1]): print(line.strip())" | tr -d '\r')
+[[ ${#ffmpeg_dlls[@]} -gt 0 ]] || { echo 'bb-probe.exe imports no FFmpeg DLL: check out/bundled-dlls.txt' >&2; exit 1; }
+for dll in "${ffmpeg_dlls[@]}"; do
+    [[ $dll == "$ffmpeg_bin"/* ]] || { echo "FFmpeg DLL not from the LGPL build: $dll" >&2; exit 1; }
+done
+python3 -I packaging/licence_check.py ffmpeg "${ffmpeg_dlls[@]}" ||
+    { echo 'Refusing to package: FFmpeg must be an LGPL-2.1 build (no GPL, version 3 or nonfree parts).' >&2; exit 1; }
 while read -r dll; do cp -u "$dll" "$dest/bin/"; done < out/bundled-dlls.txt
 python3 packaging/windows/bundle_relay.py "$dest" out/component-cache
 cp LICENSE "$dest/"
 cp packaging/windows/README-Uncharted.txt "$dest/README.txt"
-cp packaging/windows/licenses/*.txt "$dest/licenses/" 2>/dev/null || true
+# Texts for code built into the executables. The DLLs' texts come from licence_check.py below
+# (pacman, else this folder). Not copied: the GPL-3.0 MSYS2 FFmpeg and the libraries only it
+# linked (x264, x265, lame, ...), none of which ships since #625.
+msys2_ffmpeg_only=' ffmpeg gmp gnutls lame libidn2 libssh libtheora libvorbis libvpx libx264 nettle opencore-amr p11-kit rtmpdump x265 xvidcore '
+for f in packaging/windows/licenses/*-LICENSE.txt; do
+    name=${f##*/}; name=${name%-LICENSE.txt}
+    [[ $msys2_ffmpeg_only == *" $name "* ]] || cp "$f" "$dest/licenses/"
+done
+# FFmpeg (LGPL-2.1): the licence, the notice and where its source is.
+mkdir -p "$dest/licenses/ffmpeg"
+cp "$ffmpeg/COPYING.LGPLv2.1" "$dest/licenses/ffmpeg/COPYING.LGPLv2.1"
+{
+    echo 'This package includes FFmpeg (https://ffmpeg.org), licensed under the GNU Lesser General'
+    echo 'Public License version 2.1 or later (COPYING.LGPLv2.1 in this folder). FFmpeg is a trademark'
+    echo 'of Fabrice Bellard. These DLLs are built from the unmodified official release source,'
+    echo 'without --enable-gpl, --enable-version3 or --enable-nonfree and without external libraries:'
+    printf '  %s\n' "${ffmpeg_dlls[@]##*/}"
+    echo
+    sed 's/^/  /' "$ffmpeg/SOURCE.txt"
+    echo
+    echo 'Source offer: the complete corresponding source of this FFmpeg build is the tarball above,'
+    echo 'also kept with this project'"'"'s build script (packaging/windows/build_ffmpeg.sh, which holds'
+    echo 'the exact configure line) at https://github.com/iannitram/Uncharted-Universal. For three years'
+    echo 'from the date you received this package you may also ask for a copy of that source through'
+    echo 'https://github.com/iannitram/Uncharted-Universal/issues. You may replace these DLLs with your'
+    echo 'own build of the same FFmpeg version (same DLL names).'
+} > "$dest/licenses/ffmpeg/FFmpeg-NOTICE.txt"
 # The crates statically linked into the Rust faces.
 python3 packaging/rust_licences.py "$dest/licenses/rust-crates.txt" --target "$rust_host"
 # FSR 4 (the v07 INT8 model) when its assets are in fsr4_shaders/ (tools/fetch_fsr4_assets.sh).
@@ -69,8 +107,10 @@ for license in gpu/third_party/wepoll/LICENSE:wepoll gpu/third_party/httplib/LIC
     if [[ -f ${license%%:*} ]]; then cp "${license%%:*}" "$dest/licenses/${license##*:}-LICENSE.txt"; fi
 done
 # Every bundled DLL: its MSYS2 package's licence files go to licenses/<package>/. A DLL with no
-# owning package or no licence files fails the package step with its name (#302).
-mapfile -t dlls < out/bundled-dlls.txt
+# owning package or no licence files fails the package step with its name (#302). FFmpeg is not an
+# MSYS2 package here: its texts are in licenses/ffmpeg/ (above). pacman wants /clang64/... paths.
+clang64=$(cygpath -am /clang64)
+mapfile -t dlls < <(grep -vF "$ffmpeg_bin/" out/bundled-dlls.txt | sed "s#^$clang64/#/clang64/#")
 # Libraries linked statically into the binaries (gpu/CMakeLists.txt) ship no DLL; their archives
 # name the packages whose licences must ship too.
 for archive in libprotobuf libabsl_base libssl libminiupnpc libz; do dlls+=("/clang64/lib/$archive.a"); done
@@ -79,6 +119,14 @@ for archive in libprotobuf libabsl_base libssl libminiupnpc libz; do dlls+=("/cl
 MSYS2_LICENSES=$(cygpath -m /clang64/share/licenses) MSYS2_ARG_CONV_EXCL='*' \
     python3 packaging/licence_check.py windows "$dest/licenses" "${dlls[@]}" ||
     { echo 'A bundled library has no licence text (see above).' >&2; exit 1; }
+# Every non-system DLL each shipped .exe and .dll imports must be in its own folder of the zip
+# (#625: bb-probe.exe without FFmpeg exited 0xC0000135). save-relay.exe imports VCRUNTIME140.dll,
+# which a clean Windows lacks: the app-local copy comes from Visual Studio's Redist folder
+# (Microsoft's Distributable Code), or BB_VC_CRT names that Microsoft.VC14x.CRT folder.
+crt=${BB_VC_CRT:-$(ls -d /c/Program\ Files*/Microsoft\ Visual\ Studio/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT \
+    2>/dev/null | sort -V | tail -n 1)}
+python3 -I packaging/windows/dll_imports.py check "$(cygpath -m "$dest")" ${crt:+--crt "$(cygpath -m "$crt")"} ||
+    { echo 'Refusing to package: a shipped program imports a DLL the zip does not have (see above).' >&2; exit 1; }
 mkdir -p dist
 rm -f dist/uncharted-windows.zip
 # Not Compress-Archive, which writes backslashes that Linux tools keep in the file names (#246).

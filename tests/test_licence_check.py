@@ -105,6 +105,25 @@ class LookupTest(unittest.TestCase):
             self.assertEqual(licence_check.check_ffmpeg_compatibility(good), [])
 
 
+class FfmpegBuildTest(unittest.TestCase):
+    """check_ffmpeg_build: the configure line and licence string inside an FFmpeg DLL (#625)."""
+
+    def test_lgpl21_passes(self):
+        data = b'\0--prefix=/x --enable-shared --disable-autodetect\0libavcodec license: LGPL version 2.1 or later\0'
+        self.assertEqual(licence_check.check_ffmpeg_build('avcodec-63.dll', data), [])
+
+    def test_gpl_version3_and_nonfree_refused(self):
+        for switch in (b'--enable-gpl', b'--enable-version3', b'--enable-nonfree'):
+            data = b'--prefix=/clang64 ' + switch + b'\0LGPL version 2.1 or later\0'
+            problems = licence_check.check_ffmpeg_build('avutil-61.dll', data)
+            self.assertEqual(len(problems), 1)
+            self.assertIn(switch.decode(), problems[0])
+
+    def test_no_licence_string_refused(self):
+        problems = licence_check.check_ffmpeg_build('swscale-10.dll', b'GPL version 2 or later')
+        self.assertIn('swscale-10.dll', problems[0])
+
+
 class AppleTreeTest(unittest.TestCase):
     """check_apple_tree: the tree vendored for the Apple build (ADR 0006, #396)."""
 

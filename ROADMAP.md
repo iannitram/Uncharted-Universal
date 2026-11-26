@@ -169,7 +169,8 @@ provenance from merely shipping a license text; [#428's TSC brief](docs/work-bri
 splits the guest clock contract, Rust instruction rewriting, and coordinated
 guest/GPU timestamp wiring. Both parents closed on 2026-11-21: #299 by PR #474
 (the GPL-3.0 FFmpeg DLLs are left out by default and the source offer is
-documented) and #428 by PR #476 (`TSC_SCALE` in the guest kernel TSC, with RDTSC
+documented; since the owner ruling of 2026-11-26 the Windows zip ships an
+LGPL-2.1 FFmpeg build instead, #625) and #428 by PR #476 (`TSC_SCALE` in the guest kernel TSC, with RDTSC
 window tests). No compatibility, timing or gameplay result is claimed from these
 source audits. The [#431 save-layout brief](docs/work-briefs/431-save-layout.md)
 also records why a shared save-folder option cannot be added as a core-only helper:
