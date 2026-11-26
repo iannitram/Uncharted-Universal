@@ -992,6 +992,10 @@ export component AppWindow inherits Window {
 
                 list := FocusList {
                     vertical-stretch: 1;
+                    // A Flickable takes the smallest max-width of its layouts. The hidden page's
+                    // layout would otherwise cap the shown one: before Settings is first drawn its
+                    // only item is the Tune button, and the Saves rows shrank to that width.
+                    max-width: root.width;
                     content-height: root.page == 1 ? saves-list.preferred-height : settings-list.preferred-height;
 
                     // Saves: one row per slot, then one per backup, newest first.
