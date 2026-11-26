@@ -646,6 +646,7 @@ fn child(program: &str) -> ChildRunner {
     ChildRunner {
         program: PathBuf::from(program),
         game_dirs: [(Game::U2, PathBuf::from("dump-u2"))].into(),
+        prepared_dirs: BTreeMap::new(),
         paths: Paths::in_data_dir(Path::new("data")),
         timeout: "0".to_owned(),
         extra_args: vec!["--extra".into()],
@@ -680,6 +681,30 @@ fn child_runner_command_line_is_run_py_s() {
             "--extra".into()
         ]
     );
+}
+
+#[test]
+fn child_runner_reads_a_prepared_install_in_place_of_run_py_s_out_folder() {
+    // The desktop CLI prepares each game into its own install folder, not `<data>/out/<stem>`
+    // (#666): the boot image and the content profile come from there.
+    let mut runner = child("uncharted-run");
+    let install = Path::new("installs").join("u2");
+    runner.prepared_dirs.insert(Game::U2, install.clone());
+    assert_eq!(runner.prepared_dir(Game::U2), install);
+    assert_eq!(
+        runner.prepared_dir(Game::U3),
+        Path::new("data").join("out").join("big3")
+    );
+    let args = runner.args(Game::U2, None).unwrap();
+    assert_eq!(args[0], install.join("boot-linked.bin").into_os_string());
+    assert_eq!(
+        args[1..3],
+        [
+            OsString::from("--content-profile"),
+            install.join("content.bin").into()
+        ]
+    );
+    assert_eq!(args[3..5], [OsString::from("--app0"), "dump-u2".into()]);
 }
 
 #[test]
@@ -845,6 +870,7 @@ fn child_runner_passes_trophies_dir_when_cache_exists() {
     let runner = ChildRunner {
         program: PathBuf::from("uncharted-run"),
         game_dirs: BTreeMap::from([(Game::U1, fx._temp.0.join("dump"))]),
+        prepared_dirs: BTreeMap::new(),
         paths: fx.paths.clone(),
         timeout: "0".into(),
         extra_args: Vec::new(),
