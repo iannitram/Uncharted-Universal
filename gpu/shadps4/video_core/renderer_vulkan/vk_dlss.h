@@ -63,6 +63,13 @@ public:
 
     /// DLSS quality mode for an output/render size ratio (0 DLAA .. 4 Ultra Performance).
     static int QualityForScale(float scale);
+    /// The mode for a render and an output size (the smaller axis ratio counts, #155).
+    static int QualityForSizes(u32 input_width, u32 input_height, u32 output_width,
+                               u32 output_height);
+    /// Null when DLSS can take a feature of these sizes (render never larger than the output),
+    /// else the reason. The driver faults on the others (#155).
+    static const char* FeatureSizeProblem(u32 input_width, u32 input_height, u32 output_width,
+                                          u32 output_height);
     [[nodiscard]] bool HasFeature(const FeatureDesc& desc) const;
     /// Records the feature creation. The GPU must be done with the previous one.
     bool CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc);

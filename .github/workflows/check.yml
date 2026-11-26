@@ -161,8 +161,13 @@ jobs:
         run: rustup target add x86_64-pc-windows-gnullvm
       - name: Build GPU library and run portable C harnesses
         run: BB_JOBS=2 bash build.sh --test
-      - name: Run the runtime's Windows shim tests (os, 3.15)
-        run: 'cargo test -p uncharted_runtime --lib os::'
+      - name: Test the whole Rust workspace on the CLANG64 target (6.01, x86_64-pc-windows-gnullvm)
+        # The release zip is built for this target (build.yml), so the workspace is tested on it too;
+        # this covers the runtime's Windows shims (os, 3.15) and every other crate. Each step is a
+        # new shell: msys2-env.sh puts CLANG64's linker and runtime DLLs on PATH for this target.
+        run: |
+          source ./msys2-env.sh
+          cargo test --workspace --target x86_64-pc-windows-gnullvm
 
   android:
     # The runtime cross-builds for Android (SPEC.md M6, ROADMAP 7.02). A static library needs no

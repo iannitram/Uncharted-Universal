@@ -33,6 +33,9 @@ void Run(u64 seq, std::function<void()> fn);
 /// in order with the functions passed to Run. For signals whose handlers record Vulkan commands
 /// (the flip interrupt: an EOP flip prepares the frame and waits for the Vulkan recording thread)
 /// when the caller is the recording thread or a copy thread, which must not wait for themselves.
+/// `fn` must not record into or submit the draw scheduler itself: the GPU command thread may be
+/// recording into it meanwhile. The EOP flip handler sends the frame to the GPU command thread
+/// (AmdGpu::PrepareEopFlipInline, #592).
 void Post(u64 seq, std::function<void()> fn);
 
 /// True once the buffer cache is going down: the landing thread no longer lands anything, the

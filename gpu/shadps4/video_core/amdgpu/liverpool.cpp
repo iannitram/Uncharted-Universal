@@ -512,6 +512,9 @@ void SignalFlip(Vulkan::Rasterizer& rasterizer, const u8*) {
         // On the landing thread, never inline on the recording or a copy thread: an EOP flip's
         // interrupt handler prepares the frame and waits for the recording thread
         // (Scheduler::SyncRecording), which would wait for itself (Uncharted 1, cutscenes).
+        // The landing thread only raises the interrupt: the handler hands the frame back to the
+        // GPU command thread (VideoOutDriver::SubmitFlip, PrepareEopFlipInline), which must not
+        // be recording into the draw scheduler while it is ended and submitted (#592).
         rasterizer.SignalAfterHostCopies(
             [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxFlip); }, landing_seq,
             true);

@@ -163,7 +163,7 @@ static ABI void guest_exit(void) { puts("Runtime: process finalizer callback rea
  * Without them it stopped at the first one with an illegal instruction (0xc000001d in libc.prx
  * while module 0 initialized), except LZCNT, which older Intel CPUs run as BSR (other results).
  * Exit code 24 with a message instead; BB_SKIP_CPU_CHECK=1 starts anyway. BMI1, LZCNT and MOVBE
- * are rewritten before the game starts (cpu_patch.c) unless BB_CPU_PATCH=0. */
+ * are rewritten before the game starts (crates/runtime/src/cpu_patch.rs) unless BB_CPU_PATCH=0. */
 static void check_cpu(void) {
     if (getenv("BB_SKIP_CPU_CHECK")) return;
     unsigned a=0, b=0, c=0, d=0, basic=0, leaf7=0, extended=0;
@@ -405,7 +405,7 @@ static int emulate_movbe(CONTEXT *c) {
 static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
     const EXCEPTION_RECORD *record=info->ExceptionRecord;
     DWORD code=record->ExceptionCode;
-    /* Instructions this CPU lacks (cpu_patch.c): a rewritten breakpoint (Rip at the int3) or one
+    /* Instructions this CPU lacks (crates/runtime/src/cpu_patch.rs): a rewritten breakpoint (Rip at the int3) or one
      * the scan missed continue in a thunk. */
     if (code==EXCEPTION_BREAKPOINT || code==EXCEPTION_ILLEGAL_INSTRUCTION) {
         uint64_t rip=info->ContextRecord->Rip;
@@ -453,7 +453,7 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
 }
 static LONG WINAPI unhandled_fault(EXCEPTION_POINTERS *info) { return fatal_exception(info); }
 /* Guest code reads its TCB with `mov rax, gs:[0]` (link_*.py rewrote fs:[0]); on Windows
- * the displacement becomes the TEB TLS slot that holds the guest TCB (runtime_thread.c). */
+ * the displacement becomes the TEB TLS slot that holds the guest TCB (crates/runtime/src/thread.rs). */
 uint32_t runtime_thread_tcb_offset(void);
 static uint64_t patch_tcb_loads(const Segment *segments, uint64_t count) {
     static const unsigned char load[]={0x65,0x48,0x8b,0x04,0x25,0,0,0,0};
@@ -470,7 +470,7 @@ static uint64_t patch_tcb_loads(const Segment *segments, uint64_t count) {
 #endif
 #ifndef _WIN32
 static void fault(int sig, siginfo_t *info, void *context) {
-    /* Instructions this CPU lacks (cpu_patch.c): a rewritten breakpoint (rip after the int3) or
+    /* Instructions this CPU lacks (crates/runtime/src/cpu_patch.rs): a rewritten breakpoint (rip after the int3) or
      * one the scan missed continue in a thunk. */
     if (sig == SIGTRAP || sig == SIGILL) {
         greg_t *rip = &((ucontext_t *)context)->uc_mcontext.gregs[REG_RIP];
@@ -1910,7 +1910,7 @@ int main(int argc, char **argv) {
     }
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
-    /* Last code patch: Windows exception frames and the red zone of leaf functions (red_zone.c). */
+    /* Last code patch: Windows exception frames and the red zone of leaf functions (crates/runtime/src/red_zone.rs). */
     {
         RedZoneSegment *loaded=calloc(ns ? ns : 1,sizeof(*loaded));
         if (!loaded) fail("allocation failed");

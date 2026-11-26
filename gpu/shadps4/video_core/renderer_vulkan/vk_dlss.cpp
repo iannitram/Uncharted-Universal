@@ -10,6 +10,7 @@
 #include <optional>
 #include <string_view>
 
+#include "bbport_dlss_policy.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 
 #ifdef _WIN32
@@ -41,13 +42,26 @@ const char* Dlss::MissingFilesText() {
 }
 
 int Dlss::QualityForScale(float scale) {
-    // DLAA only for equal sizes: any real upscale needs at least the Quality mode.
-    return scale >= 2.9f ? 4 : scale >= 1.95f ? 3 : scale >= 1.65f ? 2 : scale > 1.01f ? 1 : 0;
+    return BbDlssPolicy::QualityForScale(scale);
+}
+
+int Dlss::QualityForSizes(u32 input_width, u32 input_height, u32 output_width, u32 output_height) {
+    return BbDlssPolicy::QualityForSizes(input_width, input_height, output_width, output_height);
+}
+
+const char* Dlss::FeatureSizeProblem(u32 input_width, u32 input_height, u32 output_width,
+                                     u32 output_height) {
+    return BbDlssPolicy::FeatureSizeProblem(input_width, input_height, output_width, output_height);
 }
 
 #ifdef BB_DLSS_BRIDGE
 
 namespace {
+/// A resource the driver may be handed: real image and view, sizes that are not zero.
+bool UsableResource(const Dlss::Resource& r) {
+    return r.image && r.view && r.width && r.height;
+}
+
 #ifdef _WIN32
 constexpr wchar_t BridgeName[] = L"bbport_dlss.dll";
 constexpr wchar_t NgxName[] = L"nvngx_dlss.dll";
@@ -302,6 +316,14 @@ bool Dlss::CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc) {
         return false;
     }
     impl->feature.reset();
+    if (const char* problem = FeatureSizeProblem(desc.input_width, desc.input_height,
+                                                 desc.output_width, desc.output_height)) {
+        // The NVIDIA driver faults on sizes it cannot take (#155): refuse, the caller falls
+        // over to FSR 3.1.
+        std::printf("DLSS: not creating a %ux%u -> %ux%u feature (%s)\n", desc.input_width,
+                    desc.input_height, desc.output_width, desc.output_height, problem);
+        return false;
+    }
     // BB_DLSS_PRESET: the DLSS model, as a letter (J, K, L, M) or NVIDIA's number; unset or 0 is
     // the driver's default (K, the transformer model, for DLAA).
     static const u32 preset = [] {
@@ -326,6 +348,20 @@ bool Dlss::CreateFeature(vk::CommandBuffer command, const FeatureDesc& desc) {
 
 bool Dlss::Evaluate(vk::CommandBuffer command, const Frame& frame) {
     if (!impl->available || !impl->feature) {
+        return false;
+    }
+    // Null views and images, or motion vectors and output of another size than the feature's,
+    // could reach the driver as a null object deep inside it (nvoglv64.dll, #155): refuse them.
+    if (!UsableResource(frame.color) || !UsableResource(frame.depth) ||
+        !UsableResource(frame.motion) || !UsableResource(frame.output) ||
+        frame.motion.width != impl->feature->input_width ||
+        frame.motion.height != impl->feature->input_height ||
+        frame.output.width != impl->feature->output_width ||
+        frame.output.height != impl->feature->output_height) {
+        std::printf("DLSS: not evaluating (a resource is missing or differs in size from the "
+                    "%ux%u -> %ux%u feature)\n",
+                    impl->feature->input_width, impl->feature->input_height,
+                    impl->feature->output_width, impl->feature->output_height);
         return false;
     }
     const auto image = [](const Resource& r) {
@@ -363,6 +399,13 @@ bool Dlss::CreateFrameGen(vk::CommandBuffer command, const FrameGenDesc& desc) {
         return false;
     }
     impl->frame_gen.reset();
+    if (const char* problem = BbDlssPolicy::FrameGenSizeProblem(desc.width, desc.height,
+                                                                desc.render_width,
+                                                                desc.render_height)) {
+        std::printf("DLSS Frame Generation: not creating %ux%u (depth and motion %ux%u): %s\n",
+                    desc.width, desc.height, desc.render_width, desc.render_height, problem);
+        return false;
+    }
     const BbDlssgFeature feature{desc.width, desc.height, static_cast<VkFormat>(desc.format),
                                  desc.render_width, desc.render_height};
     if (!impl->api->FrameGenCreate(command, &feature)) {
@@ -374,6 +417,23 @@ bool Dlss::CreateFrameGen(vk::CommandBuffer command, const FrameGenDesc& desc) {
 
 bool Dlss::EvaluateFrameGen(vk::CommandBuffer command, const FrameGenFrame& frame) {
     if (!impl->frame_gen) {
+        return false;
+    }
+    const FrameGenDesc& created = *impl->frame_gen;
+    const bool has_hudless = frame.hudless.image;
+    if (!UsableResource(frame.backbuffer) || !UsableResource(frame.depth) ||
+        !UsableResource(frame.motion) || !UsableResource(frame.output) ||
+        (has_hudless && !UsableResource(frame.hudless)) ||
+        frame.backbuffer.width != created.width || frame.backbuffer.height != created.height ||
+        frame.output.width != created.width || frame.output.height != created.height ||
+        frame.depth.width != created.render_width || frame.depth.height != created.render_height ||
+        frame.motion.width != created.render_width ||
+        frame.motion.height != created.render_height ||
+        (has_hudless && (frame.hudless.width != created.width ||
+                         frame.hudless.height != created.height))) {
+        std::printf("DLSS Frame Generation: not evaluating (a resource is missing or differs in "
+                    "size from the %ux%u feature)\n",
+                    created.width, created.height);
         return false;
     }
     const auto image = [](const Resource& r) {
