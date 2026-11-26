@@ -307,10 +307,16 @@ private:
 };
 
 /// Returns true when SignalFlip should defer GfxFlip via SignalAfterHostCopies(..., off_recorder=true)
-/// rather than blocking the draw-recording thread in WaitDeferredSignals().
-[[nodiscard]] constexpr bool ShouldDeferFlipSignal(bool on_stage_b,
+/// rather than waiting for the deferred signals on the GPU command thread.
+///
+/// Only while a raycaster landing is pending (LandingGate::Active()). The deferred flip runs the
+/// EOP flip handler on the landing thread, and that handler prepares the frame on the draw
+/// scheduler the GPU command thread is still recording into: with every Stage B flip deferred
+/// (#553), Uncharted 2 crashed in the NVIDIA Windows driver (vkEndCommandBuffer from
+/// Presenter::PrepareFrame on the landing thread) or never presented a frame.
+[[nodiscard]] constexpr bool ShouldDeferFlipSignal(bool gate_active, bool on_stage_b,
                                                    bool recorder_fences_enabled) noexcept {
-    return on_stage_b && recorder_fences_enabled;
+    return gate_active && on_stage_b && recorder_fences_enabled;
 }
 
 } // namespace AmdGpu
