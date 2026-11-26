@@ -133,6 +133,23 @@ fn alias_sid(alias: &str) -> Option<&'static str> {
         "RU" => "S-1-5-32-554",
         "RD" => "S-1-5-32-555",
         "AC" => "S-1-15-2-1",
+        "IS" => "S-1-5-32-568",
+        "CY" => "S-1-5-32-569",
+        "ER" => "S-1-5-32-573",
+        "RA" => "S-1-5-32-575",
+        "ES" => "S-1-5-32-576",
+        "MS" => "S-1-5-32-577",
+        "HA" => "S-1-5-32-578",
+        "AA" => "S-1-5-32-579",
+        "RM" => "S-1-5-32-580",
+        "MU" => "S-1-5-32-558",
+        "LU" => "S-1-5-32-559",
+        "NO" => "S-1-5-32-556",
+        "WR" => "S-1-5-33",
+        "UD" => "S-1-5-84-0-0-0-0-0",
+        "AS" => "S-1-18-1",
+        "SS" => "S-1-18-2",
+        "SI" => "S-1-16-16384",
         _ => return None,
     })
 }
@@ -140,29 +157,53 @@ fn alias_sid(alias: &str) -> Option<&'static str> {
 /// Every trustee other than `sid` in the DACL of `icacls /save` output, as SIDs `icacls /remove`
 /// accepts, each once. `None` when the DACL cannot be read or names a trustee that cannot be
 /// turned into a SID, so the caller fails closed.
+#[cfg(test)]
 pub(super) fn other_trustees(save_output: &str, sid: &str) -> Option<Vec<String>> {
+    other_trustees_or_why(save_output, sid).ok()
+}
+
+/// As [`other_trustees`], with why it failed: the unknown trustee alias when there is one (an
+/// SDDL alias such as `DA` is a fixed two-letter code, never an account name or SID).
+pub(super) fn other_trustees_or_why(
+    save_output: &str,
+    sid: &str,
+) -> std::result::Result<Vec<String>, String> {
+    let malformed = || "the permissions text is malformed".to_string();
     let sddl = save_output
         .lines()
         .map(str::trim)
-        .find(|l| l.starts_with("D:"))?;
+        .find(|l| l.starts_with("D:"))
+        .ok_or_else(malformed)?;
     let dacl = &sddl[2..];
     let dacl = dacl.split("S:").next().unwrap_or(dacl);
     let mut others: Vec<String> = Vec::new();
     let mut rest = &dacl[dacl.find('(').unwrap_or(dacl.len())..];
     while let Some(body) = rest.strip_prefix('(') {
-        let end = body.find(')')?;
-        let trustee = body[..end].rsplit(';').next()?;
+        let end = body.find(')').ok_or_else(malformed)?;
+        let trustee = body[..end].rsplit(';').next().ok_or_else(malformed)?;
         let trustee = if is_user_sid(trustee) {
             trustee.to_string()
         } else {
-            alias_sid(trustee)?.to_string()
+            alias_sid(trustee)
+                .ok_or_else(|| {
+                    if trustee.len() == 2 && trustee.bytes().all(|b| b.is_ascii_uppercase()) {
+                        format!("unknown trustee alias {trustee}")
+                    } else {
+                        "an unrecognised trustee".to_string()
+                    }
+                })?
+                .to_string()
         };
         if trustee != sid && !others.contains(&trustee) {
             others.push(trustee);
         }
         rest = &body[end + 1..];
     }
-    rest.is_empty().then_some(others)
+    if rest.is_empty() {
+        Ok(others)
+    } else {
+        Err(malformed())
+    }
 }
 
 #[cfg(windows)]
@@ -242,8 +283,8 @@ mod imp {
                 grant.as_ref(),
             ],
         )?;
-        let others = other_trustees(&saved_dacl(&path)?, sid)
-            .ok_or_else(|| Error::Hub("could not read the storage permissions".into()))?;
+        let others = other_trustees_or_why(&saved_dacl(&path)?, sid)
+            .map_err(|why| Error::Hub(format!("could not read the storage permissions ({why})")))?;
         if !others.is_empty() {
             let others: Vec<String> = others.iter().map(|other| format!("*{other}")).collect();
             let mut args: Vec<&std::ffi::OsStr> = vec![path.as_os_str(), "/remove".as_ref()];
@@ -356,6 +397,14 @@ mod tests {
         assert_eq!(other_trustees("D:PAI", SID), Some(vec![]));
         // unknown alias, malformed entry, no DACL: fail closed
         assert_eq!(other_trustees("D:PAI(A;;FA;;;DA)", SID), None);
+        assert_eq!(
+            other_trustees_or_why("D:PAI(A;;FA;;;DA)", SID),
+            Err("unknown trustee alias DA".to_string())
+        );
+        assert_eq!(
+            other_trustees("D:PAI(A;;FA;;;IS)(A;;FA;;;WR)", SID),
+            Some(vec!["S-1-5-32-568".to_string(), "S-1-5-33".to_string()])
+        );
         assert_eq!(other_trustees(&format!("D:PAI(A;;FA;;;{SID}"), SID), None);
         assert_eq!(other_trustees(&format!("D:PAI(A;;FA;;;{SID})x"), SID), None);
         assert_eq!(other_trustees("no sddl here", SID), None);
