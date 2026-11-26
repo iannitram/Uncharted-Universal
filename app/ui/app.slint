@@ -1217,14 +1217,22 @@ export component AppWindow inherits Window {
                                         clicked => { root.page-clicked(r + 2, choice.checked ? 0 : 1); }
                                     }
                                 }
-                                if !choice.checkbox: Text {
-                                    text: "<";
-                                    color: choice.can-prev ? Theme.text : Theme.edge;
-                                    font-size: root.unit * 1.2;
-                                    vertical-alignment: center;
-                                    TouchArea {
-                                        clicked => {
-                                            root.page-clicked(r + 2, 0);
+                                // At either end of its range a row's arrow is left out, not greyed;
+                                // the slot keeps its width so the value does not move.
+                                if !choice.checkbox: Rectangle {
+                                    width: root.unit * 1.2;
+                                    if choice.can-prev: Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: "<";
+                                        color: Theme.text;
+                                        font-size: root.unit * 1.2;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        TouchArea {
+                                            clicked => {
+                                                root.page-clicked(r + 2, 0);
+                                            }
                                         }
                                     }
                                 }
@@ -1237,14 +1245,20 @@ export component AppWindow inherits Window {
                                     vertical-alignment: center;
                                     min-width: root.unit * 12;
                                 }
-                                if !choice.checkbox: Text {
-                                    text: ">";
-                                    color: choice.can-next ? Theme.text : Theme.edge;
-                                    font-size: root.unit * 1.2;
-                                    vertical-alignment: center;
-                                    TouchArea {
-                                        clicked => {
-                                            root.page-clicked(r + 2, 1);
+                                if !choice.checkbox: Rectangle {
+                                    width: root.unit * 1.2;
+                                    if choice.can-next: Text {
+                                        width: 100%;
+                                        height: 100%;
+                                        text: ">";
+                                        color: Theme.text;
+                                        font-size: root.unit * 1.2;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                        TouchArea {
+                                            clicked => {
+                                                root.page-clicked(r + 2, 1);
+                                            }
                                         }
                                     }
                                 }
