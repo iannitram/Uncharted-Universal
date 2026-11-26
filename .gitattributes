@@ -4,3 +4,6 @@
 *.vdf binary
 # Fleet screen test fixture is parsed byte-for-byte; keep LF on Windows checkouts.
 app/fixtures/*.tsv text eol=lf
+# Test save folders are byte-exact (a 4-byte ICN-ID has no NUL to mark it binary).
+tests/fixtures/saves/** -text
+tests/fixtures/saves/README.md text
