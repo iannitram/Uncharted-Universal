@@ -533,3 +533,44 @@ fn stereo_mode_defaults_off_cycles_and_maps_to_bb_stereo_mode_for_u3_only() {
         assert!(!u2.contains_key("BB_STEREO_MODE"));
     }
 }
+
+#[test]
+fn one_card_in_use_when_balanced_and_max_are_the_same() {
+    // Not tuned: Max quality is capped to Balanced 60's values (#645).
+    let mut vm = SettingsVm::new(Stored::default(), desktop(), None);
+    let cards = vm.cards();
+    assert_eq!(
+        vm.stored().with_card(&cards.max),
+        vm.stored().with_card(&cards.balanced60)
+    );
+    let in_use = |vm: &SettingsVm| {
+        vm.view()
+            .cards
+            .iter()
+            .enumerate()
+            .filter(|(_, card)| card.in_use)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>()
+    };
+    // The defaults match both; the first one shows.
+    assert_eq!(in_use(&vm), vec![1]);
+    assert!(vm.view().notes.contains(
+        &"Max quality is the same as Balanced 60 until Tune this device reads the GPU.".to_owned()
+    ));
+    // Picking Max quality moves the badge to it alone; picking Balanced 60 moves it back.
+    vm.click(0, 2);
+    assert_eq!(in_use(&vm), vec![2]);
+    vm.click(0, 1);
+    assert_eq!(in_use(&vm), vec![1]);
+    // A tuned RTX 30 has a distinct Max quality card: no note.
+    let vm = SettingsVm::new(
+        Stored::default(),
+        desktop(),
+        Some((rtx30(), Bench::default())),
+    );
+    assert!(!vm
+        .view()
+        .notes
+        .iter()
+        .any(|note| note.starts_with("Max quality is the same")));
+}
