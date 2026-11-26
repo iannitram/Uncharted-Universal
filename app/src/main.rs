@@ -2143,9 +2143,31 @@ mod tests {
             (choices[1].label.as_str(), choices[1].value.as_str()),
             ("Frame rate", "60 FPS")
         );
+        // An arrow at the end of its range is left out, not greyed: the window draws one "<"
+        // per row that can step back and one ">" per row that can step on, and no more. The
+        // window is made tall enough that every row is on screen, where the search looks.
+        window
+            .window()
+            .set_size(slint::LogicalSize::new(1280.0, 1600.0));
+        let arrows = |window: &AppWindow, text: &str| {
+            ElementHandle::find_by_accessible_label(window, text).count()
+        };
+        let can = |window: &AppWindow| {
+            let rows: Vec<_> = window.get_choices().iter().collect();
+            (
+                rows.iter().filter(|c| !c.checkbox && c.can_prev).count(),
+                rows.iter().filter(|c| !c.checkbox && c.can_next).count(),
+            )
+        };
+        assert!(choices[1].can_prev && !choices[1].can_next);
+        assert!(choices.iter().any(|c| !c.checkbox && !c.can_prev));
+        assert_eq!((arrows(&window, "<"), arrows(&window, ">")), can(&window));
         // A click on the frame rate's "<" saves 30 (desktop offers [30, 60] per #152).
         window.invoke_page_clicked(3, 0);
         assert_eq!(window.get_choices().row_data(1).unwrap().value, "30 FPS");
+        let frame_rate = window.get_choices().row_data(1).unwrap();
+        assert!(!frame_rate.can_prev && frame_rate.can_next);
+        assert_eq!((arrows(&window, "<"), arrows(&window, ">")), can(&window));
         assert!(matches!(
             commands.borrow().last(),
             Some(Cmd::Settings(SettingsCommand::Save(stored))) if stored.frame_rate == "30"
