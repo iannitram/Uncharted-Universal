@@ -75,10 +75,15 @@ pub fn is_collection_title_id(title_id: &str) -> bool {
 }
 
 /// The `APP_VER` values the port supports per game, newest last: the code map's `SUPPORTED`.
-/// EMPTY until the device runs fill it (docs/code-map.md, "Not verified yet").
-/// `scripts/cheats.py` carries executable hashes for 01.00 and 01.02 of all three games and
-/// README.md says 1.00, but neither says the port plays both, so nothing is claimed here.
-pub const SUPPORTED: [(Game, &[&str]); 3] = [(Game::U1, &[]), (Game::U2, &[]), (Game::U3, &[])];
+/// 01.00 for all three games, by owner ruling 2026-11-26 (issue #627): the revision README.md
+/// asks for ("CUSA02320 v1.00") and the one the dump check expects (`dump::check`). 01.02
+/// (the merged update) stays refused: `cheats` knows its executables, but the port does not
+/// claim to play it.
+pub const SUPPORTED: [(Game, &[&str]); 3] = [
+    (Game::U1, &["01.00"]),
+    (Game::U2, &["01.00"]),
+    (Game::U3, &["01.00"]),
+];
 
 /// The `APP_VER` values in [`SUPPORTED`] for `game`.
 pub fn supported(game: Game) -> &'static [&'static str] {
@@ -109,7 +114,7 @@ pub fn check_revision(game: Game, app_ver: &str) -> Result<()> {
 }
 
 /// [`check_revision`] against an explicit table, so `prepare`'s tests can open the gate
-/// while [`SUPPORTED`] is still empty.
+/// for a revision [`SUPPORTED`] does not list.
 pub(crate) fn check_revision_in(
     game: Game,
     app_ver: &str,
@@ -170,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn revision_gate_accepts_injected_entries_but_production_stays_closed() {
+    fn revision_gate_accepts_injected_entries_and_refuses_the_rest() {
         let synthetic = [(Game::U1, &["test-only" as &str][..])];
         assert_eq!(check_revision_in(Game::U1, "test-only", &synthetic), Ok(()));
         assert_eq!(
@@ -187,7 +192,6 @@ mod tests {
                 found: "test-only".into(),
             })
         );
-        assert!(SUPPORTED.iter().all(|(_, versions)| versions.is_empty()));
         assert_eq!(
             check_revision(Game::U3, "unknown"),
             Err(Error::WrongRevision {
@@ -195,5 +199,26 @@ mod tests {
                 found: "unknown".into(),
             })
         );
+    }
+
+    #[test]
+    fn the_shipped_gate_accepts_01_00_for_every_game_and_nothing_else() {
+        // Owner ruling 2026-11-26 (#627): 01.00 for U1, U2 and U3.
+        for game in Game::ALL {
+            assert_eq!(supported(game), ["01.00"]);
+            assert_eq!(check_revision(game, "01.00"), Ok(()));
+            for refused in ["01.02", "1.00", "01.01", "", "unknown"] {
+                assert_eq!(
+                    check_revision(game, refused),
+                    Err(Error::WrongRevision {
+                        game: game.key().into(),
+                        found: refused.into(),
+                    }),
+                    "{} {refused:?}",
+                    game.key()
+                );
+            }
+        }
+        assert_eq!(SUPPORTED.map(|(game, _)| game), Game::ALL);
     }
 }
